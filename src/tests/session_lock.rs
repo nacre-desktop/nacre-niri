@@ -581,3 +581,22 @@ fn invalid_unlock_callback_during_acquisition_is_ignored() {
     redraw(&mut f, &output);
     assert!(f.niri().is_locked());
 }
+
+#[test]
+fn quit_is_refused_while_locked() {
+    // Mod+Shift+E and Ctrl+Alt+Delete run Quit(false), which opens the exit dialog when allowed.
+    // Keybinds and IPC both go through do_action(), which must drop it while locked.
+    let mut f = fixture(0);
+    let owner = f.add_client();
+    let quit = niri_config::Action::Quit(false);
+
+    f.niri_state().do_action(quit.clone(), false);
+    let can_show = f.niri().exit_confirm_dialog.can_show();
+    assert_eq!(f.niri().exit_confirm_dialog.is_open(), can_show);
+    f.niri().exit_confirm_dialog.hide();
+
+    let _lock = lock_request(&mut f, owner);
+    assert!(f.niri().is_locked());
+    f.niri_state().do_action(quit, false);
+    assert!(!f.niri().exit_confirm_dialog.is_open());
+}
