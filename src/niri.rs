@@ -6585,34 +6585,31 @@ impl Niri {
 
         info!("locking session");
 
+        // If we have outputs, we need to redraw them before locking. But before we do that,
+        // let's wait for the lock surfaces.
+        //
+        // Give them a second; swaylock can take its time to paint a big enough image.
+        let timer = Timer::from_duration(Duration::from_millis(1000));
+        let deadline_token = self
+            .event_loop
+            .insert_source(timer, |_, _, state| {
+                trace!("lock deadline expired, continuing");
+                state.niri.continue_to_locking();
+                TimeoutAction::Drop
+            })
+            .unwrap();
+
+        self.lock_state = LockState::WaitingForSurfaces {
+            confirmation,
+            deadline_token,
+        };
+
+        // If there are no outputs, we can lock right away.
+        //
+        // This does mean the deadline timer above is immediately removed, but it's a rare case,
+        // and consolidating the locking code into one place is worth it.
         if self.output_state.is_empty() {
-            // There are no outputs, lock the session right away.
-            self.screenshot_ui.close();
-            self.cursor_manager
-                .set_cursor_image(CursorImageStatus::default_named());
-
-            let lock = confirmation.ext_session_lock().clone();
-            confirmation.lock();
-            self.enter_locked(lock);
-        } else {
-            // There are outputs which we need to redraw before locking. But before we do that,
-            // let's wait for the lock surfaces.
-            //
-            // Give them a second; swaylock can take its time to paint a big enough image.
-            let timer = Timer::from_duration(Duration::from_millis(1000));
-            let deadline_token = self
-                .event_loop
-                .insert_source(timer, |_, _, state| {
-                    trace!("lock deadline expired, continuing");
-                    state.niri.continue_to_locking();
-                    TimeoutAction::Drop
-                })
-                .unwrap();
-
-            self.lock_state = LockState::WaitingForSurfaces {
-                confirmation,
-                deadline_token,
-            };
+            self.continue_to_locking();
         }
     }
 
