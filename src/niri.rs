@@ -6654,6 +6654,12 @@ impl Niri {
                     .set_cursor_image(CursorImageStatus::default_named());
                 self.cancel_mru();
 
+                // I don't like this being asynchronous, but it would be a bit involved to move
+                // this whole function to State. This should do for now.
+                self.event_loop.insert_idle(|state| {
+                    state.cancel_pointing_grabs();
+                });
+
                 if self.output_state.is_empty() {
                     // There are no outputs, lock the session right away.
                     let lock = confirmation.ext_session_lock().clone();

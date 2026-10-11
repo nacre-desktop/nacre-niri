@@ -274,6 +274,32 @@ fn lock_notify_reports_no_output_lock_immediately() {
 }
 
 #[test]
+fn pointing_grabs_are_cancelled_when_locking() {
+    // With no outputs, lock() confirms right away; with outputs, continue_to_locking() runs on the
+    // lock-surface deadline. Both paths must drop a grab that would keep feeding a client.
+    for outputs in [0, 1] {
+        let mut f = fixture(outputs);
+        let owner = f.add_client();
+        let (tx, rx) = async_channel::unbounded();
+        f.niri_state().handle_pick_color(tx);
+        assert!(f.niri().seat.get_pointer().unwrap().is_grabbed());
+
+        let _lock = lock_request(&mut f, owner);
+        if outputs > 0 {
+            f.niri_state().niri.continue_to_locking();
+        }
+        f.state.server.dispatch();
+
+        assert!(f.niri().is_locked());
+        assert!(
+            !f.niri().seat.get_pointer().unwrap().is_grabbed(),
+            "grab survived locking with {outputs} outputs"
+        );
+        assert!(matches!(rx.try_recv(), Ok(None)));
+    }
+}
+
+#[test]
 fn lock_notify_global_is_not_advertised_to_restricted_clients() {
     let mut f = fixture(0);
     let unrestricted = f.add_client();
