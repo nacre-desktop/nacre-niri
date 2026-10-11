@@ -2065,15 +2065,8 @@ impl State {
             return;
         };
 
-        // Now that we captured the screenshots, clear grabs like drag-and-drop, etc.
-        self.niri.seat.get_pointer().unwrap().unset_grab(
-            self,
-            SERIAL_COUNTER.next_serial(),
-            get_monotonic_time().as_millis() as u32,
-        );
-        if let Some(touch) = self.niri.seat.get_touch() {
-            touch.unset_grab(self);
-        }
+        // Now that we captured the screenshots, clear grabs.
+        self.cancel_pointing_grabs();
 
         self.backend.with_primary_renderer(|renderer| {
             self.niri
@@ -2085,6 +2078,18 @@ impl State {
             .cursor_manager
             .set_cursor_image(CursorImageStatus::Named(CursorIcon::Crosshair));
         self.niri.queue_redraw_all();
+    }
+
+    /// Cancel pointing device grabs like drag-and-drop, etc.
+    pub fn cancel_pointing_grabs(&mut self) {
+        self.niri.seat.get_pointer().unwrap().unset_grab(
+            self,
+            SERIAL_COUNTER.next_serial(),
+            get_monotonic_time().as_millis() as u32,
+        );
+        if let Some(touch) = self.niri.seat.get_touch() {
+            touch.unset_grab(self);
+        }
     }
 
     pub fn handle_pick_color(&mut self, tx: async_channel::Sender<Option<niri_ipc::PickedColor>>) {
