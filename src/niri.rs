@@ -6253,10 +6253,9 @@ impl Niri {
 
         if let Some((window, hit)) = &new_focus.window {
             let overview = self.layout.is_overview_open();
-            let no_scroll = overview
-                && overview_hover_enabled
+            let no_scroll = overview_hover_enabled
                 && ffm.max_scroll_amount.is_some_and(|amount| amount.0 == 0.);
-            let selected = if overview {
+            let selected = if overview_hover_enabled {
                 self.layout.focus().is_some_and(|focused| focused.window == *window)
                     && self.layer_shell_on_demand_focus.is_none()
             } else {
