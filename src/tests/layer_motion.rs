@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
+use smithay::utils::Point;
 
 use super::client::bead_layer_motion::v1::client::bead_layer_motion_v1::{
     self, Curve, OpacityMode,
