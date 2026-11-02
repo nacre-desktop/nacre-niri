@@ -7,8 +7,8 @@
 //! The convention for `Default` impls is to set the initial values before the parsing occurs.
 //! Then, parsing will update the values with those parsed from the config.
 //!
-//! The `Default` values match those from `default-config.kdl` in almost all cases, with a notable
-//! exception of `binds {}` and some window rules.
+//! Input and appearance model defaults preserve upstream behavior for existing configs.
+//! The bundled fork config supplies Nacre preferences; native features have separate flags.
 
 #[macro_use]
 extern crate tracing;
@@ -2501,9 +2501,9 @@ mod tests {
 
     #[test]
     fn diff_empty_to_default() {
-        // We try to write the config defaults in such a way that empty sections (and an empty
-        // config) give the same outcome as the default config bundled with niri. This test
-        // verifies the actual differences between the two.
+        // Record intentional differences between model defaults and the fork config.
+        // Keep existing configs on upstream input/appearance defaults; native feature
+        // flags have their own default-on and opt-out tests.
         let mut default_config = Config::load_default();
         let empty_config = Config::parse_mem("").unwrap();
 
@@ -2527,6 +2527,30 @@ mod tests {
         -            natural_scroll: false,
         +            natural_scroll: true,
 
+        -            scroll_factor: None,
+        +            scroll_factor: Some(
+        +                ScrollFactor {
+        +                    base: Some(
+        +                        FloatOrInt(
+        +                            0.75,
+        +                        ),
+        +                    ),
+        +                    horizontal: None,
+        +                    vertical: None,
+        +                },
+        +            ),
+
+        -        focus_follows_mouse: None,
+        +        focus_follows_mouse: Some(
+        +            FocusFollowsMouse {
+        +                max_scroll_amount: Some(
+        +                    Percent(
+        +                        0.0,
+        +                    ),
+        +                ),
+        +            },
+        +        ),
+
         -    spawn_at_startup: [],
         +    spawn_at_startup: [
         +        SpawnAtStartup {
@@ -2536,11 +2560,144 @@ mod tests {
         +        },
         +    ],
 
+        -            width: 4.0,
+        +            width: 1.0,
+
+        -            width: 4.0,
+        +            width: 1.0,
+
         -                0.3333333333333333,
         +                0.33333,
 
         -                0.6666666666666666,
         +                0.66667,
+
+        +            Proportion(
+        +                1.0,
+        +            ),
+
+        -        gaps: 16.0,
+        +        gaps: 6.0,
+
+        -            r: 0.25,
+        -            g: 0.25,
+        -            b: 0.25,
+        -            a: 1.0,
+        +            r: 0.0,
+        +            g: 0.0,
+        +            b: 0.0,
+        +            a: 0.0,
+
+        -    prefer_no_csd: false,
+        +    prefer_no_csd: true,
+
+        -                    10.0,
+        +                    8.0,
+
+        -                a: 0.3137255,
+        +                a: 0.4392157,
+
+        -    layer_rules: [],
+        +    layer_rules: [
+        +        LayerRule {
+        +            matches: [
+        +                Match {
+        +                    namespace: Some(
+        +                        RegexEq(
+        +                            Regex(
+        +                                "^(nacre-background|bead-wallpaper|bead-wallpaper-video)$",
+        +                            ),
+        +                        ),
+        +                    ),
+        +                    at_startup: None,
+        +                    layer: None,
+        +                },
+        +            ],
+        +            excludes: [],
+        +            opacity: None,
+        +            block_out_from: None,
+        +            shadow: ShadowRule {
+        +                off: false,
+        +                on: false,
+        +                offset: None,
+        +                softness: None,
+        +                spread: None,
+        +                draw_behind_window: None,
+        +                color: None,
+        +                inactive_color: None,
+        +            },
+        +            geometry_corner_radius: None,
+        +            place_within_backdrop: Some(
+        +                true,
+        +            ),
+        +            baba_is_float: None,
+        +            background_effect: BackgroundEffectRule {
+        +                xray: None,
+        +                blur: None,
+        +                noise: None,
+        +                saturation: None,
+        +            },
+        +            popups: PopupsRule {
+        +                opacity: None,
+        +                geometry_corner_radius: None,
+        +                background_effect: BackgroundEffectRule {
+        +                    xray: None,
+        +                    blur: None,
+        +                    noise: None,
+        +                    saturation: None,
+        +                },
+        +            },
+        +        },
+        +        LayerRule {
+        +            matches: [
+        +                Match {
+        +                    namespace: Some(
+        +                        RegexEq(
+        +                            Regex(
+        +                                "^nacre-(topbar|lock-preview|left-menu-handle|right-menu-handle)$",
+        +                            ),
+        +                        ),
+        +                    ),
+        +                    at_startup: None,
+        +                    layer: None,
+        +                },
+        +            ],
+        +            excludes: [],
+        +            opacity: None,
+        +            block_out_from: None,
+        +            shadow: ShadowRule {
+        +                off: false,
+        +                on: false,
+        +                offset: None,
+        +                softness: None,
+        +                spread: None,
+        +                draw_behind_window: None,
+        +                color: None,
+        +                inactive_color: None,
+        +            },
+        +            geometry_corner_radius: None,
+        +            place_within_backdrop: None,
+        +            baba_is_float: None,
+        +            background_effect: BackgroundEffectRule {
+        +                xray: None,
+        +                blur: Some(
+        +                    true,
+        +                ),
+        +                noise: None,
+        +                saturation: None,
+        +            },
+        +            popups: PopupsRule {
+        +                opacity: None,
+        +                geometry_corner_radius: None,
+        +                background_effect: BackgroundEffectRule {
+        +                    xray: None,
+        +                    blur: None,
+        +                    noise: None,
+        +                    saturation: None,
+        +                },
+        +            },
+        +        },
+        +    ],
         "#,
         );
     }
