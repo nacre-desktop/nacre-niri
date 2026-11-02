@@ -3593,6 +3593,12 @@ impl Niri {
         };
 
         let target_output = target_workspace.current_output();
+        // A hidden collection's local workspace index is not an index on the active monitor.
+        // Collection selection makes it visible; index-only upstream operations cannot address
+        // a hidden stack safely.
+        if self.layout.collection_overview_is_enabled() && target_output.is_none() && self.layout.active_output().is_some() {
+            return None;
+        }
         Some((target_output.cloned(), target_workspace_index))
     }
 

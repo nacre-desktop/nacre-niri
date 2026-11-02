@@ -371,7 +371,10 @@ impl<W: LayoutElement> Layout<W> {
 
     pub(super) fn clean_up_collections(&mut self) {
         let shown: Vec<_> = self.monitors().filter_map(|m| m.collection_id).collect();
+        let outputs: Vec<_> = self.monitors().map(|m| m.output().clone()).collect();
         let returns: Vec<_> = self.collection_returns.values().copied().collect();
-        self.collections.retain(|c| c.persistent || shown.contains(&c.id) || returns.contains(&c.id) || c.workspaces.iter().any(|ws| ws.has_windows()));
+        self.collections.retain(|c| c.persistent || shown.contains(&c.id) || returns.contains(&c.id)
+            || (c.name.is_none() && c.home_output.as_ref().is_some_and(|home| outputs.iter().any(|output| home.matches(output))))
+            || c.workspaces.iter().any(|ws| ws.has_windows()));
     }
 }

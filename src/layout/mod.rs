@@ -2977,6 +2977,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_shaders(&mut self) {
+        self.collection_overview.clear();
         for c in &mut self.collections { for ws in &mut c.workspaces { ws.update_shaders(); } }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             move_.tile.update_shaders();

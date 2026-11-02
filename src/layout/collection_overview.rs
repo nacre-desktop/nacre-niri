@@ -46,6 +46,22 @@ struct Preview<'a, W: LayoutElement> {
 }
 
 impl<W: LayoutElement> Layout<W> {
+    pub fn collection_overview_is_enabled(&self) -> bool {
+        self.options.layout.collections.enabled
+    }
+
+    pub fn show_workspace_collection(&mut self, reference: &niri_config::WorkspaceReference) {
+        let workspace = match reference {
+            niri_config::WorkspaceReference::Id(id) => self.find_workspace_by_id(WorkspaceId::specific(*id)),
+            niri_config::WorkspaceReference::Name(name) => self.find_workspace_by_name(name),
+            niri_config::WorkspaceReference::Index(_) => None,
+        };
+        let Some((_, workspace)) = workspace else { return; };
+        let workspace = workspace.id();
+        let collection = self.collections.iter().find(|c| c.workspaces.iter().any(|ws| ws.id() == workspace)).map(|c| c.id);
+        if let Some(id) = collection { self.focus_collection(&niri_config::WorkspaceReference::Id(id)); }
+    }
+
     pub fn collection_overview_is_open(&self) -> bool {
         self.options.layout.collections.enabled && self.overview_open
     }
@@ -64,14 +80,17 @@ impl<W: LayoutElement> Layout<W> {
             let active_idx = workspaces.iter().position(|ws| Some(ws.id()) == active).unwrap_or(0);
             // Every stack uses its saved workspace sizes. A detached monitor may have had a
             // different aspect ratio; fitting its width preserves the actual window geometry.
-            let height = workspaces.get(active_idx).map_or(size.h * column.zoom, |ws| {
-                ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.)
-            });
-            let step = height + 24.;
+            let heights: Vec<_> = workspaces.iter().map(|ws| ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.)).collect();
+            let mut positions = vec![0.; workspaces.len()];
+            if let Some(height) = heights.get(active_idx) {
+                positions[active_idx] = (size.h - height) / 2.;
+                for idx in active_idx + 1..workspaces.len() { positions[idx] = positions[idx - 1] + heights[idx - 1] + 24.; }
+                for idx in (0..active_idx).rev() { positions[idx] = positions[idx + 1] - heights[idx] - 24.; }
+            }
             for (idx, ws) in workspaces.into_iter().enumerate() {
                 let zoom = column.bounds.size.w / ws.view_size().w.max(1.);
                 let geometry = Rectangle::new(
-                    (column.bounds.loc.x, (size.h - height) / 2. + (idx as f64 - active_idx as f64) * step).into(),
+                    (column.bounds.loc.x, positions[idx]).into(),
                     Size::from((column.bounds.size.w, ws.view_size().h * zoom)),
                 );
                 previews.push(Preview { id: column.id, workspace: ws, geometry, zoom });
@@ -110,7 +129,12 @@ impl<W: LayoutElement> Layout<W> {
 
     pub(super) fn drop_in_collection(&mut self, mut moving: InteractiveMoveData<W>) -> Result<(), InteractiveMoveData<W>> {
         let pos = moving.pointer_pos_within_output;
-        let Some(preview) = self.collection_previews(&moving.output).into_iter().find(|p| p.geometry.contains(pos)) else { return Err(moving); };
+        let previews = self.collection_previews(&moving.output);
+        let Some(preview) = previews.iter().filter(|p| pos.x >= p.geometry.loc.x && pos.x < p.geometry.loc.x + p.geometry.size.w)
+            .min_by(|a, b| {
+                let distance = |p: &Preview<'_, W>| (pos.y - p.geometry.loc.y - p.geometry.size.h / 2.).abs();
+                distance(a).total_cmp(&distance(b))
+            }) else { return Err(moving); };
         let id = preview.id;
         let workspace_id = preview.workspace.id();
         let local = (pos - preview.geometry.loc).downscale(preview.zoom);
@@ -164,7 +188,7 @@ impl<W: LayoutElement> Layout<W> {
                 collection.original_output.clone().unwrap_or_else(|| format!("Collection {}", self.collections.iter().position(|c| c.id == collection.id).unwrap() + 1))
             });
             let text = if active == Some(collection.id) { format!("● {name}") } else { name };
-            if let Some(label) = self.collection_overview.label(ctx.renderer, &text, scale, (column.bounds.loc.x, 24.).into()) {
+            if let Some(label) = self.collection_overview.label(ctx.renderer, &text, scale, (column.bounds.loc.x, 24.).into(), column.bounds.size.w) {
                 push(label.into());
             }
         }
@@ -188,19 +212,22 @@ impl<W: LayoutElement> Layout<W> {
 }
 
 impl Overview {
-    fn label<R: NiriRenderer>(&self, renderer: &mut R, text: &str, scale: f64, location: Point<f64, Logical>) -> Option<PrimaryGpuTextureRenderElement> {
-        let key = (text.to_owned(), scale.to_bits());
+    pub(super) fn clear(&self) { self.labels.borrow_mut().clear(); }
+
+    fn label<R: NiriRenderer>(&self, renderer: &mut R, text: &str, scale: f64, location: Point<f64, Logical>, width: f64) -> Option<PrimaryGpuTextureRenderElement> {
+        let width = (width * scale).ceil().max(1.) as i32;
+        let key = (format!("{text}\0{width}"), scale.to_bits());
         let mut labels = self.labels.borrow_mut();
         // Config reloads and output scale changes should not grow the cache without bound.
         if labels.len() > 128 { labels.clear(); }
         if !labels.contains_key(&key) {
-            let surface = ImageSurface::create(cairo::Format::ARgb32, 512, (32. * scale).ceil() as i32).ok()?;
+            let surface = ImageSurface::create(cairo::Format::ARgb32, width, (32. * scale).ceil() as i32).ok()?;
             let cr = cairo::Context::new(&surface).ok()?;
             let layout = pangocairo::functions::create_layout(&cr);
             let mut font = pango::FontDescription::from_string("sans 13");
             font.set_absolute_size(13. * scale * pango::SCALE as f64);
             layout.set_font_description(Some(&font));
-            layout.set_width((500. * pango::SCALE as f64) as i32);
+            layout.set_width(width * pango::SCALE);
             layout.set_ellipsize(pango::EllipsizeMode::End);
             layout.set_text(text);
             cr.set_source_rgba(1., 1., 1., 0.95);
@@ -220,7 +247,6 @@ impl Overview {
 pub(super) struct ColumnGeometry {
     pub id: u64,
     pub bounds: Rectangle<f64, Logical>,
-    pub zoom: f64,
 }
 
 /// Keep the current collection centered, placing other columns alternately right and left.
@@ -238,7 +264,6 @@ pub(super) fn columns(
     let slots = 2 * (ids.len() / 2) + 1;
     let gap = 24_f64.min(size.w / (slots as f64 * 8.));
     let width = (size.w / slots as f64 - gap).max(1.).min(size.w * zoom);
-    let zoom = width / size.w.max(1.);
     ids.into_iter().enumerate().map(|(idx, id)| {
         let offset = if idx == 0 { 0. } else {
             let step = idx.div_ceil(2) as f64;
@@ -250,7 +275,6 @@ pub(super) fn columns(
                 Point::from(((size.w - width) / 2. + offset * (width + gap), 0.)),
                 Size::from((width, size.h)),
             ),
-            zoom,
         }
     }).collect()
 }

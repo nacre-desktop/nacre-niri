@@ -86,6 +86,9 @@ impl MergeWith<LayoutPart> for Layout {
             if let Some(on) = collections.on {
                 self.collections.enabled = on.0;
             }
+            if let Some(off) = collections.off {
+                self.collections.enabled = !off.0;
+            }
             // A present block describes the complete configured named-collection list. This
             // also lets config reloads remove names that were present in the previous config.
             self.collections.names = collections
@@ -164,6 +167,8 @@ impl Default for Collections {
 pub struct CollectionsPart {
     #[knuffel(child)]
     pub on: Option<Flag>,
+    #[knuffel(child)]
+    pub off: Option<Flag>,
     #[knuffel(children(name = "collection"))]
     pub collection: Vec<CollectionPart>,
 }

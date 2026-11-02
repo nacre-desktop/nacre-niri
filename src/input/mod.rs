@@ -1457,6 +1457,7 @@ impl State {
                 }
             }
             Action::FocusWorkspace(reference) => {
+                self.niri.layout.show_workspace_collection(&reference);
                 if let Some((mut output, index)) =
                     self.niri.find_output_and_workspace_index(reference)
                 {

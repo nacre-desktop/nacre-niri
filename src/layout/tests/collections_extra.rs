@@ -126,7 +126,9 @@ fn explicit_hidden_window_moves_between_workspaces_and_onto_output() {
     layout.move_to_output(Some(&1), &first, None, ActivateWindow::No);
     layout.verify_invariants();
     assert!(layout.windows_for_output(&first).any(|window| *window.id() == 1));
-    assert!(!layout.collections().iter().any(|collection| collection.id == hidden));
+    // The connected monitor's original empty desk remains available for rotation.
+    assert!(layout.collections().iter().any(|collection| collection.id == hidden));
+    assert!(layout.collection_workspaces(hidden).all(|workspace| !workspace.has_windows()));
     assert_eq!(layout.collection_for_output(&first), Some(shown));
     assert_eq!(layout.windows().count(), 1);
 }

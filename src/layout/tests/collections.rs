@@ -86,6 +86,19 @@ fn laptop_virtual_collection_rotates() {
 }
 
 #[test]
+fn empty_laptop_home_remains_available_and_empty_virtual_desk_expires() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let home = shown(&layout, "output1");
+    let desk = layout.create_collection(None);
+    assert_ne!(home, desk);
+    layout.focus_collection_previous();
+    assert_eq!(shown(&layout, "output1"), home);
+    assert!(!layout.collections().iter().any(|collection| collection.id == desk));
+    layout.verify_invariants();
+}
+
+#[test]
 fn move_window_between_collections_preserves_window() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
@@ -151,7 +164,7 @@ fn overview_drag_moves_window_into_hidden_collection() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(128), ..ProptestConfig::default() })]
     #[test]
     fn collection_operations_preserve_invariants(ops in prop::collection::vec(any::<Op>(), 0..100)) {
         let mut layout = enabled_layout();

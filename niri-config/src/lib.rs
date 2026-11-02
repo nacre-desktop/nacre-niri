@@ -680,6 +680,8 @@ mod tests {
         );
         assert!(!config.layout.collections.enabled);
         assert_eq!(config.layout.collections.names, ["work"]);
+        let config = do_parse("layout { collections { on false; }; }");
+        assert!(!config.layout.collections.enabled);
     }
 
     #[test]

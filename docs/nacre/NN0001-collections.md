@@ -81,7 +81,9 @@ workspace IDs. Clients must tolerate separate workspace and collection events.
 
 A shown collection is retained, even when empty. A hidden collection with no windows
 on any workspace is removed, whether detached or user-created, unless declared in
-config. An action-created name alone does not imply persistence. Empty trailing
+config. A connected output's automatically created home desk remains available for
+rotation while that output is connected. An action-created name alone does not
+imply persistence. Empty trailing
 workspaces continue to follow upstream workspace rules within each shown stack.
 Removal runs after window close/move and during refresh; invalid saved return IDs
 fall back to an available collection.
