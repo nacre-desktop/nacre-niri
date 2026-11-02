@@ -44,7 +44,9 @@ fn gpu_planes_share_a_buffer_but_preserve_crop_opacity_damage_and_capture_pixels
         .add_renderer()
         .expect("surfaceless GLES renderer for layer-motion pixels");
     let client_id = f.add_client();
-    let layer = f.client(client_id).create_layer(None, Layer::Top, "motion-render");
+    let layer = f
+        .client(client_id)
+        .create_layer(None, Layer::Top, "motion-render");
     let surface = layer.surface.clone();
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Top),
@@ -55,7 +57,9 @@ fn gpu_planes_share_a_buffer_but_preserve_crop_opacity_damage_and_capture_pixels
     f.double_roundtrip(client_id);
     let layer = f.client(client_id).layer(&surface);
     // One immutable, opaque red texture; both planes sample that same surface.
-    let buffer = layer.spbm.create_u32_rgba_buffer(u32::MAX, 0, 0, u32::MAX, &layer.qh, ());
+    let buffer = layer
+        .spbm
+        .create_u32_rgba_buffer(u32::MAX, 0, 0, u32::MAX, &layer.qh, ());
     layer.surface.attach(Some(&buffer), 0, 0);
     layer.set_size(96, 72);
     layer.ack_last_and_commit();
@@ -84,64 +88,93 @@ fn gpu_planes_share_a_buffer_but_preserve_crop_opacity_damage_and_capture_pixels
     let mapped = f.niri().mapped_layer_surfaces.values_mut().next().unwrap();
     mapped.update_sizes(Size::from((96., 72.)), 1.5);
     mapped.set_motion_runtime(runtime.clone());
-    assert_eq!(mapped.motion_input_point(Point::from((52., 20.))), Some(Some(Point::from((8., 2.)))));
-    assert_eq!(mapped.motion_input_point(Point::from((12., 6.))), Some(None));
+    assert_eq!(
+        mapped.motion_input_point(Point::from((52., 20.))),
+        Some(Some(Point::from((8., 2.))))
+    );
+    assert_eq!(
+        mapped.motion_input_point(Point::from((12., 6.))),
+        Some(None)
+    );
 
     let mut previous_commits = Vec::new();
     let mut previous_ids = Vec::new();
-    for (iteration, target) in [RenderTarget::Output, RenderTarget::ScreenCapture, RenderTarget::Screencast]
-        .into_iter().enumerate()
+    for (iteration, target) in [
+        RenderTarget::Output,
+        RenderTarget::ScreenCapture,
+        RenderTarget::Screencast,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let state = f.niri_state();
         let (backend, niri) = (&mut state.backend, &mut state.niri);
-        backend.with_primary_renderer(|renderer| {
-            let mapped = niri.mapped_layer_surfaces.values().next().unwrap();
-            let mut elements = Vec::new();
-            mapped.render_normal(
-                RenderCtx { renderer, target, xray: None },
-                None,
-                Point::from((0., 0.)),
-                XrayPos::default(),
-                &mut |element| elements.push(element),
-            );
-            assert_eq!(elements.len(), 2, "two independent planes from one root texture");
-            assert_ne!(elements[0].id(), elements[1].id());
-            let root_id = Id::from_wayland_resource(mapped.surface().wl_surface());
-            assert!(elements.iter().all(|element| element.id() != &root_id));
-            if iteration == 0 {
-                previous_commits = elements.iter().map(Element::current_commit).collect();
-                previous_ids = elements.iter().map(|element| element.id().clone()).collect();
-            } else {
-                for (index, element) in elements.iter().enumerate() {
-                    assert_eq!(element.id(), &previous_ids[index]);
-                    assert!(element.damage_since(Scale::from(1.5), Some(previous_commits[index])).is_empty());
+        backend
+            .with_primary_renderer(|renderer| {
+                let mapped = niri.mapped_layer_surfaces.values().next().unwrap();
+                let mut elements = Vec::new();
+                mapped.render_normal(
+                    RenderCtx {
+                        renderer,
+                        target,
+                        xray: None,
+                    },
+                    None,
+                    Point::from((0., 0.)),
+                    XrayPos::default(),
+                    &mut |element| elements.push(element),
+                );
+                assert_eq!(
+                    elements.len(),
+                    2,
+                    "two independent planes from one root texture"
+                );
+                assert_ne!(elements[0].id(), elements[1].id());
+                let root_id = Id::from_wayland_resource(mapped.surface().wl_surface());
+                assert!(elements.iter().all(|element| element.id() != &root_id));
+                if iteration == 0 {
+                    previous_commits = elements.iter().map(Element::current_commit).collect();
+                    previous_ids = elements
+                        .iter()
+                        .map(|element| element.id().clone())
+                        .collect();
+                } else {
+                    for (index, element) in elements.iter().enumerate() {
+                        assert_eq!(element.id(), &previous_ids[index]);
+                        assert!(element
+                            .damage_since(Scale::from(1.5), Some(previous_commits[index]))
+                            .is_empty());
+                    }
                 }
-            }
-            let pixels = render_helpers::render_to_vec(
-                renderer,
-                Size::from((144, 108)),
-                Scale::from(1.5),
-                Transform::Normal,
-                Fourcc::Abgr8888,
-                elements.into_iter().rev(),
-            ).expect("render and read plane pixels");
-            for y in 0..108 {
-                for x in 0..144 {
-                    let alpha: u8 = if (24..48).contains(&x) && (12..36).contains(&y) {
-                        255
-                    } else if (72..96).contains(&x) && (24..72).contains(&y) {
-                        128
-                    } else {
-                        0
-                    };
-                    let at = (y * 144 + x) * 4;
-                    let actual = &pixels[at..at + 4];
-                    let expected = [alpha, 0, 0, alpha];
-                    assert!(actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
-                        "target={target:?} x={x} y={y} actual={actual:?} expected={expected:?}");
+                let pixels = render_helpers::render_to_vec(
+                    renderer,
+                    Size::from((144, 108)),
+                    Scale::from(1.5),
+                    Transform::Normal,
+                    Fourcc::Abgr8888,
+                    elements.into_iter().rev(),
+                )
+                .expect("render and read plane pixels");
+                for y in 0..108 {
+                    for x in 0..144 {
+                        let alpha: u8 = if (24..48).contains(&x) && (12..36).contains(&y) {
+                            255
+                        } else if (72..96).contains(&x) && (24..72).contains(&y) {
+                            128
+                        } else {
+                            0
+                        };
+                        let at = (y * 144 + x) * 4;
+                        let actual = &pixels[at..at + 4];
+                        let expected = [alpha, 0, 0, alpha];
+                        assert!(
+                            actual.iter().zip(expected).all(|(a, b)| a.abs_diff(b) <= 1),
+                            "target={target:?} x={x} y={y} actual={actual:?} expected={expected:?}"
+                        );
+                    }
                 }
-            }
-        }).unwrap();
+            })
+            .unwrap();
     }
 
     // An opacity-only change must damage the plane although neither its buffer
@@ -153,20 +186,35 @@ fn gpu_planes_share_a_buffer_but_preserve_crop_opacity_damage_and_capture_pixels
     }
     let state = f.niri_state();
     let (backend, niri) = (&mut state.backend, &mut state.niri);
-    backend.with_primary_renderer(|renderer| {
-        let mapped = niri.mapped_layer_surfaces.values().next().unwrap();
-        assert_eq!(mapped.motion_input_point(Point::from((52., 20.))), Some(None));
-        let mut elements = Vec::new();
-        mapped.render_normal(
-            RenderCtx { renderer, target: RenderTarget::Output, xray: None },
-            None, Point::from((0., 0.)), XrayPos::default(),
-            &mut |element| elements.push(element),
-        );
-        let changed = elements.iter().find(|element| element.id() == &previous_ids[1]);
-        // A renderer may omit a fully transparent element entirely; otherwise
-        // its new commit must invalidate the former visible pixels.
-        if let Some(changed) = changed {
-            assert!(!changed.damage_since(Scale::from(1.5), Some(previous_commits[1])).is_empty());
-        }
-    }).unwrap();
+    backend
+        .with_primary_renderer(|renderer| {
+            let mapped = niri.mapped_layer_surfaces.values().next().unwrap();
+            assert_eq!(
+                mapped.motion_input_point(Point::from((52., 20.))),
+                Some(None)
+            );
+            let mut elements = Vec::new();
+            mapped.render_normal(
+                RenderCtx {
+                    renderer,
+                    target: RenderTarget::Output,
+                    xray: None,
+                },
+                None,
+                Point::from((0., 0.)),
+                XrayPos::default(),
+                &mut |element| elements.push(element),
+            );
+            let changed = elements
+                .iter()
+                .find(|element| element.id() == &previous_ids[1]);
+            // A renderer may omit a fully transparent element entirely; otherwise
+            // its new commit must invalidate the former visible pixels.
+            if let Some(changed) = changed {
+                assert!(!changed
+                    .damage_since(Scale::from(1.5), Some(previous_commits[1]))
+                    .is_empty());
+            }
+        })
+        .unwrap();
 }

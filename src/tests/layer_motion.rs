@@ -107,7 +107,13 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
         let retarget_progress = (retargeted.start_time() - start).as_secs_f64() / 0.1;
         let expected_x = -100. + 100. * retarget_progress.min(1.);
         assert!(
-            (retargeted.sample(retargeted.start_time())[0].1.destination.loc.x - expected_x).abs()
+            (retargeted.sample(retargeted.start_time())[0]
+                .1
+                .destination
+                .loc
+                .x
+                - expected_x)
+                .abs()
                 < 0.01
         );
     }

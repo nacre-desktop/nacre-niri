@@ -54,9 +54,7 @@ pub mod bead_layer_motion {
     }
 }
 
-use bead_layer_motion::v1::client::{
-    bead_layer_motion_manager_v1, bead_layer_motion_v1,
-};
+use bead_layer_motion::v1::client::{bead_layer_motion_manager_v1, bead_layer_motion_v1};
 use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
 use bead_layer_motion_v1::BeadLayerMotionV1;
 
