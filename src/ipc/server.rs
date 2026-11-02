@@ -520,9 +520,18 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::EventStream => Response::Handled,
         Request::NacreOverviewHoverStream => {
             let (tx, rx) = async_channel::bounded(1);
+            let hover_cache = ctx.overview_hover.clone();
             ctx.event_loop.insert_idle(move |state| {
-                let config = state.niri.config.borrow();
-                let enabled = config.nacre.overview_hover;
+                let enabled = state.niri.config.borrow().nacre.overview_hover;
+                let id = if enabled
+                    && state.niri.layout.is_overview_open()
+                    && state.niri.pointer_visibility.is_visible()
+                {
+                    state.niri.window_under_cursor().map(|window| window.id().get())
+                } else {
+                    None
+                };
+                hover_cache.set(id);
                 let _ = tx.send_blocking(enabled);
             });
             if !rx.recv().await.unwrap_or(false) {

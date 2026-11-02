@@ -31,6 +31,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
 
     let request = match &msg {
         Msg::Version => Request::Version,
+        Msg::NacreCapabilities => Request::NacreCapabilities,
         Msg::Outputs => Request::Outputs,
         Msg::FocusedWindow => Request::FocusedWindow,
         Msg::WindowUnderCursor => Request::WindowUnderCursor,
@@ -557,6 +558,23 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             } else {
                 println!("Overview is closed.");
             }
+        }
+        Msg::NacreCapabilities => {
+            let Response::NacreCapabilities(capabilities) = response else {
+                bail!("unexpected response: expected NacreCapabilities, got {response:?}");
+            };
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&capabilities).context("error formatting response")?
+                );
+                return Ok(());
+            }
+
+            println!("Workspace collections: {}", capabilities.workspace_collections);
+            println!("Proportional X11 widths: {}", capabilities.proportional_x11_widths);
+            println!("Overview hover: {}", capabilities.overview_hover);
         }
         Msg::Casts => {
             let Response::Casts(mut casts) = response else {

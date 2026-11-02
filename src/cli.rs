@@ -107,6 +107,8 @@ pub enum Msg {
     EventStream,
     /// Print the version of the running niri instance.
     Version,
+    /// Print the active Nacre native capabilities.
+    NacreCapabilities,
     /// Request an error from the running niri instance.
     RequestError,
     /// Print the overview state.
@@ -222,5 +224,18 @@ mod collection_cli_tests {
         assert!(
             matches!(action, niri_ipc::Action::CreateCollection { name: Some(name) } if name == "work")
         );
+    }
+
+    #[test]
+    fn nacre_capabilities_msg_parses() {
+        assert!(matches!(
+            Cli::try_parse_from(["niri", "msg", "nacre-capabilities"])
+                .unwrap()
+                .subcommand,
+            Some(Sub::Msg {
+                msg: Msg::NacreCapabilities,
+                ..
+            })
+        ));
     }
 }
