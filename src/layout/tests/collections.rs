@@ -402,6 +402,41 @@ fn operation_generator_does_not_duplicate_detached_window_ids() {
     assert_eq!(layout.windows().count(), 1);
 }
 
+#[test]
+fn naming_workspace_by_id_updates_its_owning_monitor_boundaries() {
+    let mut options = Options::default();
+    options.layout.collections.names = vec!["collection2".into(), "collection3".into()];
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: TestWindowParams::new(1),
+            },
+            Op::CreateCollection(Some(9)),
+            Op::CreateCollection(Some(3)),
+            Op::AddOutput(2),
+            Op::RemoveOutput(1),
+        ],
+    );
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::FocusWindowPrevious,
+            Op::AddOutput(3),
+            Op::MoveWindowToWorkspace {
+                window_id: None,
+                workspace_idx: 1,
+            },
+            Op::SetWorkspaceNameByReference {
+                new_ws_name: 1,
+                reference: WorkspaceReferenceOp::ExistingId(3),
+            },
+        ],
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: ProptestConfig::default().cases.max(128),

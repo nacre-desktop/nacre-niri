@@ -4946,27 +4946,28 @@ impl<W: LayoutElement> Layout<W> {
         // Conversely, if `ws` was the last workspace on a monitor, an
         // empty workspace needs to be added after.
 
-        if let MonitorSet::Normal {
-            monitors,
-            active_monitor_idx,
-            ..
-        } = &mut self.monitor_set
-        {
-            let monitor = &mut monitors[*active_monitor_idx];
-            if monitor.options.layout.empty_workspace_above_first
-                && monitor
+        if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+            if let Some(monitor) = monitors.iter_mut().find(|monitor| {
+                monitor
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.id() == wsid)
+            }) {
+                let is_first = monitor
                     .workspaces
                     .first()
-                    .is_some_and(|first| first.id() == wsid)
-            {
-                monitor.add_workspace_top();
-            }
-            if monitor
-                .workspaces
-                .last()
-                .is_some_and(|last| last.id() == wsid)
-            {
-                monitor.add_workspace_bottom();
+                    .is_some_and(|first| first.id() == wsid);
+                let is_last = monitor
+                    .workspaces
+                    .last()
+                    .is_some_and(|last| last.id() == wsid);
+
+                if monitor.options.layout.empty_workspace_above_first && is_first {
+                    monitor.add_workspace_top();
+                }
+                if is_last {
+                    monitor.add_workspace_bottom();
+                }
             }
         }
     }
