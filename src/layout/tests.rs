@@ -904,7 +904,9 @@ impl Op {
                 layout.move_window_to_collection(&WorkspaceReference::Index(index));
             }
             Op::MoveWindowToCollectionByName(index) => {
-                layout.move_window_to_collection(&WorkspaceReference::Name(format!("collection{index}")));
+                layout.move_window_to_collection(&WorkspaceReference::Name(format!(
+                    "collection{index}"
+                )));
             }
             Op::MoveWindowToCollectionById(index) => {
                 let collections = layout.collections();
@@ -1291,7 +1293,10 @@ impl Op {
             }
             Op::FocusWorkspaceUnderOutput { output_id, up } => {
                 let name = format!("output{output_id}");
-                if let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                if let Some(output) = layout
+                    .outputs()
+                    .find(|output| output.name() == name)
+                    .cloned()
                 {
                     if let Some(monitor) = layout.monitor_for_output_mut(&output) {
                         if up {
@@ -1309,7 +1314,10 @@ impl Op {
                 right,
             } => {
                 let name = format!("output{output_id}");
-                if let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                if let Some(output) = layout
+                    .outputs()
+                    .find(|output| output.name() == name)
+                    .cloned()
                 {
                     let position = Point::from((px, py));
                     if let Some(workspace_id) = layout
@@ -1633,18 +1641,17 @@ impl Op {
                 output_id,
             } => {
                 let name = format!("output{output_id}");
-                let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                let Some(output) = layout
+                    .outputs()
+                    .find(|output| output.name() == name)
+                    .cloned()
                 else {
                     return;
                 };
                 if let Some((old_output, old_idx)) =
                     resolve_workspace_target(layout, &reference, false)
                 {
-                    layout.move_workspace_to_output_by_id(
-                        old_idx,
-                        old_output,
-                        &output,
-                    );
+                    layout.move_workspace_to_output_by_id(old_idx, old_output, &output);
                 }
             }
             Op::ViewOffsetGestureBegin {
@@ -1705,11 +1712,7 @@ impl Op {
             Op::CloseOverview => {
                 layout.close_overview();
             }
-            Op::OverviewHitTest {
-                output_idx,
-                px,
-                py,
-            } => {
+            Op::OverviewHitTest { output_idx, px, py } => {
                 let name = format!("output{output_idx}");
                 let Some(output) = layout.outputs().find(|o| o.name() == name).cloned() else {
                     return;
