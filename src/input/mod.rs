@@ -2846,8 +2846,15 @@ impl State {
 
             if is_overview_open && !pointer.is_grabbed() && button == Some(MouseButton::Right) {
                 if let Some((output, ws)) = self.niri.workspace_under_cursor(true) {
+                    // Collection previews can include detached workspaces. Their local
+                    // index is not an index on this output's monitor.
+                    if ws.current_output() != Some(&output) {
+                        return;
+                    }
                     let ws_id = ws.id();
-                    let ws_idx = self.niri.layout.find_workspace_by_id(ws_id).unwrap().0;
+                    let Some((ws_idx, _)) = self.niri.layout.find_workspace_by_id(ws_id) else {
+                        return;
+                    };
 
                     self.niri.layout.focus_output(&output);
 
@@ -3352,9 +3359,15 @@ impl State {
                     } else {
                         if action.begin() {
                             if let Some((output, ws)) = self.niri.workspace_under_cursor(true) {
+                                if ws.current_output() != Some(&output) {
+                                    continue;
+                                }
                                 let ws_id = ws.id();
-                                let ws_idx =
-                                    self.niri.layout.find_workspace_by_id(ws_id).unwrap().0;
+                                let Some((ws_idx, _)) =
+                                    self.niri.layout.find_workspace_by_id(ws_id)
+                                else {
+                                    continue;
+                                };
 
                                 self.niri.layout.view_offset_gesture_begin(
                                     &output,
@@ -3860,7 +3873,14 @@ impl State {
                         };
 
                         if let Some((output, ws)) = output_ws {
-                            let ws_idx = self.niri.layout.find_workspace_by_id(ws.id()).unwrap().0;
+                            if ws.current_output() != Some(&output) {
+                                continue;
+                            }
+                            let Some((ws_idx, _)) =
+                                self.niri.layout.find_workspace_by_id(ws.id())
+                            else {
+                                continue;
+                            };
                             self.niri
                                 .layout
                                 .view_offset_gesture_begin(&output, Some(ws_idx), true);
