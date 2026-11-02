@@ -6284,10 +6284,13 @@ impl Niri {
                             return;
                         }
                     }
-                    // Only visible monitor workspaces are searchable here. Hidden collection
-                    // previews keep hover metadata without changing keyboard selection.
+                    // Other collection previews keep hover metadata without changing keyboard
+                    // selection, including collections currently shown on a different output.
                     let visible_id = self.layout.windows().find_map(|(monitor, mapped)| {
-                        (monitor.is_some() && mapped.window == *window).then_some(mapped.id())
+                        (monitor.is_some_and(|mon| {
+                            new_focus.output.as_ref() == Some(mon.output())
+                        }) && mapped.window == *window)
+                            .then_some(mapped.id())
                     });
                     if visible_id
                         .is_some_and(|id| self.layout.activate_window_without_scrolling(&id))
