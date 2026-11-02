@@ -157,6 +157,17 @@ impl IpcServer {
     }
 
     #[cfg(test)]
+    pub(crate) fn window_snapshot(&self) -> Vec<niri_ipc::Window> {
+        self.event_stream_state
+            .borrow()
+            .windows
+            .windows
+            .values()
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
     pub(crate) fn subscribe_standard_events(&self) -> Receiver<Event> {
         let (events, receiver) = async_channel::bounded(64);
         let (disconnect, _disconnect_receiver) = async_channel::bounded(1);

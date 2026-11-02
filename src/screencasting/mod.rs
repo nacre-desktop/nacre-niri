@@ -725,8 +725,16 @@ impl Niri {
             }
         }
 
-        let dbus = &self.dbus.as_ref().unwrap();
-        let server = dbus.conn_screen_cast.as_ref().unwrap().object_server();
+        // The D-Bus screencast service can be unavailable (including in headless sessions).
+        // Local streams have already been disconnected; there is no remote session to notify.
+        let Some(connection) = self
+            .dbus
+            .as_ref()
+            .and_then(|dbus| dbus.conn_screen_cast.as_ref())
+        else {
+            return;
+        };
+        let server = connection.object_server();
         let path = format!("/org/gnome/Mutter/ScreenCast/Session/u{}", session_id.get());
         if let Ok(iface) = server.interface::<_, mutter_screen_cast::Session>(path) {
             let _span = tracy_client::span!("invoking Session::stop");
