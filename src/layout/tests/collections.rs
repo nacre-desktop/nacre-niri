@@ -100,6 +100,56 @@ fn move_window_between_collections_preserves_window() {
     layout.verify_invariants();
 }
 
+#[test]
+fn overview_hit_testing_selects_detached_column() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    let first = shown(&layout, "output1");
+    layout.create_collection(Some("other".to_owned()));
+    add_window(&mut layout, 2);
+    let other = shown(&layout, "output1");
+    let target = layout.collection_active_workspace(other).unwrap();
+    layout.focus_collection(&WorkspaceReference::Id(first));
+    layout.open_overview();
+    let output = layout.active_output().unwrap().clone();
+    let columns = super::super::collection_overview::columns(layout.collections().iter().map(|c| c.id), first, (1280., 720.).into(), layout.overview_zoom());
+    let column = columns.iter().find(|c| c.id == other).unwrap();
+    let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
+    let workspace = layout.workspace_under(false, &output, point).unwrap().id();
+    assert_eq!(workspace, target);
+    layout.select_overview_workspace(&output, workspace);
+    assert_eq!(shown(&layout, "output1"), other);
+    assert!(!layout.is_overview_open());
+    layout.verify_invariants();
+}
+
+#[test]
+fn overview_drag_moves_window_into_hidden_collection() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    let first = shown(&layout, "output1");
+    layout.create_collection(Some("other".to_owned()));
+    add_window(&mut layout, 2);
+    let other = shown(&layout, "output1");
+    let target = layout.collection_active_workspace(other).unwrap();
+    layout.focus_collection(&WorkspaceReference::Id(first));
+    layout.open_overview();
+    let output = layout.active_output().unwrap().clone();
+    let columns = super::super::collection_overview::columns(layout.collections().iter().map(|c| c.id), first, (1280., 720.).into(), layout.overview_zoom());
+    let source = columns.iter().find(|c| c.id == first).unwrap();
+    let destination = columns.iter().find(|c| c.id == other).unwrap();
+    let from = (source.bounds.loc.x + 40., 360.).into();
+    let to = (destination.bounds.loc.x + 40., 360.).into();
+    assert!(layout.interactive_move_begin(1, &output, from));
+    assert!(layout.interactive_move_update(&1, (300., 0.).into(), output, to));
+    layout.interactive_move_end(&1);
+    assert!(layout.find_workspace_by_id(target).unwrap().1.has_window(&1));
+    assert_eq!(shown(&layout, "output1"), first);
+    layout.verify_invariants();
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: 128, ..ProptestConfig::default() })]
     #[test]

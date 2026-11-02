@@ -86,16 +86,13 @@ impl MoveGrab {
                 // windows are not activated on click. In the overview, we also try to do a nice
                 // synchronized workspace animation.
                 if layout.is_overview_open() {
-                    let res = layout.workspaces().find_map(|(mon, _, ws)| {
+                    let res = layout.workspaces().find_map(|(_, _, ws)| {
                         ws.windows()
                             .any(|w| w.window == self.window)
-                            .then(|| (mon.map(|mon| mon.output().clone()), ws.id()))
+                            .then_some(ws.id())
                     });
-                    if let Some((output, ws_id)) = res {
-                        let output = output.or_else(|| layout.active_output().cloned());
-                        if let Some(output) = output {
-                            layout.select_overview_workspace(&output, ws_id);
-                        }
+                    if let Some(ws_id) = res {
+                        layout.select_overview_workspace(&self.start_output, ws_id);
                     }
                 }
 

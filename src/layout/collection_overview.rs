@@ -81,6 +81,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub(super) fn collection_workspace_under(&self, output: &Output, pos: Point<f64, Logical>, extended: bool) -> Option<&Workspace<W>> {
+        if (16. ..56.).contains(&pos.y) {
+            if let Some(column) = self.collection_columns(output).into_iter().find(|c| c.bounds.contains(pos)) {
+                let active = self.collection_active_workspace(column.id);
+                return self.collection_workspaces(column.id).find(|ws| Some(ws.id()) == active);
+            }
+        }
         let previews = self.collection_previews(output);
         previews.into_iter().find(|p| {
             let mut bounds = p.geometry;
