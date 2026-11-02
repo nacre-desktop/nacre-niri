@@ -47,6 +47,8 @@ const WORKSPACE_DND_EDGE_SCROLL_MOVEMENT: f64 = 1500.;
 
 #[derive(Debug)]
 pub struct Monitor<W: LayoutElement> {
+    /// Stable identity of the collection whose stack is leased to this monitor.
+    pub(super) collection_id: Option<u64>,
     /// Output for this monitor.
     pub(super) output: Output,
     /// Cached name of the output.
@@ -87,7 +89,7 @@ pub struct Monitor<W: LayoutElement> {
     /// Configurable properties of the layout.
     pub(super) options: Rc<Options>,
     /// Layout config overrides for this monitor.
-    layout_config: Option<niri_config::LayoutPart>,
+    pub(super) layout_config: Option<niri_config::LayoutPart>,
 }
 
 #[derive(Debug)]
@@ -328,6 +330,7 @@ impl<W: LayoutElement> Monitor<W> {
         workspaces.push(ws);
 
         Self {
+            collection_id: None,
             output_name: output.name(),
             output,
             scale,

@@ -338,7 +338,9 @@ pub struct Layout<W: LayoutElement> {
     /// Monitors and workspaes in the layout.
     monitor_set: MonitorSet<W>,
     /// Collection identity registry, retained independently of connected outputs.
-    collections: Vec<collections::Collection>,
+    collections: Vec<collections::Collection<W>>,
+    /// Collection to restore when a borrowed output collection returns home.
+    collection_returns: HashMap<String, u64>,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -699,6 +701,7 @@ impl<W: LayoutElement> Layout<W> {
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
             collections: vec![],
+            collection_returns: HashMap::new(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -725,6 +728,7 @@ impl<W: LayoutElement> Layout<W> {
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
             collections: vec![],
+            collection_returns: HashMap::new(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -738,17 +742,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn add_output(&mut self, output: Output, layout_config: Option<LayoutPart>) {
-        let output_name = output.name();
-        if !self
-            .collections
-            .iter()
-            .any(|c| c.original_output.as_deref() == Some(output_name.as_str()))
-        {
-            self.collections.push(collections::Collection::new(
-                None,
-                Some(output_name.clone()),
-                false,
-            ));
+        if self.options.layout.collections.enabled {
+            self.add_collection_output(output, layout_config);
+            return;
         }
         self.monitor_set = match mem::take(&mut self.monitor_set) {
             MonitorSet::Normal {
@@ -858,6 +854,10 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn remove_output(&mut self, output: &Output) {
+        if self.options.layout.collections.enabled {
+            self.remove_collection_output(output);
+            return;
+        }
         self.monitor_set = match mem::take(&mut self.monitor_set) {
             MonitorSet::Normal {
                 mut monitors,
@@ -913,53 +913,6 @@ impl<W: LayoutElement> Layout<W> {
                 panic!("tried to remove output when there were already none")
             }
         }
-    }
-
-    /// Returns the stable collections known to the layout, including collections whose original
-    /// output is currently disconnected.
-    pub fn collections(&self) -> Vec<niri_ipc::Collection> {
-        let mut result = Vec::with_capacity(self.collections.len());
-        for (idx, collection) in self.collections.iter().enumerate() {
-            let shown_monitor = self.monitors().find(|monitor| {
-                monitor.output_name() == collection.original_output.as_deref().unwrap_or_default()
-            });
-            let active = shown_monitor.is_some_and(|monitor| {
-                self.active_monitor_ref()
-                    .is_some_and(|active| active.output() == monitor.output())
-            });
-            let workspace_ids = self
-                .workspaces()
-                .filter_map(|(_, _, workspace)| {
-                    collection.original_output.as_deref().and_then(|name| {
-                        workspace
-                            .original_output
-                            .matches_name(name)
-                            .then(|| workspace.id().get())
-                    })
-                })
-                .collect();
-            result.push(niri_ipc::Collection {
-                id: collection.id,
-                idx,
-                name: collection.name.clone(),
-                output: shown_monitor.map(|monitor| monitor.output_name().clone()),
-                is_active: active,
-                workspace_ids,
-            });
-        }
-        result
-    }
-
-    /// Creates a virtual collection. It becomes persistent when configured by name.
-    pub fn create_collection(&mut self, name: Option<String>) -> u64 {
-        let collection = collections::Collection::new(name, None, false);
-        let id = collection.id;
-        self.collections.push(collection);
-        id
-    }
-
-    pub(super) fn collection_registry(&self) -> &[collections::Collection] {
-        &self.collections
     }
 
     pub fn add_column_by_idx(
@@ -1213,6 +1166,14 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for c in &mut self.collections {
+            if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.has_window(window)) {
+                let removed = ws.remove_tile(window, transaction);
+                self.clean_up_collections();
+                return Some(removed);
+            }
+        }
+
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1291,6 +1252,13 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for c in &mut self.collections {
+            if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.has_window(window)) {
+                ws.update_window(window, serial);
+                return;
+            }
+        }
+
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1314,6 +1282,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn find_workspace_by_id(&self, id: WorkspaceId) -> Option<(usize, &Workspace<W>)> {
+        for c in &self.collections {
+            if let Some((idx, ws)) = c.workspaces.iter().enumerate().find(|(_, ws)| ws.id() == id) { return Some((idx, ws)); }
+        }
         match &self.monitor_set {
             MonitorSet::Normal { ref monitors, .. } => {
                 for mon in monitors {
@@ -1340,6 +1311,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn find_workspace_by_name(&self, workspace_name: &str) -> Option<(usize, &Workspace<W>)> {
+        for c in &self.collections {
+            if let Some((idx, ws)) = c.workspaces.iter().enumerate().find(|(_, ws)| ws.name().is_some_and(|name| name.eq_ignore_ascii_case(workspace_name))) { return Some((idx, ws)); }
+        }
         match &self.monitor_set {
             MonitorSet::Normal { ref monitors, .. } => {
                 for mon in monitors {
@@ -1433,6 +1407,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for c in &self.collections {
+            for ws in &c.workspaces {
+                if let Some(win) = ws.find_wl_surface(wl_surface) { return Some((win, None)); }
+            }
+        }
         match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1465,6 +1444,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces {
+                if let Some(win) = ws.find_wl_surface_mut(wl_surface) { return Some((win, None)); }
+            }
+        }
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1576,6 +1560,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window(&mut self, window: &W::Id) {
+        if let Some(id) = self.collections.iter().find(|c| c.workspaces.iter().any(|ws| ws.has_window(window))).map(|c| c.id) {
+            self.focus_collection(&WorkspaceReference::Id(id));
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == window {
                 return;
@@ -1612,6 +1599,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window_without_raising(&mut self, window: &W::Id) {
+        if let Some(id) = self.collections.iter().find(|c| c.workspaces.iter().any(|ws| ws.has_window(window))).map(|c| c.id) {
+            self.focus_collection(&WorkspaceReference::Id(id));
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == window {
                 return;
@@ -1739,6 +1729,11 @@ impl<W: LayoutElement> Layout<W> {
             f(move_.tile.window(), Some(&move_.output), None, layout);
         }
 
+        for c in &self.collections {
+            for ws in &c.workspaces {
+                for (tile, layout) in ws.tiles_with_ipc_layouts() { f(tile.window(), None, Some(ws.id()), layout); }
+            }
+        }
         match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1764,6 +1759,11 @@ impl<W: LayoutElement> Layout<W> {
             f(move_.tile.window_mut(), Some(&move_.output));
         }
 
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces {
+                for win in ws.windows_mut() { f(win, None); }
+            }
+        }
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -3047,7 +3047,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces { ws.update_config(options.clone()); }
+        }
         self.options = options;
+        self.configure_collections();
     }
 
     pub fn toggle_width(&mut self, forwards: bool) {
@@ -4907,6 +4911,11 @@ impl<W: LayoutElement> Layout<W> {
     pub fn refresh(&mut self, is_active: bool) {
         let _span = tracy_client::span!("Layout::refresh");
 
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces { ws.refresh(false, false); }
+        }
+        self.clean_up_collections();
+
         self.is_active = is_active;
 
         let mut ongoing_scrolling_dnd = self.dnd.is_some().then_some(true);
@@ -5016,7 +5025,9 @@ impl<W: LayoutElement> Layout<W> {
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
-        iter_normal.chain(iter_no_outputs)
+        iter_normal.chain(iter_no_outputs).chain(
+            self.collections.iter().flat_map(|c| c.workspaces.iter().enumerate().map(|(i, ws)| (None, i, ws)))
+        )
     }
 
     pub fn workspaces_mut(&mut self) -> impl Iterator<Item = &mut Workspace<W>> + '_ {
@@ -5042,7 +5053,7 @@ impl<W: LayoutElement> Layout<W> {
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
-        iter_normal.chain(iter_no_outputs)
+        iter_normal.chain(iter_no_outputs).chain(self.collections.iter_mut().flat_map(|c| c.workspaces.iter_mut()))
     }
 
     pub fn windows(&self) -> impl Iterator<Item = (Option<&Monitor<W>>, &W)> {
