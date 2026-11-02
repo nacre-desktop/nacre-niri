@@ -411,6 +411,54 @@ fn arbitrary_column_display() -> impl Strategy<Value = ColumnDisplay> {
 }
 
 #[derive(Debug, Clone, Arbitrary)]
+enum WorkspaceReferenceOp {
+    Index(#[proptest(strategy = "1..=5usize")] usize),
+    Name(#[proptest(strategy = "1..=5usize")] usize),
+    ExistingId(#[proptest(strategy = "0..=5usize")] usize),
+}
+
+impl WorkspaceReferenceOp {
+    fn resolve(&self, layout: &Layout<TestWindow>) -> WorkspaceReference {
+        match self {
+            Self::Index(index) => WorkspaceReference::Index(*index as u8),
+            Self::Name(index) => WorkspaceReference::Name(format!("ws{index}")),
+            Self::ExistingId(index) => layout
+                .workspaces()
+                .nth(*index)
+                .map(|(_, _, workspace)| WorkspaceReference::Id(workspace.id().get()))
+                .unwrap_or(WorkspaceReference::Id(u64::MAX)),
+        }
+    }
+}
+
+fn resolve_workspace_target(
+    layout: &mut Layout<TestWindow>,
+    reference: &WorkspaceReferenceOp,
+) -> Option<(Output, usize)> {
+    let reference = reference.resolve(layout);
+    layout.show_workspace_collection(&reference);
+    match reference {
+        WorkspaceReference::Index(index) => {
+            let idx = index.saturating_sub(1) as usize;
+            let monitor = layout.active_monitor_ref()?;
+            monitor.workspaces.get(idx)?;
+            Some((monitor.output().clone(), idx))
+        }
+        WorkspaceReference::Name(name) => layout.workspaces().find_map(|(monitor, idx, ws)| {
+            (monitor.is_some()
+                && ws
+                    .name()
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&name)))
+            .then(|| (monitor.unwrap().output().clone(), idx))
+        }),
+        WorkspaceReference::Id(id) => layout.workspaces().find_map(|(monitor, idx, ws)| {
+            (monitor.is_some() && ws.id().get() == id)
+                .then(|| (monitor.unwrap().output().clone(), idx))
+        }),
+    }
+}
+
+#[derive(Debug, Clone, Arbitrary)]
 enum Op {
     AddOutput(#[proptest(strategy = "1..=5usize")] usize),
     AddScaledOutput {
@@ -496,6 +544,7 @@ enum Op {
     FocusWindowUpOrColumnRight,
     FocusWindowOrWorkspaceDown,
     FocusWindowOrWorkspaceUp,
+    FocusWindowPrevious,
     FocusWindow(#[proptest(strategy = "1..=5usize")] usize),
     HoverFocusWindow(#[proptest(strategy = "1..=5usize")] usize),
     FocusWindowInColumn(#[proptest(strategy = "1..=5u8")] u8),
@@ -536,6 +585,21 @@ enum Op {
     FocusWorkspaceDown,
     FocusWorkspaceUp,
     FocusWorkspace(#[proptest(strategy = "0..=4usize")] usize),
+    FocusWorkspaceByReference(WorkspaceReferenceOp),
+    FocusWorkspaceUnderOutput {
+        #[proptest(strategy = "1..=5usize")]
+        output_id: usize,
+        up: bool,
+    },
+    FocusColumnUnderMouse {
+        #[proptest(strategy = "1..=5usize")]
+        output_id: usize,
+        #[proptest(strategy = "-20000f64..20000f64")]
+        px: f64,
+        #[proptest(strategy = "-20000f64..20000f64")]
+        py: f64,
+        right: bool,
+    },
     FocusWorkspaceAutoBackAndForth(#[proptest(strategy = "0..=4usize")] usize),
     FocusWorkspacePrevious,
     MoveWindowToWorkspaceDown(bool),
@@ -546,14 +610,26 @@ enum Op {
         #[proptest(strategy = "0..=4usize")]
         workspace_idx: usize,
     },
+    MoveWindowToWorkspaceByReference {
+        #[proptest(strategy = "proptest::option::of(1..=5usize)")]
+        window_id: Option<usize>,
+        reference: WorkspaceReferenceOp,
+        focus: bool,
+    },
     MoveColumnToWorkspaceDown(bool),
     MoveColumnToWorkspaceUp(bool),
     MoveColumnToWorkspace(#[proptest(strategy = "0..=4usize")] usize, bool),
+    MoveColumnToWorkspaceByReference(WorkspaceReferenceOp, bool),
     MoveWorkspaceDown,
     MoveWorkspaceUp,
     MoveWorkspaceToIndex {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
         ws_name: Option<usize>,
+        #[proptest(strategy = "0..=4usize")]
+        target_idx: usize,
+    },
+    MoveWorkspaceToIndexByReference {
+        reference: WorkspaceReferenceOp,
         #[proptest(strategy = "0..=4usize")]
         target_idx: usize,
     },
@@ -569,10 +645,16 @@ enum Op {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
         ws_name: Option<usize>,
     },
+    SetWorkspaceNameByReference {
+        #[proptest(strategy = "1..=5usize")]
+        new_ws_name: usize,
+        reference: WorkspaceReferenceOp,
+    },
     UnsetWorkspaceName {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
         ws_name: Option<usize>,
     },
+    UnsetWorkspaceNameByReference(WorkspaceReferenceOp),
     MoveWindowToOutput {
         #[proptest(strategy = "proptest::option::of(1..=5usize)")]
         window_id: Option<usize>,
@@ -672,6 +754,11 @@ enum Op {
     },
     CompleteAnimations,
     MoveWorkspaceToOutput(#[proptest(strategy = "1..=5usize")] usize),
+    MoveWorkspaceByReferenceToOutput {
+        reference: WorkspaceReferenceOp,
+        #[proptest(strategy = "1..=5usize")]
+        output_id: usize,
+    },
     ViewOffsetGestureBegin {
         #[proptest(strategy = "1..=5usize")]
         output_idx: usize,
@@ -955,10 +1042,21 @@ impl Op {
                     ws_name.map(|ws_name| WorkspaceReference::Name(format!("ws{ws_name}")));
                 layout.set_workspace_name(format!("ws{new_ws_name}"), ws_ref);
             }
+            Op::SetWorkspaceNameByReference {
+                new_ws_name,
+                reference,
+            } => {
+                let reference = reference.resolve(layout);
+                layout.set_workspace_name(format!("ws{new_ws_name}"), Some(reference));
+            }
             Op::UnsetWorkspaceName { ws_name } => {
                 let ws_ref =
                     ws_name.map(|ws_name| WorkspaceReference::Name(format!("ws{ws_name}")));
                 layout.unset_workspace_name(ws_ref);
+            }
+            Op::UnsetWorkspaceNameByReference(reference) => {
+                let reference = reference.resolve(layout);
+                layout.unset_workspace_name(Some(reference));
             }
             Op::AddWindow { mut params } => {
                 if layout.has_window(&params.id) {
@@ -1111,6 +1209,16 @@ impl Op {
             Op::FocusWindowOrWorkspaceDown => layout.focus_window_or_workspace_down(),
             Op::FocusWindowOrWorkspaceUp => layout.focus_window_or_workspace_up(),
             Op::FocusWindow(id) => layout.activate_window(&id),
+            Op::FocusWindowPrevious => {
+                let current = layout.focus().map(|window| window.id().clone());
+                if let Some(previous) = layout
+                    .windows()
+                    .map(|(_, window)| window.id().clone())
+                    .find(|id| Some(id) != current.as_ref())
+                {
+                    layout.activate_window(&previous);
+                }
+            }
             Op::HoverFocusWindow(id) => {
                 layout.activate_window_without_scrolling(&id);
             }
@@ -1166,6 +1274,52 @@ impl Op {
             Op::FocusWorkspaceDown => layout.switch_workspace_down(),
             Op::FocusWorkspaceUp => layout.switch_workspace_up(),
             Op::FocusWorkspace(idx) => layout.switch_workspace(idx),
+            Op::FocusWorkspaceByReference(reference) => {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
+                    layout.focus_output(&output);
+                    layout.switch_workspace(idx);
+                }
+            }
+            Op::FocusWorkspaceUnderOutput { output_id, up } => {
+                let name = format!("output{output_id}");
+                if let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                {
+                    if let Some(monitor) = layout.monitor_for_output_mut(&output) {
+                        if up {
+                            monitor.switch_workspace_up();
+                        } else {
+                            monitor.switch_workspace_down();
+                        }
+                    }
+                }
+            }
+            Op::FocusColumnUnderMouse {
+                output_id,
+                px,
+                py,
+                right,
+            } => {
+                let name = format!("output{output_id}");
+                if let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                {
+                    let position = Point::from((px, py));
+                    if let Some(workspace_id) = layout
+                        .workspace_under(true, &output, position)
+                        .map(|workspace| workspace.id())
+                    {
+                        if let Some(workspace) = layout
+                            .workspaces_mut()
+                            .find(|workspace| workspace.id() == workspace_id)
+                        {
+                            if right {
+                                workspace.focus_right();
+                            } else {
+                                workspace.focus_left();
+                            }
+                        }
+                    }
+                }
+            }
             Op::FocusWorkspaceAutoBackAndForth(idx) => {
                 layout.switch_workspace_auto_back_and_forth(idx)
             }
@@ -1179,9 +1333,37 @@ impl Op {
                 let window_id = window_id.filter(|id| layout.has_window(id));
                 layout.move_to_workspace(window_id.as_ref(), workspace_idx, ActivateWindow::Smart);
             }
+            Op::MoveWindowToWorkspaceByReference {
+                window_id,
+                reference,
+                focus,
+            } => {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
+                    let window_id = window_id.filter(|id| layout.has_window(id));
+                    let activate = if focus {
+                        ActivateWindow::Smart
+                    } else {
+                        ActivateWindow::No
+                    };
+                    if layout.active_output() == Some(&output) {
+                        layout.move_to_workspace(window_id.as_ref(), idx, activate);
+                    } else {
+                        layout.move_to_output(window_id.as_ref(), &output, Some(idx), activate);
+                    }
+                }
+            }
             Op::MoveColumnToWorkspaceDown(focus) => layout.move_column_to_workspace_down(focus),
             Op::MoveColumnToWorkspaceUp(focus) => layout.move_column_to_workspace_up(focus),
             Op::MoveColumnToWorkspace(idx, focus) => layout.move_column_to_workspace(idx, focus),
+            Op::MoveColumnToWorkspaceByReference(reference, focus) => {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
+                    if layout.active_output() == Some(&output) {
+                        layout.move_column_to_workspace(idx, focus);
+                    } else {
+                        layout.move_column_to_output(&output, Some(idx), focus);
+                    }
+                }
+            }
             Op::MoveWindowToOutput {
                 window_id,
                 output_id: id,
@@ -1247,6 +1429,14 @@ impl Op {
                 ws_name: None,
                 target_idx,
             } => layout.move_workspace_to_idx(None, target_idx),
+            Op::MoveWorkspaceToIndexByReference {
+                reference,
+                target_idx,
+            } => {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
+                    layout.move_workspace_to_idx(Some((Some(output), idx)), target_idx);
+                }
+            }
             Op::MoveWorkspaceToMonitor {
                 ws_name: None,
                 output_id: id,
@@ -1424,6 +1614,23 @@ impl Op {
                 };
 
                 layout.move_workspace_to_output(&output);
+            }
+            Op::MoveWorkspaceByReferenceToOutput {
+                reference,
+                output_id,
+            } => {
+                let name = format!("output{output_id}");
+                let Some(output) = layout.outputs().find(|output| output.name() == name).cloned()
+                else {
+                    return;
+                };
+                if let Some((old_output, old_idx)) = resolve_workspace_target(layout, &reference) {
+                    layout.move_workspace_to_output_by_id(
+                        old_idx,
+                        Some(old_output),
+                        &output,
+                    );
+                }
             }
             Op::ViewOffsetGestureBegin {
                 output_idx: id,
