@@ -558,60 +558,6 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
     Ok(response)
 }
 
-#[cfg(test)]
-mod nacre_hover_tests {
-    use super::*;
-
-    #[test]
-    fn overview_hover_is_opt_in_and_does_not_leak_to_regular_streams() {
-        let server = IpcServer {
-            socket_path: None,
-            event_streams: Rc::new(RefCell::new(Vec::new())),
-            event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
-            overview_hover: Rc::new(Cell::new(None)),
-        };
-        let (regular_tx, regular_rx) = async_channel::bounded(4);
-        let (hover_tx, hover_rx) = async_channel::bounded(4);
-        let (regular_disconnect, _) = async_channel::bounded(1);
-        let (hover_disconnect, _) = async_channel::bounded(1);
-        server.event_streams.borrow_mut().extend([
-            EventStreamSender {
-                overview_hover: false,
-                events: regular_tx,
-                disconnect: regular_disconnect,
-            },
-            EventStreamSender {
-                overview_hover: true,
-                events: hover_tx,
-                disconnect: hover_disconnect,
-            },
-        ]);
-
-        assert!(server.has_overview_hover_clients());
-        server.update_overview_hover(Some(7));
-        assert!(regular_rx.try_recv().is_err());
-        assert!(matches!(
-            hover_rx.try_recv(),
-            Ok(Event::NacreOverviewHoverChanged { id: Some(7) })
-        ));
-        server.update_overview_hover(Some(7));
-        assert!(hover_rx.try_recv().is_err());
-        server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
-        for receiver in [&regular_rx, &hover_rx] {
-            assert!(matches!(
-                receiver.try_recv(),
-                Ok(Event::OverviewOpenedOrClosed { is_open: true })
-            ));
-        }
-        server.update_overview_hover(None);
-        assert!(regular_rx.try_recv().is_err());
-        assert!(matches!(
-            hover_rx.try_recv(),
-            Ok(Event::NacreOverviewHoverChanged { id: None })
-        ));
-    }
-}
-
 fn validate_action(action: &Action) -> Result<(), String> {
     if let Action::Screenshot { path, .. }
     | Action::ScreenshotScreen { path, .. }
@@ -1107,5 +1053,59 @@ impl State {
         let event = Event::ScreenshotCaptured { path };
         state.apply(event.clone());
         server.send_event(event);
+    }
+}
+
+#[cfg(test)]
+mod nacre_hover_tests {
+    use super::*;
+
+    #[test]
+    fn overview_hover_is_opt_in_and_does_not_leak_to_regular_streams() {
+        let server = IpcServer {
+            socket_path: None,
+            event_streams: Rc::new(RefCell::new(Vec::new())),
+            event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
+            overview_hover: Rc::new(Cell::new(None)),
+        };
+        let (regular_tx, regular_rx) = async_channel::bounded(4);
+        let (hover_tx, hover_rx) = async_channel::bounded(4);
+        let (regular_disconnect, _) = async_channel::bounded(1);
+        let (hover_disconnect, _) = async_channel::bounded(1);
+        server.event_streams.borrow_mut().extend([
+            EventStreamSender {
+                overview_hover: false,
+                events: regular_tx,
+                disconnect: regular_disconnect,
+            },
+            EventStreamSender {
+                overview_hover: true,
+                events: hover_tx,
+                disconnect: hover_disconnect,
+            },
+        ]);
+
+        assert!(server.has_overview_hover_clients());
+        server.update_overview_hover(Some(7));
+        assert!(regular_rx.try_recv().is_err());
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::NacreOverviewHoverChanged { id: Some(7) })
+        ));
+        server.update_overview_hover(Some(7));
+        assert!(hover_rx.try_recv().is_err());
+        server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
+        for receiver in [&regular_rx, &hover_rx] {
+            assert!(matches!(
+                receiver.try_recv(),
+                Ok(Event::OverviewOpenedOrClosed { is_open: true })
+            ));
+        }
+        server.update_overview_hover(None);
+        assert!(regular_rx.try_recv().is_err());
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::NacreOverviewHoverChanged { id: None })
+        ));
     }
 }

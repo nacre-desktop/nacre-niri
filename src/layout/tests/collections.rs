@@ -184,7 +184,7 @@ fn overview_hit_testing_selects_detached_column() {
     );
     let column = columns.iter().find(|c| c.id == other).unwrap();
     let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
-    let focused = layout.focus().unwrap().id().clone();
+    let focused = *layout.focus().unwrap().id();
     let camera = layout.active_monitor().unwrap().workspace_render_idx();
     // The workspace center may be empty: test windows keep a small client buffer until
     // their first configure acknowledgement. Aim inside the actual rendered tile.
