@@ -648,6 +648,40 @@ mod tests {
         assert_eq!(config.input.keyboard.repeat_rate, 25);
     }
 
+    #[test]
+    fn collections_default_enabled_and_decode_names() {
+        let config = do_parse("");
+        assert!(config.layout.collections.enabled);
+        assert!(config.layout.collections.names.is_empty());
+
+        let config = do_parse(
+            r#"layout { collections { on; collection "work" {}; collection "home" {} } }"#,
+        );
+        assert!(config.layout.collections.enabled);
+        assert_eq!(config.layout.collections.names, ["work", "home"]);
+
+        let config = do_parse(r#"layout { collections { off; collection "work" {} } }"#);
+        assert!(!config.layout.collections.enabled);
+        assert_eq!(config.layout.collections.names, ["work"]);
+    }
+
+    #[test]
+    fn collection_actions_decode_with_optional_create_name() {
+        let config = do_parse(
+            r#"binds {
+                Mod+1 { create-collection; }
+                Mod+2 { create-collection "work"; }
+                Mod+3 { focus-collection 2; }
+                Mod+4 { focus-collection "work"; }
+            }"#,
+        );
+        assert_eq!(config.binds.0.len(), 4);
+        assert_eq!(config.binds.0[0].action, Action::CreateCollection(None));
+        assert_eq!(config.binds.0[1].action, Action::CreateCollection(Some("work".into())));
+        assert_eq!(config.binds.0[2].action, Action::FocusCollection(WorkspaceReference::Index(2)));
+        assert_eq!(config.binds.0[3].action, Action::FocusCollection(WorkspaceReference::Name("work".into())));
+    }
+
     #[track_caller]
     fn do_parse(text: &str) -> Config {
         Config::parse_mem(text)

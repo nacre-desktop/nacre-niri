@@ -83,12 +83,16 @@ impl MergeWith<LayoutPart> for Layout {
         );
 
         if let Some(collections) = &part.collections {
-            if let Some(on) = collections.on { self.collections.enabled = on.0; }
-            for collection in &collections.collection {
-                if !self.collections.names.contains(&collection.name) {
-                    self.collections.names.push(collection.name.clone());
-                }
+            if let Some(on) = collections.on {
+                self.collections.enabled = on.0;
             }
+            // A present block describes the complete configured named-collection list. This
+            // also lets config reloads remove names that were present in the previous config.
+            self.collections.names = collections
+                .collection
+                .iter()
+                .map(|collection| collection.name.clone())
+                .collect();
         }
 
         if let Some(x) = part.default_column_width {
@@ -148,7 +152,12 @@ pub struct Collections {
 }
 
 impl Default for Collections {
-    fn default() -> Self { Self { enabled: true, names: Vec::new() } }
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            names: Vec::new(),
+        }
+    }
 }
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]

@@ -346,3 +346,31 @@ impl EventStreamStatePart for CastsState {
         None
     }
 }
+
+#[cfg(test)]
+mod collections_tests {
+    use super::*;
+
+    #[test]
+    fn collection_event_state_applies_and_replicates() {
+        let mut state = CollectionsState::default();
+        let collections = vec![Collection {
+            id: 7,
+            idx: 2,
+            name: Some("work".into()),
+            output: None,
+            is_active: true,
+            workspace_ids: vec![21, 22],
+        }];
+        assert!(state
+            .apply(Event::CollectionsChanged { collections: collections.clone() })
+            .is_none());
+        assert_eq!(state.collections, collections);
+
+        let mut replicated = CollectionsState::default();
+        for event in state.replicate() {
+            assert!(replicated.apply(event).is_none());
+        }
+        assert_eq!(replicated.collections, collections);
+    }
+}
