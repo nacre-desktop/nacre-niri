@@ -1777,6 +1777,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ {
+        let overview = self.collection_overview_is_open();
+        let moving_output = output.clone();
+        let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
             panic!()
         };
@@ -1785,17 +1788,28 @@ impl<W: LayoutElement> Layout<W> {
             .interactive_move
             .as_ref()
             .and_then(|x| x.moving())
-            .filter(|move_| move_.output == *output)
+            .filter(move |move_| overview || move_.output == moving_output)
             .map(|move_| move_.tile.window())
             .into_iter();
 
-        let mon = monitors.iter().find(|mon| &mon.output == output).unwrap();
-        let mon_windows = mon.workspaces.iter().flat_map(|ws| ws.windows());
+        let mon_windows = monitors
+            .iter()
+            .filter(move |mon| overview || mon.output == output)
+            .flat_map(|mon| mon.workspaces.iter().flat_map(|ws| ws.windows()));
+        let hidden_windows = self
+            .collections
+            .iter()
+            .flat_map(|c| c.workspaces.iter())
+            .flat_map(|ws| ws.windows())
+            .filter(move |_| overview);
 
-        moving_window.chain(mon_windows)
+        moving_window.chain(mon_windows).chain(hidden_windows)
     }
 
     pub fn windows_for_output_mut(&mut self, output: &Output) -> impl Iterator<Item = &mut W> + '_ {
+        let overview = self.collection_overview_is_open();
+        let moving_output = output.clone();
+        let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
             panic!()
         };
@@ -1804,17 +1818,22 @@ impl<W: LayoutElement> Layout<W> {
             .interactive_move
             .as_mut()
             .and_then(|x| x.moving_mut())
-            .filter(|move_| move_.output == *output)
+            .filter(move |move_| overview || move_.output == moving_output)
             .map(|move_| move_.tile.window_mut())
             .into_iter();
 
-        let mon = monitors
+        let mon_windows = monitors
             .iter_mut()
-            .find(|mon| &mon.output == output)
-            .unwrap();
-        let mon_windows = mon.workspaces.iter_mut().flat_map(|ws| ws.windows_mut());
+            .filter(move |mon| overview || mon.output == output)
+            .flat_map(|mon| mon.workspaces.iter_mut().flat_map(|ws| ws.windows_mut()));
+        let hidden_windows = self
+            .collections
+            .iter_mut()
+            .flat_map(|c| c.workspaces.iter_mut())
+            .flat_map(|ws| ws.windows_mut())
+            .filter(move |_| overview);
 
-        moving_window.chain(mon_windows)
+        moving_window.chain(mon_windows).chain(hidden_windows)
     }
 
     pub fn with_windows(
@@ -4484,8 +4503,8 @@ impl<W: LayoutElement> Layout<W> {
 
         if self.collection_overview_is_open() {
             move_ = match self.drop_in_collection(move_) {
-                Ok(()) => return,
-                Err(moving) => moving,
+                None => return,
+                Some(moving) => moving,
             };
         }
 
@@ -5310,10 +5329,7 @@ impl<W: LayoutElement> Layout<W> {
     pub fn workspaces(
         &self,
     ) -> impl Iterator<Item = (Option<&Monitor<W>>, usize, &Workspace<W>)> + '_ {
-        let iter_normal;
-        let iter_no_outputs;
-
-        match &self.monitor_set {
+        let (iter_normal, iter_no_outputs) = match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 let it = monitors.iter().flat_map(|mon| {
                     mon.workspaces
@@ -5322,8 +5338,7 @@ impl<W: LayoutElement> Layout<W> {
                         .map(move |(idx, ws)| (Some(mon), idx, ws))
                 });
 
-                iter_normal = Some(it);
-                iter_no_outputs = None;
+                (Some(it), None)
             }
             MonitorSet::NoOutputs { workspaces } => {
                 let it = workspaces
@@ -5331,10 +5346,9 @@ impl<W: LayoutElement> Layout<W> {
                     .enumerate()
                     .map(|(idx, ws)| (None, idx, ws));
 
-                iter_normal = None;
-                iter_no_outputs = Some(it);
+                (None, Some(it))
             }
-        }
+        };
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
@@ -5346,25 +5360,20 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn workspaces_mut(&mut self) -> impl Iterator<Item = &mut Workspace<W>> + '_ {
-        let iter_normal;
-        let iter_no_outputs;
-
-        match &mut self.monitor_set {
+        let (iter_normal, iter_no_outputs) = match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 let it = monitors
                     .iter_mut()
                     .flat_map(|mon| mon.workspaces.iter_mut());
 
-                iter_normal = Some(it);
-                iter_no_outputs = None;
+                (Some(it), None)
             }
             MonitorSet::NoOutputs { workspaces } => {
                 let it = workspaces.iter_mut();
 
-                iter_normal = None;
-                iter_no_outputs = Some(it);
+                (None, Some(it))
             }
-        }
+        };
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();

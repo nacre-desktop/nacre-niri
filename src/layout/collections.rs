@@ -405,6 +405,18 @@ impl<W: LayoutElement> Layout<W> {
                 .collection_returns
                 .remove(&borrower)
                 .filter(|id| self.collections.iter().any(|c| c.id == *id))
+                .or_else(|| {
+                    // A collection may have been swapped while both outputs were connected,
+                    // before the unplug. Reuse the borrower's own hidden home in that case.
+                    self.collections
+                        .iter()
+                        .find(|c| {
+                            c.id != id
+                                && c.original_output.as_deref() == Some(&borrower)
+                                && !self.monitors().any(|m| m.collection_id == Some(c.id))
+                        })
+                        .map(|c| c.id)
+                })
                 .unwrap_or_else(|| self.new_collection(None, Some(borrower.clone()), false));
             self.show_collection_on_output(&borrower, fallback);
         }

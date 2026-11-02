@@ -4371,7 +4371,11 @@ impl Niri {
             self.layout
                 .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
 
-            mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
+            if !self.layout.collection_overview_is_open() {
+                mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| {
+                    push(elem.into())
+                });
+            }
 
             if self.layout.collection_overview_is_open() {
                 self.layout
@@ -4401,7 +4405,11 @@ impl Niri {
             self.layout
                 .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
 
-            mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
+            if !self.layout.collection_overview_is_open() {
+                mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| {
+                    push(elem.into())
+                });
+            }
 
             // Macro instead of closure to avoid borrowing push().
             macro_rules! process {
@@ -4807,8 +4815,8 @@ impl Niri {
             );
         }
 
-        // We're only updating the current output's windows and layer surfaces. This should be fine
-        // as in niri they can only be rendered on a single output at a time.
+        // Include collection previews when the overview is open: the same window can then be
+        // rendered on more than one output. The render states determine its primary output.
         //
         // The reason to do this at all is that it keeps track of whether the surface is visible or
         // not in a unified way with the pointer surfaces, which makes the logic elsewhere simpler.

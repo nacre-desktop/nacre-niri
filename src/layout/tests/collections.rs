@@ -69,6 +69,27 @@ fn replug_restores_collection_and_laptop_previous() {
 }
 
 #[test]
+fn replug_after_connected_swap_restores_both_home_collections() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    let laptop = shown(&layout, "output1");
+    Op::AddOutput(2).apply(&mut layout);
+    Op::FocusOutput(2).apply(&mut layout);
+    add_window(&mut layout, 2);
+    let external = shown(&layout, "output2");
+    Op::FocusOutput(1).apply(&mut layout);
+    layout.focus_collection(&WorkspaceReference::Id(external));
+    assert_eq!(shown(&layout, "output2"), laptop);
+    Op::RemoveOutput(2).apply(&mut layout);
+    Op::AddOutput(2).apply(&mut layout);
+    assert_eq!(shown(&layout, "output1"), laptop);
+    assert_eq!(shown(&layout, "output2"), external);
+    assert_eq!(layout.collections().len(), 2);
+    layout.verify_invariants();
+}
+
+#[test]
 fn emptied_detached_collection_is_removed() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
@@ -145,6 +166,16 @@ fn overview_hit_testing_selects_detached_column() {
     layout.focus_collection(&WorkspaceReference::Id(first));
     layout.open_overview();
     let output = layout.active_output().unwrap().clone();
+    // Hidden previews participate in presentation feedback and frame callbacks, while their
+    // actual workspace output remains detached.
+    assert_eq!(layout.windows_for_output(&output).count(), 2);
+    assert_eq!(layout.windows_for_output_mut(&output).count(), 2);
+    assert!(layout
+        .find_workspace_by_id(target)
+        .unwrap()
+        .1
+        .current_output()
+        .is_none());
     let columns = super::super::collection_overview::columns(
         layout.collections().iter().map(|c| c.id),
         first,

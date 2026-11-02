@@ -192,7 +192,7 @@ impl<W: LayoutElement> Layout<W> {
     pub(super) fn drop_in_collection(
         &mut self,
         mut moving: InteractiveMoveData<W>,
-    ) -> Result<(), InteractiveMoveData<W>> {
+    ) -> Option<InteractiveMoveData<W>> {
         let pos = moving.pointer_pos_within_output;
         let previews = self.collection_previews(&moving.output);
         let Some(preview) = previews
@@ -204,7 +204,7 @@ impl<W: LayoutElement> Layout<W> {
                 distance(a).total_cmp(&distance(b))
             })
         else {
-            return Err(moving);
+            return Some(moving);
         };
         let id = preview.id;
         let workspace_id = preview.workspace.id();
@@ -280,7 +280,7 @@ impl<W: LayoutElement> Layout<W> {
             ws.refresh(false, false);
         }
         self.clean_up_collections();
-        Ok(())
+        None
     }
 
     /// Select a workspace by identity so a click in another collection cannot resolve against
