@@ -424,8 +424,12 @@ enum Op {
     RemoveOutput(#[proptest(strategy = "1..=5usize")] usize),
     CreateCollection(#[proptest(strategy = "prop::option::of(1..=5usize)")] Option<usize>),
     FocusCollection(#[proptest(strategy = "1..=5u8")] u8),
+    FocusCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
+    FocusCollectionById(#[proptest(strategy = "0..=4usize")] usize),
     CycleCollection(bool),
     MoveWindowToCollection(#[proptest(strategy = "1..=5u8")] u8),
+    MoveWindowToCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
+    MoveWindowToCollectionById(#[proptest(strategy = "0..=4usize")] usize),
     MoveWindowToCollectionRelative(bool),
     FocusOutput(#[proptest(strategy = "1..=5usize")] usize),
     UpdateOutputLayoutConfig {
@@ -705,6 +709,16 @@ enum Op {
         timestamp: Duration,
     },
     OverviewGestureEnd,
+    OpenOverview,
+    CloseOverview,
+    OverviewHitTest {
+        #[proptest(strategy = "1..=5usize")]
+        output_idx: usize,
+        #[proptest(strategy = "-20000f64..20000f64")]
+        px: f64,
+        #[proptest(strategy = "-20000f64..20000f64")]
+        py: f64,
+    },
     InteractiveMoveBegin {
         #[proptest(strategy = "1..=5usize")]
         window: usize,
@@ -776,6 +790,15 @@ impl Op {
             Op::FocusCollection(index) => {
                 layout.focus_collection(&WorkspaceReference::Index(index));
             }
+            Op::FocusCollectionByName(index) => {
+                layout.focus_collection(&WorkspaceReference::Name(format!("collection{index}")));
+            }
+            Op::FocusCollectionById(index) => {
+                let collections = layout.collections();
+                if let Some(collection) = collections.get(index) {
+                    layout.focus_collection(&WorkspaceReference::Id(collection.id));
+                }
+            }
             Op::CycleCollection(next) => {
                 if next {
                     layout.focus_collection_next();
@@ -785,6 +808,15 @@ impl Op {
             }
             Op::MoveWindowToCollection(index) => {
                 layout.move_window_to_collection(&WorkspaceReference::Index(index));
+            }
+            Op::MoveWindowToCollectionByName(index) => {
+                layout.move_window_to_collection(&WorkspaceReference::Name(format!("collection{index}")));
+            }
+            Op::MoveWindowToCollectionById(index) => {
+                let collections = layout.collections();
+                if let Some(collection) = collections.get(index) {
+                    layout.move_window_to_collection(&WorkspaceReference::Id(collection.id));
+                }
             }
             Op::MoveWindowToCollectionRelative(next) => {
                 if next {
@@ -1444,6 +1476,25 @@ impl Op {
             }
             Op::OverviewGestureEnd => {
                 layout.overview_gesture_end();
+            }
+            Op::OpenOverview => {
+                layout.open_overview();
+            }
+            Op::CloseOverview => {
+                layout.close_overview();
+            }
+            Op::OverviewHitTest {
+                output_idx,
+                px,
+                py,
+            } => {
+                let name = format!("output{output_idx}");
+                let Some(output) = layout.outputs().find(|o| o.name() == name).cloned() else {
+                    return;
+                };
+                let position = Point::from((px, py));
+                let _ = layout.window_under(&output, position);
+                let _ = layout.workspace_under(false, &output, position);
             }
             Op::InteractiveMoveBegin {
                 window,

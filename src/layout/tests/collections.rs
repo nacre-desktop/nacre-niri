@@ -403,23 +403,45 @@ fn operation_generator_does_not_duplicate_detached_window_ids() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 100_000, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig {
+        cases: ProptestConfig::default().cases.max(128),
+        ..ProptestConfig::default()
+    })]
     #[test]
-    fn collection_operations_preserve_invariants(ops in prop::collection::vec(any::<Op>(), 0..24)) {
-        let mut layout = enabled_layout();
-        // Start every randomized case with a visible collection, a hidden collection with a
-        // window, a hidden empty collection, and a detached collection after unplugging the
-        // output. This makes the generated action sequence exercise both workspace states.
+    fn collection_operations_preserve_invariants(ops in prop::collection::vec(any::<Op>(), 0..100)) {
+        let mut options = Options::default();
+        options.layout.collections.names = vec!["collection2".into(), "collection3".into()];
+        let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+        // Start with a visible output, a hidden populated collection, and a persistent empty
+        // collection. Unplugging the first output detaches both collections while the second
+        // output remains active, so random operations start in the mixed state that exposed MRU.
         check_ops_on_layout(
             &mut layout,
             [
                 Op::AddOutput(1),
                 Op::AddWindow { params: TestWindowParams::new(1) },
-                Op::CreateCollection(Some(1)),
-                Op::CreateCollection(Some(2)),
+                Op::CreateCollection(Some(9)),
+                Op::CreateCollection(Some(3)),
+                Op::AddOutput(2),
                 Op::RemoveOutput(1),
             ],
         );
+        assert!(layout.active_output().is_some());
+        let detached: Vec<_> = layout
+            .collections()
+            .into_iter()
+            .filter(|collection| collection.output.is_none())
+            .collect();
+        assert!(detached.iter().any(|collection| {
+            layout
+                .collection_workspaces(collection.id)
+                .any(|workspace| workspace.has_windows())
+        }));
+        assert!(detached.iter().any(|collection| {
+            layout
+                .collection_workspaces(collection.id)
+                .any(|workspace| !workspace.has_windows())
+        }));
         check_ops_on_layout(&mut layout, ops);
     }
 }

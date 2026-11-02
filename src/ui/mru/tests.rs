@@ -69,9 +69,11 @@ fn ui_open_navigate_confirm_and_cancel() {
     assert!(!ui.is_open());
 
     let mut ui = WindowMruUi::new(Rc::new(RefCell::new(Config::default())));
+    let thumbnail = create_thumbnail();
+    let current_id = thumbnail.id;
     let wmru = WindowMru {
-        thumbnails: vec![create_thumbnail()],
-        current_id: None,
+        thumbnails: vec![thumbnail],
+        current_id: Some(current_id),
         scope: MruScope::All,
         app_id_filter: None,
     };
