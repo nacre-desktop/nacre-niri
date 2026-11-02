@@ -400,7 +400,7 @@ binds {
     // You can also move the mouse into the top-left hot corner,
     // or do a four-finger swipe up on a touchpad.
     Mod+O repeat=false { toggle-overview; }
-    Super+Ctrl+Tab repeat=false { toggle-overview; }
+    Mod+Ctrl+Tab repeat=false { toggle-overview; }
 
     Mod+Q repeat=false { close-window; }
 
@@ -566,7 +566,7 @@ binds {
     Mod+Shift+F { fullscreen-window; }
 
     // Match Nacre's column-maximize action. Mod+F is the alternate column bind.
-    Super+M { maximize-column; }
+    Mod+M { maximize-column; }
 
     // Expand the focused column to space not taken up by other fully visible columns.
     // Makes the column "fill the rest of the space".

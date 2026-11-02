@@ -25,8 +25,8 @@ or bindings to Nacre commands.
 | Generated `keyboard.kdl` | STAYS IN NACRE | XKB layout/model/options are locale and device policy. |
 | NN0001 collection registry and Nacre generated `workspaces.kdl` / `niri_workspace_policy.rs` | NATIVE (NN0001) for collection storage and output restoration; STAYS IN NACRE for named workspace policy | NN0001 owns stable collections, hidden stacks, original-output identity, and restoring the original collection when a monitor returns. It does not choose Nacre's fixed numeric slots/names or decide per-profile routing. The helper may continue applying that Nacre policy over the native collection API. |
 | Generated `monitor-workspace-actions.kdl`, `workspace-visitors.kdl`, and `niri/monitor-workspace-actions.kdl`, `niri/workspace-visitors.kdl` | STAYS IN NACRE | Nacre's helper implements monitor send/swap/rotate and visitor adoption/bring policy using niri IPC. NN0001 supplies generic collection primitives and origin identity; it does not supply those Nacre policy operations or bindings. |
-| `nacre-niri-widths.service`, `niri_widths.rs`, width CLI/runtime/X11 modules | NATIVE, deferred to NN0003 | The helper restores X11 minimum-size hints and continually repairs geometry; a declarative default rule is not equivalent and can override user resizing. Keep the helper active until a native implementation proves parity, then gate it and let Nacre skip it only when the capability is advertised. |
-| `niri_hover_probe.rs`, hover pointer support, patched overview-hover binary/source under the private companion checkout, session runtime verification | NATIVE (NN0002 implementation in progress) | Adapt the existing behavior to NN0001's changed layout API and implement a default-on `nacre.overview-hover` capability; when disabled, preserve upstream behavior. The proof probe stays test/developer tooling; Nacre skips the companion only when capability is enabled. |
+| `nacre-niri-widths.service`, `niri_widths.rs`, width CLI/runtime/X11 modules | NATIVE, deferred to a later NN width-policy unit | The helper relaxes horizontal X11 minimum-size hints only for ordinary tiled windows, preserves fixed/max/height/increment/aspect hints, and restores constraints when floating or stopped. A default width alone is not equivalent. Keep the helper active until native parity is demonstrated. |
+| `niri_hover_probe.rs`, hover pointer support, patched overview-hover binary/source under the private companion checkout, session runtime verification | NATIVE (NN0002) | The default-on `nacre.overview-hover` flag enables opt-in hover metadata and zero-scroll pointer selection. Hidden collection previews report metadata without changing keyboard focus. Nacre selects the fork instead of its patched companion; the proof probe stays developer tooling. Explicit flag-off uses upstream behavior and a rejected hover-stream handshake falls back to standard events. |
 | `niri-redock-*` state artifacts and Nacre panel/Pearl redock behavior | STAYS IN NACRE | Inspection of the artifacts and `test_panel_redock_motion.py` shows this is Nacre UI restoration/motion testing, not a runtime compositor helper that remembers window outputs. NN0001 collection-origin restoration is a separate capability for workspace stacks after output unplug/replug; it does not replace panel redock animation or restore. Keep the UI behavior and its tests in Nacre; no later native unit is proposed. |
 | `niri_acceptance_monitor.rs`, acceptance systemd watcher, and acceptance tests | STAYS IN NACRE / test harness | This monitors Nacre's generated runtime acceptance conditions and session recovery. It is not end-user compositor behavior and should not run as a fork feature. Keep it in Nacre CI/acceptance tooling. |
 | `bead-pearls.kdl` and Nacre's embedded Pearl fragment | BUILT-IN DEFAULT | Pearl bootstrap/floating/opacity and chrome exclusions implement the Pearl window protocol, not a theme or Nacre command. Retain the N0103 include order so custom overrides apply after managed fragments. |
@@ -49,17 +49,18 @@ managed fragments, matching the existing custom-override contract.
 
 Nacre can identify the fork from its version suffix or query its IPC capabilities.
 Use fork identity only to select the compatibility path; skip each helper only
-after IPC reports that the specific native feature is enabled. This lets a fork
-with a feature explicitly disabled keep the helper, while stock niri stays on its
-existing path. Native flags default on in the fork and leave upstream behavior intact when
+after IPC reports that the specific native feature is enabled. A disabled hover
+flag deliberately selects upstream behavior, so Nacre does not substitute its
+patched companion to turn hover back on. Stock niri keeps its existing companion
+path. Native flags default on in the fork and leave upstream behavior intact when
 explicitly disabled. The native items and current implementation status are tracked below; a helper
 is not removed merely because a similar-looking rule exists.
 
 | Candidate | NN disposition | Rationale / follow-up |
 | --- | --- | --- |
 | NN0001 collection registry and output restoration | Landed/base | Fork owns stable collection identities, hidden stacks and restoration to an original output after hotplug. Nacre retains fixed workspace naming/routing, visitor policy and monitor actions. |
-| Proportional initial widths for X11/Xwayland clients | NN0003 (deferred) | The existing helper repairs minimum-size hints and geometry continually. A simple placement rule cannot replace that contract without changing user-resize behavior. |
-| Overview hover events/behavior | NN0002 (in progress) | Adapt the behavior against the NN0001 layout API; expose a default-on flag and prove disabled mode preserves upstream behavior. |
+| Proportional widths for X11/Xwayland clients | Later NN width-policy unit (unassigned) | Requires reliable Xwayland identification and tiled-only constraint handling with fixed-size/floating/max-hint parity. A placement rule cannot replace this contract. NN0003 is separately reserved for packaging. |
+| Overview hover events/behavior | NN0002 | Ported against NN0001, including camera preservation, opt-in events and reload/off-state cleanup. |
 | Redock of Nacre Pearl/panel UI | STAYS IN NACRE | The state artifacts are test/experiment evidence; the runtime behavior is Nacre panel restoration and motion, unrelated to compositor workspace collection output identity. |
 | Remaining `unsupported.json` items | Later N-units only when a small native implementation has an end-user value | Most are absent niri concepts or Nacre command mappings. They remain Nacre-owned metadata until separately designed and tested. |
 
@@ -88,10 +89,26 @@ The `unsupported.json` inventory (32 records), exhaustively grouped:
 | 1 | `cursor.session` extension | STAYS IN NACRE; backend extension is not emitted. |
 | 1 | `hypr/conf/cursor.lua` event | STAYS IN NACRE; backend-specific cursor event is not emitted. |
 
-NN0002's hover flag defaults on in the fork configuration model and is enabled
-by `nacre { overview-hover; }`; explicit opt-out is `nacre { overview-hover false; }`.
-The fork capability query must report its effective value. Nacre skips the
-companion helper only when the reported capability is true.
+NN0002's hover flag defaults on in the configuration model. Explicit opt-out is
+`nacre { overview-hover false; }`. Collections use the independent NN0001 flag
+`layout { collections { on false; } }`.
+The raw IPC request is the JSON string `"NacreCapabilities"`; the reply is
+`{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}}}`
+with booleans reflecting the running configuration. The version suffix is
+`(nacre-niri)`. N0107 uses binary identity before startup and active IPC flags
+for runtime workarounds. It skips legacy reconnect focus restoration when
+collections are enabled, retains fixed-slot/visitor product policy, and avoids
+actions on hidden workspaces. The width helper remains active in this unit.
+
+Other proposed NN follow-ups are intentionally unassigned: sticky floating
+windows (pin semantics across workspace/collection changes), scratchpad/hide
+actions (explicit collection lifetime and focus rules), and non-consuming input
+hooks/submaps (input delivery and client isolation). None is a safe config-only
+translation. Panel drag needs a compositor/client protocol design rather than a
+binding substitution. Pseudo/split actions are Hyprland layout concepts; no
+native port is proposed without an agreed niri behavior. App geometry and stale
+translation metadata belong in later Nacre units. The inventory records each
+current limitation rather than promising parity.
 
 ## Sources reviewed
 
