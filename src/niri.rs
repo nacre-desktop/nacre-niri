@@ -3156,7 +3156,20 @@ impl Niri {
                     } else {
                         WindowSurfaceType::TOPLEVEL
                     } | WindowSurfaceType::SUBSURFACE;
-                    layer.surface_under(pos_within_output - layer_pos_within_output, surface_type)
+                    let pos_within_layer = pos_within_output - layer_pos_within_output;
+                    let is_under = if popup {
+                        layer.surface_under(pos_within_layer, surface_type).is_some()
+                    } else {
+                        match mapped.surface_under_motion(pos_within_layer, surface_type) {
+                            Some(under) => under.is_some(),
+                            None => layer.surface_under(pos_within_layer, surface_type).is_some(),
+                        }
+                    };
+                    if is_under {
+                        Some(())
+                    } else {
+                        None
+                    }
                 })
                 .is_some()
         };
@@ -3403,11 +3416,22 @@ impl Niri {
                         WindowSurfaceType::TOPLEVEL
                     } | WindowSurfaceType::SUBSURFACE;
 
-                    layer_surface
-                        .surface_under(pos_within_output - layer_pos_within_output, surface_type)
-                        .map(|(surface, pos_within_layer)| {
+                    let pos_within_layer = pos_within_output - layer_pos_within_output;
+                    let normal_under = || {
+                        layer_surface
+                            .surface_under(pos_within_layer, surface_type)
+                            .map(|(surface, pos)| (surface.clone(), pos.to_f64()))
+                    };
+                    let under = if popup {
+                        normal_under()
+                    } else {
+                        mapped
+                            .surface_under_motion(pos_within_layer, surface_type)
+                            .unwrap_or_else(normal_under)
+                    };
+                    under.map(|(surface, pos_within_layer)| {
                             (
-                                (surface, pos_within_layer.to_f64() + layer_pos_within_output),
+                                (surface, pos_within_layer + layer_pos_within_output),
                                 layer_surface,
                             )
                         })
@@ -4936,6 +4960,19 @@ impl Niri {
         for layer in layer_map_for_output(output).layers() {
             let surface = layer.wl_surface();
             let is_background = layer.layer() == Layer::Background;
+            let motion_ids = self
+                .layer_motion_manager_state
+                .runtime(surface)
+                .map(|runtime| {
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .planes
+                        .iter()
+                        .map(|plane| plane.render_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
 
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = states
@@ -4943,6 +4980,15 @@ impl Niri {
                     .get_or_insert_threadsafe(Mutex::<PrimaryScanoutOutput>::default);
                 let mut primary_scanout_output = primary_scanout_output.lock().unwrap();
                 let mut id = Id::from_wayland_resource(surface);
+
+                if surface == layer.wl_surface() {
+                    if let Some(plane_id) = motion_ids
+                        .iter()
+                        .find(|plane_id| render_element_states.element_was_presented((*plane_id).clone()))
+                    {
+                        id = plane_id.clone();
+                    }
+                }
 
                 // Background layers may be invisible normally but visible through an xray
                 // background effect. Try to find it and use the xray element's id in this case.
@@ -5039,12 +5085,34 @@ impl Niri {
         }
 
         for surface in layer_map_for_output(output).layers() {
+            let root_surface = surface.wl_surface().clone();
+            let motion_ids = self
+                .layer_motion_manager_state
+                .runtime(&root_surface)
+                .map(|runtime| {
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .planes
+                        .iter()
+                        .map(|plane| plane.render_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             surface.send_dmabuf_feedback(
                 output,
                 |_, _| Some(output.clone()),
                 |surface, _| {
+                    let mut id = Id::from_wayland_resource(surface);
+                    if surface == &root_surface {
+                        if let Some(plane_id) = motion_ids.iter().find(|plane_id| {
+                            render_element_states.element_was_presented((*plane_id).clone())
+                        }) {
+                            id = plane_id.clone();
+                        }
+                    }
                     select_dmabuf_feedback(
-                        surface,
+                        id,
                         render_element_states,
                         &feedback.render,
                         &feedback.scanout,

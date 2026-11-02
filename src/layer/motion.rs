@@ -68,6 +68,27 @@ impl MotionPose {
             && (0. ..=1.).contains(&self.opacity)
     }
 
+    pub fn map_input(
+        self,
+        point: Point<f64, Logical>,
+        source: Rectangle<f64, Logical>,
+    ) -> Option<Point<f64, Logical>> {
+        if self.opacity <= 0.
+            || self.destination.size.w <= 0.
+            || self.destination.size.h <= 0.
+            || !self.clip.contains(point)
+            || !self.destination.contains(point)
+        {
+            return None;
+        }
+        let x = (point.x - self.destination.loc.x) / self.destination.size.w;
+        let y = (point.y - self.destination.loc.y) / self.destination.size.h;
+        Some(Point::from((
+            source.loc.x + x * source.size.w,
+            source.loc.y + y * source.size.h,
+        )))
+    }
+
     fn interpolate(self, to: Self, progress: f64, opacity_mode: OpacityMode) -> Self {
         let lerp = |a: f64, b: f64| a + (b - a) * progress;
         Self {
@@ -442,6 +463,7 @@ mod tests {
         .unwrap();
         let at_retarget = Duration::from_millis(40);
         let current = group.sample(at_retarget);
+        assert_eq!(current.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [4, 8]);
         let target = vec![(4, pose(-100., 0., 0.)), (8, pose(0., 20., 0.5))];
         let reversed = group
             .retarget(
@@ -475,5 +497,18 @@ mod tests {
         .unwrap();
         assert_eq!(motion.sample(Duration::from_micros(100)).opacity, 0.001);
         assert_eq!(motion.sample(Duration::from_micros(101)).opacity, 1.);
+    }
+
+    #[test]
+    fn input_maps_through_destination_and_respects_animated_clip() {
+        let source = Rectangle::new(Point::from((20., 10.)), Size::from((80., 40.)));
+        let visible = MotionPose::new(100., 50., 160., 80., 120., 50., 140., 80., 1.).unwrap();
+        assert_eq!(
+            visible.map_input(Point::from((200., 90.)), source),
+            Some(Point::from((70., 30.)))
+        );
+        assert!(visible.map_input(Point::from((110., 90.)), source).is_none());
+        let hidden = MotionPose::new(100., 50., 160., 80., 100., 50., 160., 80., 0.).unwrap();
+        assert!(hidden.map_input(Point::from((150., 80.)), source).is_none());
     }
 }

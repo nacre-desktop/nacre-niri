@@ -3,17 +3,24 @@ use std::sync::{Arc, Mutex};
 use niri_config::utils::MergeWith as _;
 use niri_config::{Config, LayerRule};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
-use smithay::backend::renderer::element::Kind;
-use smithay::desktop::{LayerSurface, PopupKind, PopupManager};
+use smithay::backend::renderer::element::utils::{
+    CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
+};
+use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
+use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
+use smithay::backend::renderer::Renderer;
+use smithay::utils::user_data::UserDataMap;
+use smithay::desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType};
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::compositor::{remove_pre_commit_hook, HookId};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
 use super::ResolvedLayerRules;
-use super::motion::{LayerMotionRuntime, MotionPose};
+use super::motion::MotionPose;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
+use crate::protocols::layer_motion::{LayerMotionRuntime, MotionPlane};
 use crate::render_helpers::background_effect::BackgroundEffectElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
@@ -64,9 +71,95 @@ pub struct MappedLayer {
 niri_render_elements! {
     LayerSurfaceRenderElement<R> => {
         Wayland = WaylandSurfaceRenderElement<R>,
+        MotionPlane = MotionPlaneRenderElement<R>,
         SolidColor = SolidColorRenderElement,
         Shadow = ShadowRenderElement,
         BackgroundEffect = BackgroundEffectElement,
+    }
+}
+
+type MotionPlaneInner<R> = CropRenderElement<
+    RelocateRenderElement<CropRenderElement<RescaleRenderElement<WaylandSurfaceRenderElement<R>>>>,
+>;
+
+#[derive(Debug)]
+pub struct MotionPlaneRenderElement<R: NiriRenderer> {
+    inner: MotionPlaneInner<R>,
+    id: Id,
+    damage: crate::render_helpers::damage::ExtraDamage,
+}
+
+impl<R: NiriRenderer> MotionPlaneRenderElement<R> {
+    fn new(
+        inner: MotionPlaneInner<R>,
+        id: Id,
+        damage: crate::render_helpers::damage::ExtraDamage,
+    ) -> Self {
+        Self { inner, id, damage }
+    }
+}
+
+impl<R: NiriRenderer> Element for MotionPlaneRenderElement<R> {
+    fn id(&self) -> &Id {
+        &self.id
+    }
+
+    fn current_commit(&self) -> CommitCounter {
+        self.damage.current_commit()
+    }
+
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, smithay::utils::Physical> {
+        self.inner.geometry(scale)
+    }
+
+    fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+        self.inner.src()
+    }
+
+    fn transform(&self) -> smithay::utils::Transform {
+        self.inner.transform()
+    }
+
+    fn damage_since(
+        &self,
+        scale: Scale<f64>,
+        commit: Option<CommitCounter>,
+    ) -> DamageSet<i32, smithay::utils::Physical> {
+        self.damage.damage_since(scale, commit)
+    }
+
+    fn opaque_regions(&self, scale: Scale<f64>) -> OpaqueRegions<i32, smithay::utils::Physical> {
+        self.inner.opaque_regions(scale)
+    }
+
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+
+    fn kind(&self) -> Kind {
+        Kind::Unspecified
+    }
+
+    fn is_framebuffer_effect(&self) -> bool {
+        false
+    }
+}
+
+impl<R: NiriRenderer> RenderElement<R> for MotionPlaneRenderElement<R> {
+    fn draw(
+        &self,
+        frame: &mut R::Frame<'_, '_>,
+        src: Rectangle<f64, smithay::utils::Buffer>,
+        dst: Rectangle<i32, smithay::utils::Physical>,
+        damage: &[Rectangle<i32, smithay::utils::Physical>],
+        opaque_regions: &[Rectangle<i32, smithay::utils::Physical>],
+        cache: Option<&UserDataMap>,
+    ) -> Result<(), R::Error> {
+        self.inner.draw(frame, src, dst, damage, opaque_regions, cache)
+    }
+
+    fn underlying_storage(&self, renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
+        self.inner.underlying_storage(renderer)
     }
 }
 
@@ -146,14 +239,56 @@ impl MappedLayer {
     }
 
     pub fn motion_poses(&self) -> Option<Vec<(u32, MotionPose)>> {
+        self.motion_snapshot().map(|(_, poses)| poses)
+    }
+
+    fn motion_snapshot(&self) -> Option<(Vec<MotionPlane>, Vec<(u32, MotionPose)>)> {
         let motion = self.motion.as_ref()?;
         let runtime = motion.lock().unwrap();
+        if runtime.planes.is_empty() {
+            return None;
+        }
+        let poses = runtime
+            .active
+            .as_ref()
+            .map(|active| active.sample(self.clock.now()))
+            .unwrap_or_else(|| runtime.current.clone());
+        Some((runtime.planes.clone(), poses))
+    }
+
+    /// `None` means ordinary layer hit testing; `Some(None)` means the animated
+    /// atlas does not cover this point; `Some(Some(point))` maps into atlas input.
+    pub fn motion_input_point(
+        &self,
+        point: Point<f64, Logical>,
+    ) -> Option<Option<Point<f64, Logical>>> {
+        let (planes, poses) = self.motion_snapshot()?;
+        let pose_for = |id| poses.iter().find(|(plane, _)| *plane == id).map(|(_, pose)| *pose);
+        let hit = planes.iter().rev().find_map(|plane| {
+            let pose = pose_for(plane.id)?;
+            pose.map_input(point, plane.source)
+        });
+        Some(hit)
+    }
+
+    pub fn surface_under_motion(
+        &self,
+        point: Point<f64, Logical>,
+        surface_type: WindowSurfaceType,
+    ) -> Option<Option<(smithay::reexports::wayland_server::protocol::wl_surface::WlSurface, Point<f64, Logical>)>> {
+        let source_point = self.motion_input_point(point)?;
+        let Some(source_point) = source_point else {
+            return Some(None);
+        };
         Some(
-            runtime
-                .active
-                .as_ref()
-                .map(|active| active.sample(self.clock.now()))
-                .unwrap_or_else(|| runtime.current.clone()),
+            self.surface
+                .surface_under(source_point, surface_type)
+                .map(|(surface, location)| {
+                    (
+                        surface.clone(),
+                        location.to_f64() + (point - source_point),
+                    )
+                }),
         )
     }
 
@@ -241,6 +376,17 @@ impl MappedLayer {
                 Kind::Unspecified,
             );
             push(elem.into());
+        } else if let Some((planes, poses)) = self.motion_snapshot() {
+            self.render_motion_planes(
+                ctx.renderer,
+                surface,
+                location,
+                scale,
+                alpha,
+                &planes,
+                &poses,
+                push,
+            );
         } else {
             // Layer surfaces don't have extra geometry like windows.
             let buf_pos = location;
@@ -280,6 +426,94 @@ impl MappedLayer {
             xray_pos,
             &mut |elem| push(elem.into()),
         );
+    }
+
+    fn render_motion_planes<R: NiriRenderer>(
+        &self,
+        renderer: &mut R,
+        surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        location: Point<f64, Logical>,
+        scale: Scale<f64>,
+        alpha: f32,
+        planes: &[MotionPlane],
+        poses: &[(u32, MotionPose)],
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) {
+        let root_location = location.to_physical_precise_round(scale);
+        let root_id = Id::from_wayland_resource(surface);
+        for plane in planes {
+            let Some((_, pose)) = poses.iter().find(|(id, _)| *id == plane.id) else {
+                continue;
+            };
+            if pose.destination.size.w <= 0.
+                || pose.destination.size.h <= 0.
+                || plane.source.size.w <= 0.
+                || plane.source.size.h <= 0.
+            {
+                continue;
+            }
+            let stretch = Scale::from((
+                pose.destination.size.w / plane.source.size.w,
+                pose.destination.size.h / plane.source.size.h,
+            ));
+            let destination_logical =
+                Rectangle::new(location + pose.destination.loc, pose.destination.size);
+            let destination_physical = destination_logical.to_physical_precise_round(scale);
+            let clip_logical = Rectangle::new(location + pose.clip.loc, pose.clip.size);
+            let clip_physical = clip_logical.to_physical_precise_round(scale);
+            let Some(visible_physical) = destination_physical.intersection(clip_physical) else {
+                continue;
+            };
+            let Some(visible_logical) = destination_logical.intersection(clip_logical) else {
+                continue;
+            };
+            let source_location = Point::from((
+                (root_location.x as f64 + plane.source.loc.x * self.scale * stretch.x).round()
+                    as i32,
+                (root_location.y as f64 + plane.source.loc.y * self.scale * stretch.y).round()
+                    as i32,
+            ));
+            let source_crop = Rectangle::new(source_location, destination_physical.size);
+            push_elements_from_surface_tree(
+                renderer,
+                surface,
+                root_location,
+                scale,
+                alpha * pose.opacity as f32,
+                Kind::Unspecified,
+                &mut |elem| {
+                    if elem.id() != &root_id {
+                        return;
+                    }
+                    let scaled = RescaleRenderElement::from_element(elem, root_location, stretch);
+                    let Some(source_crop) =
+                        CropRenderElement::from_element(scaled, scale, source_crop)
+                    else {
+                        return;
+                    };
+                    let relocation = destination_physical.loc - source_crop.geometry(scale).loc;
+                    let relocated = RelocateRenderElement::from_element(
+                        source_crop,
+                        relocation,
+                        Relocate::Relative,
+                    );
+                    let Some(inner) =
+                        CropRenderElement::from_element(relocated, scale, visible_physical)
+                    else {
+                        return;
+                    };
+                    let damage = plane.damage.render(visible_logical);
+                    push(
+                        MotionPlaneRenderElement::new(
+                            inner,
+                            plane.render_id.clone(),
+                            damage,
+                        )
+                        .into(),
+                    );
+                },
+            );
+        }
     }
 
     pub fn render_popups<R: NiriRenderer>(

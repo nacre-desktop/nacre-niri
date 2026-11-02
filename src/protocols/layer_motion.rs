@@ -6,11 +6,13 @@ use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
 };
+use smithay::wayland::compositor::with_states;
 use smithay::backend::renderer::element::Id;
 
 use crate::layer::motion::{
     LayerMotionGroup, MotionCurve, MotionPose, OpacityMode,
 };
+use crate::render_helpers::damage::ExtraDamage;
 use crate::protocols::raw::bead_layer_motion::v1::server::{
     bead_layer_motion_manager_v1, bead_layer_motion_v1,
 };
@@ -24,6 +26,7 @@ const MAX_PLANES: usize = 64;
 pub struct MotionPlane {
     pub id: u32,
     pub render_id: Id,
+    pub damage: ExtraDamage,
     pub source: smithay::utils::Rectangle<f64, smithay::utils::Logical>,
     pub from: MotionPose,
     pub to: MotionPose,
@@ -36,6 +39,16 @@ pub struct LayerMotionRuntime {
     pub planes: Vec<MotionPlane>,
     pub current: Vec<(u32, MotionPose)>,
     pub active: Option<LayerMotionGroup>,
+}
+
+impl LayerMotionRuntime {
+    fn cancel_at(&mut self, presentation_time: Duration) -> Option<(u32, Vec<(u32, MotionPose)>)> {
+        let motion = self.active.take()?;
+        let serial = motion.serial;
+        let current = motion.sample(presentation_time);
+        self.current.clone_from(&current);
+        Some((serial, current))
+    }
 }
 
 #[derive(Clone)]
@@ -52,7 +65,7 @@ struct Controller {
     committed_curve: MotionCurve,
     pending_animate: Option<(u32, Duration, bool)>,
     pending_cancel: Option<u32>,
-    last_serial: Option<u32>,
+    last_seen_serial: Option<u32>,
 }
 
 pub struct LayerMotionManagerState {
@@ -90,9 +103,34 @@ impl LayerMotionManagerState {
         let Some(controller) = self.controllers.get_mut(surface) else {
             return;
         };
+        let surface_size = with_states(surface, crate::utils::surface_geo)
+            .map(|geometry| geometry.size.to_f64());
+        let Some(surface_size) = surface_size else {
+            controller.resource.post_error(
+                bead_layer_motion_v1::Error::InvalidGeometry,
+                "motion planes require a mapped surface buffer",
+            );
+            return;
+        };
+        if controller.pending_planes.iter().any(|plane| {
+            plane.source.loc.x + plane.source.size.w > surface_size.w
+                || plane.source.loc.y + plane.source.size.h > surface_size.h
+        }) {
+            controller.resource.post_error(
+                bead_layer_motion_v1::Error::InvalidGeometry,
+                "plane source rectangle extends beyond the surface texture",
+            );
+            return;
+        }
         controller.committed_planes.clone_from(&controller.pending_planes);
         controller.committed_curve = controller.pending_curve;
         let mut runtime = controller.runtime.lock().unwrap();
+        for plane in &mut controller.committed_planes {
+            if let Some(previous) = runtime.planes.iter().find(|old| old.id == plane.id) {
+                plane.damage = previous.damage.clone();
+            }
+            plane.damage.damage_all();
+        }
         runtime.planes.clone_from(&controller.committed_planes);
 
         if let Some(serial) = controller.pending_cancel.take() {
@@ -106,13 +144,25 @@ impl LayerMotionManagerState {
                 runtime.current.clone_from(&current);
                 send_final_state(&controller.resource, &current);
                 controller.resource.cancelled(serial);
-                controller.last_serial = None;
             }
         }
 
         let Some((serial, duration, retarget)) = controller.pending_animate.take() else {
+            if runtime.active.is_none() {
+                runtime.current = controller
+                    .committed_planes
+                    .iter()
+                    .map(|plane| (plane.id, plane.to))
+                    .collect();
+            }
             return;
         };
+        if controller
+            .last_seen_serial
+            .is_some_and(|last| !serial_is_newer(serial, last))
+        {
+            return;
+        }
         if duration.is_zero() || duration > Duration::from_secs(10) {
             controller.resource.post_error(
                 bead_layer_motion_v1::Error::InvalidDuration,
@@ -120,15 +170,22 @@ impl LayerMotionManagerState {
             );
             return;
         }
-        if let Some(old) = runtime.active.take() {
-            let current = old.sample(next_presentation);
-            send_final_state(&controller.resource, &current);
-            controller.resource.cancelled(old.serial);
-            runtime.current.clone_from(&current);
-        }
-
+        let current = runtime
+            .active
+            .as_ref()
+            .map(|old| old.sample(next_presentation));
         let from = if retarget {
-            runtime.current.clone()
+            current.clone().unwrap_or_else(|| {
+                if runtime.current.is_empty() {
+                    controller
+                        .committed_planes
+                        .iter()
+                        .map(|plane| (plane.id, plane.from))
+                        .collect()
+                } else {
+                    runtime.current.clone()
+                }
+            })
         } else {
             controller
                 .committed_planes
@@ -146,7 +203,7 @@ impl LayerMotionManagerState {
             .iter()
             .map(|plane| (plane.id, plane.opacity_mode))
             .collect();
-        if let Some(motion) = LayerMotionGroup::new(
+        let Some(motion) = LayerMotionGroup::new(
             serial,
             from,
             to,
@@ -154,11 +211,24 @@ impl LayerMotionManagerState {
             next_presentation,
             duration,
             controller.committed_curve,
-        ) {
-            runtime.current = motion.sample(next_presentation);
-            runtime.active = Some(motion);
-            controller.last_serial = Some(serial);
+        ) else {
+            controller.resource.post_error(
+                bead_layer_motion_v1::Error::InvalidGeometry,
+                "plane states do not form a valid animation group",
+            );
+            return;
+        };
+        if let Some(old) = runtime.active.take() {
+            let old_current = current.unwrap_or_else(|| old.sample(next_presentation));
+            send_final_state(&controller.resource, &old_current);
+            controller.resource.cancelled(old.serial);
         }
+        runtime.current = motion.sample(next_presentation);
+        for plane in &mut runtime.planes {
+            plane.damage.damage_all();
+        }
+        runtime.active = Some(motion);
+        controller.last_seen_serial = Some(serial);
     }
 
     /// Advance a controller for one output's predicted presentation timestamp.
@@ -174,19 +244,24 @@ impl LayerMotionManagerState {
             let final_poses = motion.final_poses();
             let serial = motion.serial;
             runtime.current.clone_from(&final_poses);
+            for plane in &mut runtime.planes {
+                plane.damage.damage_all();
+            }
             runtime.active = None;
             send_final_state(&controller.resource, &final_poses);
             controller.resource.done(serial);
-            controller.last_serial = None;
             false
         } else {
             runtime.current = motion.sample(presentation_time);
+            for plane in &mut runtime.planes {
+                plane.damage.damage_all();
+            }
             true
         }
     }
 
     pub fn remove_surface(&mut self, surface: &WlSurface, presentation_time: Duration) {
-        let Some(mut controller) = self.controllers.remove(surface) else {
+        let Some(controller) = self.controllers.remove(surface) else {
             return;
         };
         let mut runtime = controller.runtime.lock().unwrap();
@@ -206,14 +281,11 @@ impl LayerMotionManagerState {
             return;
         };
         let mut runtime = controller.runtime.lock().unwrap();
-        let Some(motion) = runtime.active.take() else {
+        let Some((serial, current)) = runtime.cancel_at(presentation_time) else {
             return;
         };
-        let current = motion.sample(presentation_time);
-        runtime.current.clone_from(&current);
         send_final_state(&controller.resource, &current);
-        controller.resource.cancelled(motion.serial);
-        controller.last_serial = None;
+        controller.resource.cancelled(serial);
     }
 }
 
@@ -232,6 +304,11 @@ fn send_final_state(resource: &BeadLayerMotionV1, poses: &[(u32, MotionPose)]) {
             pose.opacity,
         );
     }
+}
+
+fn serial_is_newer(candidate: u32, previous: u32) -> bool {
+    let distance = candidate.wrapping_sub(previous);
+    distance != 0 && distance < (1 << 31)
 }
 
 impl<D> GlobalDispatch<BeadLayerMotionManagerV1, (), D> for LayerMotionManagerState
@@ -301,7 +378,7 @@ where
                         committed_curve: MotionCurve::Linear,
                         pending_animate: None,
                         pending_cancel: None,
-                        last_serial: None,
+                        last_seen_serial: None,
                     },
                 );
             }
@@ -323,6 +400,14 @@ where
         _handle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
+        if state
+            .layer_motion_manager_state()
+            .controllers
+            .get(&data.surface)
+            .is_none_or(|controller| controller.resource != *resource)
+        {
+            return;
+        }
         if let bead_layer_motion_v1::Request::Destroy = request {
             let now = state.layer_motion_now();
             state.layer_motion_manager_state().remove_surface(&data.surface, now);
@@ -332,9 +417,6 @@ where
         let Some(controller) = manager.controllers.get_mut(&data.surface) else {
             return;
         };
-        if controller.resource != *resource {
-            return;
-        }
         match request {
             bead_layer_motion_v1::Request::Destroy => unreachable!(),
             bead_layer_motion_v1::Request::AddPlane {
@@ -411,6 +493,7 @@ where
                 controller.pending_planes.push(MotionPlane {
                     id: plane,
                     render_id: Id::new(),
+                    damage: ExtraDamage::new(),
                     source,
                     from: pose,
                     to: pose,
@@ -496,4 +579,45 @@ macro_rules! delegate_layer_motion {
             $crate::protocols::raw::bead_layer_motion::v1::server::bead_layer_motion_v1::BeadLayerMotionV1: $crate::protocols::layer_motion::ControllerData
         ] => $crate::protocols::layer_motion::LayerMotionManagerState);
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pose(x: f64) -> MotionPose {
+        MotionPose::new(x, 0., 20., 20., 0., 0., 20., 20., 1.).unwrap()
+    }
+
+    #[test]
+    fn unmap_cancels_at_the_last_presented_group_state() {
+        let motion = LayerMotionGroup::new(
+            19,
+            vec![(1, pose(-100.))],
+            vec![(1, pose(0.))],
+            vec![(1, OpacityMode::Linear)],
+            Duration::ZERO,
+            Duration::from_millis(100),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+        let mut runtime = LayerMotionRuntime {
+            planes: Vec::new(),
+            current: motion.sample(Duration::ZERO),
+            active: Some(motion),
+        };
+        let presented = runtime.active.as_ref().unwrap().sample(Duration::from_millis(40));
+        let (serial, frozen) = runtime.cancel_at(Duration::from_millis(40)).unwrap();
+        assert_eq!(serial, 19);
+        assert_eq!(frozen, presented);
+        assert_eq!(runtime.current, presented);
+        assert!(runtime.active.is_none());
+    }
+
+    #[test]
+    fn serial_order_accepts_wraparound_but_ignores_stale_values() {
+        assert!(serial_is_newer(1, u32::MAX));
+        assert!(!serial_is_newer(8, 8));
+        assert!(!serial_is_newer(7, 8));
+    }
 }

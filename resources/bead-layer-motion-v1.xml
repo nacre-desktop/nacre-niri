@@ -36,7 +36,8 @@
       use the logical surface texture after buffer transform and viewport
       mapping. Destination rectangles and clips use logical surface-local units.
       Clips are fixed in the unanimated surface frame and applied after the
-      destination rectangle is placed. Plane order is request creation order.
+      destination rectangle is placed. Planes are composited in creation order:
+      the first plane is backmost and each later plane appears above earlier ones.
     </description>
     <enum name="curve">
       <description summary="Normalized easing function applied to all planes"/>

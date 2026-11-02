@@ -23,8 +23,8 @@ All coordinates use logical surface-local units.
 Destination rectangles animate. Clip rectangles remain anchored to the
 unanimated root-surface frame and apply after destination placement, letting
 content move behind a stationary reveal. A shared root timeline keeps body,
-shadow and content planes synchronized. Planes render in creation order. Plane
-creation, target and curve requests apply atomically with the next root-surface
+shadow and content planes synchronized. The first created plane is backmost;
+each later plane is above earlier planes. Plane creation, target and curve requests apply atomically with the next root-surface
 commit; animation begins at the next predicted output presentation after that
 commit. Completion emits every plane's final state, then one done event.
 Cancellation, replacement and unmap similarly emit final plane states and one
