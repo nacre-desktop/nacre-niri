@@ -1190,11 +1190,13 @@ mod nacre_hover_tests {
                 overview_hover: false,
                 events: regular_tx,
                 disconnect: regular_disconnect,
+                include_collections: false,
             },
             EventStreamSender {
                 overview_hover: true,
                 events: hover_tx,
                 disconnect: hover_disconnect,
+                include_collections: false,
             },
         ]);
 
