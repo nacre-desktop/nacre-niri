@@ -227,6 +227,31 @@ fn overview_drag_moves_window_into_hidden_collection() {
     layout.verify_invariants();
 }
 
+#[test]
+fn operation_generator_does_not_duplicate_detached_window_ids() {
+    let mut layout = enabled_layout();
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: TestWindowParams::new(5),
+            },
+            Op::RemoveOutput(1),
+            Op::AddNamedWorkspace {
+                ws_name: 1,
+                output_name: None,
+                layout_config: None,
+            },
+            Op::AddWindowToNamedWorkspace {
+                params: TestWindowParams::new(5),
+                ws_name: 1,
+            },
+        ],
+    );
+    assert_eq!(layout.windows().count(), 1);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(128), ..ProptestConfig::default() })]
     #[test]

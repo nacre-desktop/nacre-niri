@@ -953,50 +953,7 @@ impl Op {
                 mut params,
                 next_to_id,
             } => {
-                let mut found_next_to = false;
-
-                if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    let win_id = move_.tile.window().0.id;
-                    if win_id == params.id {
-                        return;
-                    }
-                    if win_id == next_to_id {
-                        found_next_to = true;
-                    }
-                }
-
-                match &mut layout.monitor_set {
-                    MonitorSet::Normal { monitors, .. } => {
-                        for mon in monitors {
-                            for ws in &mut mon.workspaces {
-                                for win in ws.windows() {
-                                    if win.0.id == params.id {
-                                        return;
-                                    }
-
-                                    if win.0.id == next_to_id {
-                                        found_next_to = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    MonitorSet::NoOutputs { workspaces, .. } => {
-                        for ws in workspaces {
-                            for win in ws.windows() {
-                                if win.0.id == params.id {
-                                    return;
-                                }
-
-                                if win.0.id == next_to_id {
-                                    found_next_to = true;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if !found_next_to {
+                if layout.has_window(&params.id) || !layout.has_window(&next_to_id) {
                     return;
                 }
 
@@ -1022,57 +979,14 @@ impl Op {
                 mut params,
                 ws_name,
             } => {
+                if layout.has_window(&params.id) {
+                    return;
+                }
                 let ws_name = format!("ws{ws_name}");
-                let mut ws_id = None;
-
-                if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == params.id {
-                        return;
-                    }
-                }
-
-                match &mut layout.monitor_set {
-                    MonitorSet::Normal { monitors, .. } => {
-                        for mon in monitors {
-                            for ws in &mut mon.workspaces {
-                                for win in ws.windows() {
-                                    if win.0.id == params.id {
-                                        return;
-                                    }
-                                }
-
-                                if ws
-                                    .name
-                                    .as_ref()
-                                    .is_some_and(|name| name.eq_ignore_ascii_case(&ws_name))
-                                {
-                                    ws_id = Some(ws.id());
-                                }
-                            }
-                        }
-                    }
-                    MonitorSet::NoOutputs { workspaces, .. } => {
-                        for ws in workspaces {
-                            for win in ws.windows() {
-                                if win.0.id == params.id {
-                                    return;
-                                }
-                            }
-
-                            if ws
-                                .name
-                                .as_ref()
-                                .is_some_and(|name| name.eq_ignore_ascii_case(&ws_name))
-                            {
-                                ws_id = Some(ws.id());
-                            }
-                        }
-                    }
-                }
-
-                let Some(ws_id) = ws_id else {
+                let Some((_, workspace)) = layout.find_workspace_by_name(&ws_name) else {
                     return;
                 };
+                let ws_id = workspace.id();
 
                 if let Some(parent_id) = params.parent_id {
                     if parent_id_causes_loop(layout, params.id, parent_id) {
@@ -1416,41 +1330,13 @@ impl Op {
                     }
                 }
 
-                let mut update = false;
-
-                if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == id {
-                        move_.tile.window().0.parent_id.set(new_parent_id);
-                        update = true;
-                    }
-                }
-
-                match &mut layout.monitor_set {
-                    MonitorSet::Normal { monitors, .. } => {
-                        'outer: for mon in monitors {
-                            for ws in &mut mon.workspaces {
-                                for win in ws.windows() {
-                                    if win.0.id == id {
-                                        win.0.parent_id.set(new_parent_id);
-                                        update = true;
-                                        break 'outer;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    MonitorSet::NoOutputs { workspaces, .. } => {
-                        'outer: for ws in workspaces {
-                            for win in ws.windows() {
-                                if win.0.id == id {
-                                    win.0.parent_id.set(new_parent_id);
-                                    update = true;
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    }
-                }
+                let update = layout
+                    .windows()
+                    .find(|(_, win)| win.0.id == id)
+                    .is_some_and(|(_, win)| {
+                        win.0.parent_id.set(new_parent_id);
+                        true
+                    });
 
                 if update {
                     if let Some(new_parent_id) = new_parent_id {
@@ -1467,50 +1353,10 @@ impl Op {
                 }
             }
             Op::Communicate(id) => {
-                let mut update = false;
-
-                if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
-                    if move_.tile.window().0.id == id {
-                        if move_.tile.window().communicate() {
-                            update = true;
-                        }
-
-                        if update {
-                            // FIXME: serial.
-                            layout.update_window(&id, None);
-                        }
-                        return;
-                    }
-                }
-
-                match &mut layout.monitor_set {
-                    MonitorSet::Normal { monitors, .. } => {
-                        'outer: for mon in monitors {
-                            for ws in &mut mon.workspaces {
-                                for win in ws.windows() {
-                                    if win.0.id == id {
-                                        if win.communicate() {
-                                            update = true;
-                                        }
-                                        break 'outer;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    MonitorSet::NoOutputs { workspaces, .. } => {
-                        'outer: for ws in workspaces {
-                            for win in ws.windows() {
-                                if win.0.id == id {
-                                    if win.communicate() {
-                                        update = true;
-                                    }
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    }
-                }
+                let update = layout
+                    .windows()
+                    .find(|(_, win)| win.0.id == id)
+                    .is_some_and(|(_, win)| win.communicate());
 
                 if update {
                     // FIXME: serial.
