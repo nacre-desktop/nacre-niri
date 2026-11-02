@@ -38,8 +38,8 @@ The fork default carries the portable owner setup, with values taken from the
 generated host and desktop fragments: `prefer-no-csd`, effective 6 logical pixel
 gaps, 1-pixel configured border and focus-ring widths, a 50% default column, and
 1/3, 1/2, 2/3, and full-width presets. The rules add 10-pixel clipped corners
-outside Pearl windows, touchpad natural scrolling at 0.75, focus following only
-within the visible area, a transparent background, wallpaper placement behind the
+outside Pearl windows, touchpad natural scrolling at 0.75, pointer selection of
+partly visible tiles without scrolling, a transparent background, wallpaper placement behind the
 overview, layer blur, and general window shadow/blur, plus a soft overview shadow. It also carries the portable direct niri bindings and
 Bead Pearl window contract; Pearl rules disable generic shadow and blur.
 It does not set an output name/mode, keyboard
@@ -95,7 +95,8 @@ NN0002's hover flag defaults on in the configuration model. Explicit opt-out is
 The raw IPC request is the JSON string `"NacreCapabilities"`; the reply is
 `{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}}}`
 with booleans reflecting the running configuration. The version suffix is
-`(nacre-niri)`. N0107 uses binary identity before startup and active IPC flags
+`(nacre-niri)`; `niri msg --json nacre-capabilities` prints the feature object.
+N0107 uses binary identity before startup and active IPC flags
 for runtime workarounds. It skips legacy reconnect focus restoration when
 collections are enabled, retains fixed-slot/visitor product policy, and avoids
 actions on hidden workspaces. The width helper remains active in this unit.

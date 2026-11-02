@@ -66,7 +66,8 @@ input {
     // warp-mouse-to-focus
 
     // Focus windows and outputs automatically when moving the mouse into them.
-    // Setting max-scroll-amount="0%" makes it work only on windows already fully on screen.
+    // With native hover enabled, 0% selects visible tiles (including partly visible ones)
+    // without scrolling. With overview-hover disabled, upstream's fully-visible rule applies.
     focus-follows-mouse max-scroll-amount="0%"
 }
 
