@@ -1769,6 +1769,9 @@ mod tests {
                     },
                 },
             },
+            nacre: Nacre {
+                overview_hover: true,
+            },
             environment: Environment(
                 [
                     EnvironmentVariable {
