@@ -313,7 +313,9 @@ impl CompositorHandler for State {
                     let unmapped = Unmapped::new(window);
                     self.niri.unmapped_windows.insert(surface.clone(), unmapped);
 
-                    if let Some(output) = output {
+                    if self.niri.layout.collection_overview_is_open() {
+                        self.niri.queue_redraw_all();
+                    } else if let Some(output) = output {
                         self.niri.queue_redraw(&output);
                         self.niri.queue_redraw_mru_output();
                     }
@@ -361,7 +363,9 @@ impl CompositorHandler for State {
                 // Popup placement depends on window size which might have changed.
                 self.update_reactive_popups(&window);
 
-                if let Some(output) = output {
+                if self.niri.layout.collection_overview_is_open() {
+                    self.niri.queue_redraw_all();
+                } else if let Some(output) = output {
                     self.niri.queue_redraw(&output);
                     self.niri.queue_redraw_mru_output();
                 }
@@ -381,7 +385,9 @@ impl CompositorHandler for State {
                 .window_mru_ui
                 .update_window(&self.niri.layout, mapped.id());
             self.niri.layout.update_window(&window, None);
-            if let Some(output) = output {
+            if self.niri.layout.collection_overview_is_open() {
+                self.niri.queue_redraw_all();
+            } else if let Some(output) = output {
                 self.niri.queue_redraw(&output);
                 self.niri.queue_redraw_mru_output();
             }

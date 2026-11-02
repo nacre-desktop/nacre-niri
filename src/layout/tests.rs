@@ -15,6 +15,7 @@ use super::*;
 
 mod animations;
 mod collections;
+mod collections_extra;
 mod fullscreen;
 
 impl<W: LayoutElement> Default for Layout<W> {

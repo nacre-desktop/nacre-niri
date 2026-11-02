@@ -2912,7 +2912,13 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
-        if self.overview_open { for c in &mut self.collections { for ws in &mut c.workspaces { ws.update_render_elements(false); } } }
+        if self.collection_overview_is_open() {
+            // All stacks can appear on this output, with more vertical previews visible at the
+            // smaller collection zoom than the monitor's usual culling rectangle permits.
+            for ws in self.workspaces_mut() {
+                ws.update_render_elements(false);
+            }
+        }
         let _span = tracy_client::span!("Layout::update_render_elements");
 
         self.update_render_elements_time = self.clock.now();
