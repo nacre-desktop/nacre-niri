@@ -2189,7 +2189,10 @@ mod tests {
 
     #[test]
     fn nacre_capabilities_ipc_wire_format() {
-        assert_eq!(serde_json::to_string(&Request::NacreCapabilities).unwrap(), "\"NacreCapabilities\"");
+        assert_eq!(
+            serde_json::to_string(&Request::NacreCapabilities).unwrap(),
+            "\"NacreCapabilities\""
+        );
         let reply = Ok::<_, String>(Response::NacreCapabilities(NacreCapabilities {
             workspace_collections: true,
             proportional_x11_widths: false,

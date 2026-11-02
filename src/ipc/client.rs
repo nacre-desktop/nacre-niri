@@ -188,7 +188,10 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 bail!("unexpected response: expected WindowUnderCursor, got {response:?}");
             };
             if json {
-                println!("{}", serde_json::to_string(&window).context("error formatting response")?);
+                println!(
+                    "{}",
+                    serde_json::to_string(&window).context("error formatting response")?
+                );
             } else if let Some(window) = window {
                 print_window(&window);
             } else {

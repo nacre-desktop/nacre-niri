@@ -3283,14 +3283,12 @@ impl Niri {
             return;
         }
         let enabled = self.config.borrow().nacre.overview_hover;
-        let id = if enabled
-            && self.layout.is_overview_open()
-            && self.pointer_visibility.is_visible()
-        {
-            self.window_under_cursor().map(|window| window.id().get())
-        } else {
-            None
-        };
+        let id =
+            if enabled && self.layout.is_overview_open() && self.pointer_visibility.is_visible() {
+                self.window_under_cursor().map(|window| window.id().get())
+            } else {
+                None
+            };
         server.update_overview_hover(id);
     }
 
@@ -6256,7 +6254,9 @@ impl Niri {
             let no_scroll = overview_hover_enabled
                 && ffm.max_scroll_amount.is_some_and(|amount| amount.0 == 0.);
             let selected = if overview_hover_enabled {
-                self.layout.focus().is_some_and(|focused| focused.window == *window)
+                self.layout
+                    .focus()
+                    .is_some_and(|focused| focused.window == *window)
                     && self.layer_shell_on_demand_focus.is_none()
             } else {
                 current_focus.window.as_ref() == new_focus.window.as_ref()
@@ -6289,9 +6289,9 @@ impl Niri {
                     let visible_id = self.layout.windows().find_map(|(monitor, mapped)| {
                         (monitor.is_some() && mapped.window == *window).then_some(mapped.id())
                     });
-                    if visible_id.is_some_and(|id| {
-                        self.layout.activate_window_without_scrolling(&id)
-                    }) {
+                    if visible_id
+                        .is_some_and(|id| self.layout.activate_window_without_scrolling(&id))
+                    {
                         self.layer_shell_on_demand_focus = None;
                     }
                 } else {

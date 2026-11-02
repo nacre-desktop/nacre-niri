@@ -143,7 +143,10 @@ impl IpcServer {
     }
 
     pub fn has_overview_hover_clients(&self) -> bool {
-        self.event_streams.borrow().iter().any(|stream| stream.overview_hover)
+        self.event_streams
+            .borrow()
+            .iter()
+            .any(|stream| stream.overview_hover)
     }
 
     pub fn update_overview_hover(&self, id: Option<u64>) {
@@ -390,7 +393,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::WindowUnderCursor => {
             let (tx, rx) = async_channel::bounded(1);
             ctx.event_loop.insert_idle(move |state| {
-                let id = state.niri.window_under_cursor().map(|window| window.id().get());
+                let id = state
+                    .niri
+                    .window_under_cursor()
+                    .map(|window| window.id().get());
                 let _ = tx.send_blocking(id);
             });
             let id = rx
@@ -398,7 +404,12 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 .await
                 .map_err(|_| String::from("error reading window under pointer"))?;
             let window = id.and_then(|id| {
-                ctx.event_stream_state.borrow().windows.windows.get(&id).cloned()
+                ctx.event_stream_state
+                    .borrow()
+                    .windows
+                    .windows
+                    .get(&id)
+                    .cloned()
             });
             Response::WindowUnderCursor(window)
         }

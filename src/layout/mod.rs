@@ -4993,7 +4993,10 @@ impl<W: LayoutElement> Layout<W> {
         for mon in monitors {
             mon.overview_open = self.overview_open;
             if !self.overview_open
-                && matches!(mon.workspace_switch.as_ref(), Some(WorkspaceSwitch::Hover(_)))
+                && matches!(
+                    mon.workspace_switch.as_ref(),
+                    Some(WorkspaceSwitch::Hover(_))
+                )
             {
                 mon.activate_workspace(mon.active_workspace_idx());
             }

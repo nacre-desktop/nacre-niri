@@ -1211,7 +1211,10 @@ impl<W: LayoutElement> Monitor<W> {
             Rc::new(Options::clone(&base_options).with_merged_layout(self.layout_config.as_ref()));
 
         if !options.nacre.overview_hover
-            && matches!(self.workspace_switch.as_ref(), Some(WorkspaceSwitch::Hover(_)))
+            && matches!(
+                self.workspace_switch.as_ref(),
+                Some(WorkspaceSwitch::Hover(_))
+            )
         {
             self.activate_workspace(self.active_workspace_idx);
         }

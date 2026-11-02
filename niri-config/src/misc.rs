@@ -160,7 +160,9 @@ pub struct Nacre {
 
 impl Default for Nacre {
     fn default() -> Self {
-        Self { overview_hover: true }
+        Self {
+            overview_hover: true,
+        }
     }
 }
 

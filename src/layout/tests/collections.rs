@@ -189,7 +189,10 @@ fn overview_hit_testing_selects_detached_column() {
     assert_eq!(layout.window_under(&output, point).unwrap().0.id(), &2);
     assert!(!layout.activate_window_without_scrolling(&2));
     assert_eq!(layout.focus().unwrap().id(), &focused);
-    assert_eq!(layout.active_monitor().unwrap().workspace_render_idx(), camera);
+    assert_eq!(
+        layout.active_monitor().unwrap().workspace_render_idx(),
+        camera
+    );
     let workspace = layout.workspace_under(false, &output, point).unwrap().id();
     assert_eq!(workspace, target);
     layout.select_overview_workspace(&output, workspace);
@@ -212,7 +215,10 @@ fn overview_hover_selects_visible_workspace_without_moving_camera() {
     assert!(layout.activate_window_without_scrolling(&2));
     layout.refresh(true);
     assert_eq!(layout.focus().unwrap().id(), &2);
-    assert_eq!(layout.monitors().next().unwrap().workspace_render_idx(), camera);
+    assert_eq!(
+        layout.monitors().next().unwrap().workspace_render_idx(),
+        camera
+    );
     layout.verify_invariants();
     layout.close_overview();
     layout.verify_invariants();
@@ -234,7 +240,10 @@ fn overview_hover_works_when_collections_are_disabled() {
     assert!(layout.activate_window_without_scrolling(&2));
     layout.refresh(true);
     assert_eq!(layout.focus().unwrap().id(), &2);
-    assert_eq!(layout.monitors().next().unwrap().workspace_render_idx(), camera);
+    assert_eq!(
+        layout.monitors().next().unwrap().workspace_render_idx(),
+        camera
+    );
     layout.verify_invariants();
 }
 

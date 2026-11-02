@@ -690,7 +690,11 @@ mod tests {
     fn nacre_overview_hover_defaults_on_and_can_be_disabled() {
         assert!(do_parse("").nacre.overview_hover);
         assert!(do_parse("nacre { overview-hover; }").nacre.overview_hover);
-        assert!(!do_parse("nacre { overview-hover false; }").nacre.overview_hover);
+        assert!(
+            !do_parse("nacre { overview-hover false; }")
+                .nacre
+                .overview_hover
+        );
     }
 
     #[test]
