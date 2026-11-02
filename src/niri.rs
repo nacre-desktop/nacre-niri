@@ -6290,8 +6290,7 @@ impl Niri {
                         monitor.is_some_and(|mon| new_focus.output.as_ref() == Some(mon.output()))
                             && mapped.window == *window
                     });
-                    if on_pointer_output && self.layout.activate_window_without_scrolling(window)
-                    {
+                    if on_pointer_output && self.layout.activate_window_without_scrolling(window) {
                         self.layer_shell_on_demand_focus = None;
                     }
                 } else {
