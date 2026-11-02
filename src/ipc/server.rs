@@ -156,6 +156,19 @@ impl IpcServer {
             .collect()
     }
 
+    #[cfg(test)]
+    pub(crate) fn subscribe_standard_events(&self) -> Receiver<Event> {
+        let (events, receiver) = async_channel::bounded(64);
+        let (disconnect, _disconnect_receiver) = async_channel::bounded(1);
+        self.event_streams.borrow_mut().push(EventStreamSender {
+            overview_hover: false,
+            events,
+            disconnect,
+            include_collections: false,
+        });
+        receiver
+    }
+
     pub fn has_overview_hover_clients(&self) -> bool {
         self.event_streams
             .borrow()
