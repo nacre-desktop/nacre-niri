@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use niri_config::utils::MergeWith as _;
 use niri_config::{Config, LayerRule};
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
@@ -8,6 +10,7 @@ use smithay::wayland::compositor::{remove_pre_commit_hook, HookId};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
 use super::ResolvedLayerRules;
+use super::motion::{LayerMotionRuntime, MotionPose};
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
@@ -53,6 +56,9 @@ pub struct MappedLayer {
 
     /// Clock for driving animations.
     clock: Clock,
+
+    /// Optional protocol-driven atlas animation shared with its controller.
+    motion: Option<Arc<Mutex<LayerMotionRuntime>>>,
 }
 
 niri_render_elements! {
@@ -90,6 +96,7 @@ impl MappedLayer {
             shadow: Shadow::new(shadow_config),
             blur_config: config.blur,
             clock,
+            motion: None,
         }
     }
 
@@ -128,6 +135,26 @@ impl MappedLayer {
 
     pub fn are_animations_ongoing(&self) -> bool {
         self.rules.baba_is_float
+            || self
+                .motion
+                .as_ref()
+                .is_some_and(|motion| motion.lock().unwrap().active.is_some())
+    }
+
+    pub fn set_motion_runtime(&mut self, motion: Arc<Mutex<LayerMotionRuntime>>) {
+        self.motion = Some(motion);
+    }
+
+    pub fn motion_poses(&self) -> Option<Vec<(u32, MotionPose)>> {
+        let motion = self.motion.as_ref()?;
+        let runtime = motion.lock().unwrap();
+        Some(
+            runtime
+                .active
+                .as_ref()
+                .map(|active| active.sample(self.clock.now()))
+                .unwrap_or_else(|| runtime.current.clone()),
+        )
     }
 
     pub fn surface(&self) -> &LayerSurface {

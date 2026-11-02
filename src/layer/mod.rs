@@ -5,6 +5,7 @@ use smithay::desktop::LayerSurface;
 use smithay::wayland::shell::wlr_layer::Layer;
 
 pub mod mapped;
+pub mod motion;
 pub use mapped::MappedLayer;
 
 /// Rules fully resolved for a layer-shell surface.
