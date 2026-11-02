@@ -76,6 +76,7 @@ use crate::utils::{
 use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;
+pub mod collections;
 pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
@@ -336,6 +337,8 @@ pub trait LayoutElement {
 pub struct Layout<W: LayoutElement> {
     /// Monitors and workspaes in the layout.
     monitor_set: MonitorSet<W>,
+    /// Collection identity registry, retained independently of connected outputs.
+    collections: Vec<collections::Collection>,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -695,6 +698,7 @@ impl<W: LayoutElement> Layout<W> {
     pub fn with_options(clock: Clock, options: Options) -> Self {
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
+            collections: vec![],
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -720,6 +724,7 @@ impl<W: LayoutElement> Layout<W> {
 
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
+            collections: vec![],
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -733,6 +738,18 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn add_output(&mut self, output: Output, layout_config: Option<LayoutPart>) {
+        let output_name = output.name();
+        if !self
+            .collections
+            .iter()
+            .any(|c| c.original_output.as_deref() == Some(output_name.as_str()))
+        {
+            self.collections.push(collections::Collection::new(
+                None,
+                Some(output_name.clone()),
+                false,
+            ));
+        }
         self.monitor_set = match mem::take(&mut self.monitor_set) {
             MonitorSet::Normal {
                 mut monitors,
@@ -896,6 +913,53 @@ impl<W: LayoutElement> Layout<W> {
                 panic!("tried to remove output when there were already none")
             }
         }
+    }
+
+    /// Returns the stable collections known to the layout, including collections whose original
+    /// output is currently disconnected.
+    pub fn collections(&self) -> Vec<niri_ipc::Collection> {
+        let mut result = Vec::with_capacity(self.collections.len());
+        for (idx, collection) in self.collections.iter().enumerate() {
+            let shown_monitor = self.monitors().find(|monitor| {
+                monitor.output_name() == collection.original_output.as_deref().unwrap_or_default()
+            });
+            let active = shown_monitor.is_some_and(|monitor| {
+                self.active_monitor_ref()
+                    .is_some_and(|active| active.output() == monitor.output())
+            });
+            let workspace_ids = self
+                .workspaces()
+                .filter_map(|(_, _, workspace)| {
+                    collection.original_output.as_deref().and_then(|name| {
+                        workspace
+                            .original_output
+                            .matches_name(name)
+                            .then(|| workspace.id().get())
+                    })
+                })
+                .collect();
+            result.push(niri_ipc::Collection {
+                id: collection.id,
+                idx,
+                name: collection.name.clone(),
+                output: shown_monitor.map(|monitor| monitor.output_name().clone()),
+                is_active: active,
+                workspace_ids,
+            });
+        }
+        result
+    }
+
+    /// Creates a virtual collection. It becomes persistent when configured by name.
+    pub fn create_collection(&mut self, name: Option<String>) -> u64 {
+        let collection = collections::Collection::new(name, None, false);
+        let id = collection.id;
+        self.collections.push(collection);
+        id
+    }
+
+    pub(super) fn collection_registry(&self) -> &[collections::Collection] {
+        &self.collections
     }
 
     pub fn add_column_by_idx(
