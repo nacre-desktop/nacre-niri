@@ -36,6 +36,7 @@ input {
         // drag false
         // drag-lock
         natural-scroll
+        scroll-factor 0.75
         // accel-speed 0.2
         // accel-profile "flat"
         // scroll-method "two-finger"
@@ -66,7 +67,7 @@ input {
 
     // Focus windows and outputs automatically when moving the mouse into them.
     // Setting max-scroll-amount="0%" makes it work only on windows already fully on screen.
-    // focus-follows-mouse max-scroll-amount="0%"
+    focus-follows-mouse max-scroll-amount="0%"
 }
 
 // You can configure outputs by their name, which you can find
@@ -111,7 +112,7 @@ input {
 // https://niri-wm.github.io/niri/Configuration:-Layout
 layout {
     // Set gaps around windows in logical pixels.
-    gaps 16
+    gaps 12
 
     // When to center a column when changing focus, options are:
     // - "never", default behavior, focusing an off-screen column will keep at the left
@@ -129,6 +130,7 @@ layout {
         proportion 0.33333
         proportion 0.5
         proportion 0.66667
+        proportion 1.0
 
         // Fixed sets the width in logical pixels exactly.
         // fixed 1920
@@ -159,7 +161,7 @@ layout {
         // off
 
         // How many logical pixels the ring extends out from the windows.
-        width 4
+        width 1
 
         // Colors can be set in a variety of ways:
         // - CSS named colors: "red"
@@ -254,6 +256,8 @@ layout {
     // Left and right struts will cause the next window to the side to always be visible.
     // Top and bottom struts will simply add outer gaps in addition to the area occupied by
     // layer-shell panels and regular gaps.
+    background-color "transparent"
+
     struts {
         // left 64
         // right 64
@@ -283,7 +287,7 @@ hotkey-overlay {
 // Additionally, clients will be informed that they are tiled, removing some client-side rounded corners.
 // This option will also fix border/focus ring drawing behind some semitransparent windows.
 // After enabling or disabling this, you need to restart the apps for this to take effect.
-// prefer-no-csd
+prefer-no-csd
 
 // You can change the path where screenshots are saved.
 // A ~ at the front will be expanded to the home directory.
@@ -634,35 +638,11 @@ binds {
 // Nacre's portable niri defaults. These are compositor behavior only: Nacre's
 // command bindings, palette, host output settings and private custom.kdl remain
 // in the session configuration that includes this file.
-prefer-no-csd
-
-layout {
-    gaps 12
-    default-column-width { proportion 0.5; }
-    preset-column-widths {
-        proportion 0.33333
-        proportion 0.5
-        proportion 0.66667
-        proportion 1.0
-    }
-    focus-ring { width 1; }
-}
-
-input {
-    touchpad {
-        natural-scroll
-        scroll-factor 0.75
-    }
-    focus-follows-mouse max-scroll-amount="0%"
-}
-
 // Nacre and Bead wallpapers are intentionally drawn behind the overview.
 layer-rule {
     match namespace="^(nacre-background|bead-wallpaper|bead-wallpaper-video)$"
     place-within-backdrop true
 }
-layout { background-color "transparent" }
-
 overview {
     workspace-shadow {
         on
@@ -673,7 +653,7 @@ overview {
     }
 }
 
-// Enable the fork's overview hover capability. Remove or set false to retain
+// The fork enables overview hover by default. Set the flag to false to retain
 // upstream niri behavior for overview pointer movement.
 nacre { overview-hover; }
 

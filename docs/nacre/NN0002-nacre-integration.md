@@ -23,11 +23,11 @@ or bindings to Nacre commands.
 | Generated `bindings.kdl` and `niri/bindings.kdl`: workspace/window navigation plus Nacre launcher, palette, clipboard, widgets, power, lock, files, terminal, AI, settings, screenshot, and helper actions | STAYS IN NACRE | Keep binds to Nacre command entry points in generated config. The user's own `Super+Ctrl+Q`, `Super+Tab`, and screenshot/preview overrides remain in the external custom file. |
 | Generated `colors.kdl` and owner's palette include | STAYS IN NACRE | Palette colors and preserving owner-selected ring/border state are theme policy. The fork does not copy palette values. |
 | Generated `keyboard.kdl` | STAYS IN NACRE | XKB layout/model/options are locale and device policy. |
-| Generated `workspaces.kdl` and Nacre `niri_workspaces.rs` / `niri_workspace_policy.rs` | NATIVE (NN0001) | Fixed collections per connected output, workspace visitors, restoration and safe managed-include updates are the existing NN0001 capability. Its feature flags remain the authority; when disabled the corresponding upstream dynamic workspace behavior is retained. Nacre must stop duplicating those operations when fork capability is detected. |
-| Generated `monitor-workspace-actions.kdl`, `workspace-visitors.kdl`, and `niri/monitor-workspace-actions.kdl`, `niri/workspace-visitors.kdl` | NATIVE (NN0001) for behavior; STAYS IN NACRE for product key assignments | Collection movement/exchange/rotation and bring-visitors behavior remain native code/config fragments. The choice of Nacre hotkeys and generated includes is Nacre policy. |
+| NN0001 collection registry and Nacre generated `workspaces.kdl` / `niri_workspace_policy.rs` | NATIVE (NN0001) for collection storage and output restoration; STAYS IN NACRE for named workspace policy | NN0001 owns stable collections, hidden stacks, original-output identity, and restoring the original collection when a monitor returns. It does not choose Nacre's fixed numeric slots/names or decide per-profile routing. The helper may continue applying that Nacre policy over the native collection API. |
+| Generated `monitor-workspace-actions.kdl`, `workspace-visitors.kdl`, and `niri/monitor-workspace-actions.kdl`, `niri/workspace-visitors.kdl` | STAYS IN NACRE | Nacre's helper implements monitor send/swap/rotate and visitor adoption/bring policy using niri IPC. NN0001 supplies generic collection primitives and origin identity; it does not supply those Nacre policy operations or bindings. |
 | `nacre-niri-widths.service`, `niri_widths.rs`, width CLI/runtime/X11 modules | NATIVE, deferred to NN0003 | The helper restores X11 minimum-size hints and continually repairs geometry; a declarative default rule is not equivalent and can override user resizing. Keep the helper active until a native implementation proves parity, then gate it and let Nacre skip it only when the capability is advertised. |
 | `niri_hover_probe.rs`, hover pointer support, patched overview-hover binary/source under the private companion checkout, session runtime verification | NATIVE (NN0002 implementation in progress) | Adapt the existing behavior to NN0001's changed layout API and implement a default-on `nacre.overview-hover` capability; when disabled, preserve upstream behavior. The proof probe stays test/developer tooling; Nacre skips the companion only when capability is enabled. |
-| Redock state under the Nacre state directory and the corresponding session/helper behavior | NATIVE candidate: remember and restore the original output for a detached/re-docked window | This is compositor state rather than product policy, but must avoid overriding an explicit user move. Audit NN0001 collections first; if origin-output information cannot safely express this case, implement it as a default-on native capability. Otherwise defer to NN0003+ and document the missing trigger/evidence. Nacre must stop duplicate redock enforcement only after parity is demonstrated. |
+| `niri-redock-*` state artifacts and Nacre panel/Pearl redock behavior | STAYS IN NACRE | Inspection of the artifacts and `test_panel_redock_motion.py` shows this is Nacre UI restoration/motion testing, not a runtime compositor helper that remembers window outputs. NN0001 collection-origin restoration is a separate capability for workspace stacks after output unplug/replug; it does not replace panel redock animation or restore. Keep the UI behavior and its tests in Nacre; no later native unit is proposed. |
 | `niri_acceptance_monitor.rs`, acceptance systemd watcher, and acceptance tests | STAYS IN NACRE / test harness | This monitors Nacre's generated runtime acceptance conditions and session recovery. It is not end-user compositor behavior and should not run as a fork feature. Keep it in Nacre CI/acceptance tooling. |
 | `bead-pearls.kdl` and Nacre's embedded Pearl fragment | BUILT-IN DEFAULT | Pearl bootstrap/floating/opacity and chrome exclusions implement the Pearl window protocol, not a theme or Nacre command. Retain the N0103 include order so custom overrides apply after managed fragments. |
 | `unsupported.json` (32 records) | STAYS IN NACRE except any item explicitly replaced by a shipped native feature | It is an audit of Nacre's Hyprland-to-niri translation, not a compositor config. The 20 missing/consuming bindings, 7 app window rules, 2 extensions, backend config, unbind, and cursor event remain Nacre capability metadata. Existing reasons identify unavailable hide/trash, pin/pseudo, split toggle, scratchpad/keymap/resize, panel drag, non-consuming Escape, and backend-specific cursor behavior. Nacre may remove a record only when the corresponding behavior is actually implemented and covered. |
@@ -53,10 +53,10 @@ merely because a similar-looking rule exists.
 
 | Candidate | NN disposition | Rationale / follow-up |
 | --- | --- | --- |
-| NN0001 workspace collections, visitor policy and monitor actions | Landed/base | Avoid Nacre duplicate policy where NN0001 capability covers the operation. |
+| NN0001 collection registry and output restoration | Landed/base | Fork owns stable collection identities, hidden stacks and restoration to an original output after hotplug. Nacre retains fixed workspace naming/routing, visitor policy and monitor actions. |
 | Proportional initial widths for X11/Xwayland clients | NN0003 (deferred) | The existing helper repairs minimum-size hints and geometry continually. A simple placement rule cannot replace that contract without changing user-resize behavior. |
 | Overview hover events/behavior | NN0002 (in progress) | Adapt the behavior against the NN0001 layout API; expose a default-on flag and prove disabled mode preserves upstream behavior. |
-| Original-output memory for detached/re-docked windows | Later NN unit unless NN0001 provides exact parity | Requires a precise lifecycle and conflict rule for explicit user moves; do not encode owner-specific state paths. |
+| Redock of Nacre Pearl/panel UI | STAYS IN NACRE | The state artifacts are test/experiment evidence; the runtime behavior is Nacre panel restoration and motion, unrelated to compositor workspace collection output identity. |
 | Remaining `unsupported.json` items | Later N-units only when a small native implementation has an end-user value | Most are absent niri concepts or Nacre command mappings. They remain Nacre-owned metadata until separately designed and tested. |
 
 The `unsupported.json` inventory (32 records), exhaustively grouped:
@@ -84,10 +84,10 @@ The `unsupported.json` inventory (32 records), exhaustively grouped:
 | 1 | `cursor.session` extension | STAYS IN NACRE; backend extension is not emitted. |
 | 1 | `hypr/conf/cursor.lua` event | STAYS IN NACRE; backend-specific cursor event is not emitted. |
 
-NN0002's hover flag is enabled by the presence of `nacre { overview-hover; }`;
-explicit opt-out is `nacre { overview-hover false; }`. The fork capability query
-must report its effective value. Nacre skips the companion helper only when the
-reported capability is true.
+NN0002's hover flag defaults on in the fork configuration model and is enabled
+by `nacre { overview-hover; }`; explicit opt-out is `nacre { overview-hover false; }`.
+The fork capability query must report its effective value. Nacre skips the
+companion helper only when the reported capability is true.
 
 ## Sources reviewed
 
