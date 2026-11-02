@@ -57,7 +57,12 @@ fn shown_collection_workspaces_have_ipc_monitor_state_after_switch() {
         .workspaces()
         .find(|(_, _, ws)| ws.id() == detached_workspace_id)
         .expect("detached workspace remains addressable after showing");
-    assert_eq!(shown_workspace.0.map(|monitor| monitor.output_name()), Some("headless-1"));
+    assert_eq!(
+        shown_workspace
+            .0
+            .map(|monitor| monitor.output_name().as_str()),
+        Some("headless-1")
+    );
     assert!(shown_workspace.0.is_some_and(|monitor| {
         monitor.active_workspace_idx() == shown_workspace.1
     }));
