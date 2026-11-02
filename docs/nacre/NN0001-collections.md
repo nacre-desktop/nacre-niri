@@ -69,6 +69,9 @@ IPC references additionally support stable IDs. Next/previous wrap in collection
 order. Invalid references are harmless. Moving a window preserves its tile state.
 The move actions target the collection's active workspace.
 Config-declared names are reconciled on reload and remain while empty.
+Legacy workspace move/index operations require a shown collection; hidden named/ID
+references are rejected rather than interpreted on an unrelated monitor. Workspace
+focus by name/ID first shows the owning collection.
 
 `niri msg collections` / `Request::Collections` lists stable ID, one-based index,
 name, displayed output (null when hidden), active/focused status, and workspace IDs.
