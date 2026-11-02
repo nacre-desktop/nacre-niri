@@ -44,8 +44,14 @@ overview, layer blur, and general window shadow/blur, plus a soft overview shado
 Bead Pearl window contract; Pearl rules disable generic shadow and blur.
 It does not set an output name/mode, keyboard
 layout, palette, Nacre command bind, Nacre startup program, or a path to the
-owner's custom file. Nacre keeps generating/includes its custom file after its
-managed fragments, matching the existing custom-override contract.
+owner's custom file. Nacre includes that file after its managed fragments,
+retaining the existing custom-override contract.
+
+The bundled file is a fallback, not an implicit include for every explicit
+configuration. Nacre therefore retains its matching declarative fragments for
+both stock niri and the fork, including Pearl ordering. Removing those fragments
+would change an explicitly generated session. Native behavior flags apply to
+either configuration path; their active IPC values govern workaround removal.
 
 Nacre can identify the fork from its version suffix or query its IPC capabilities.
 Use fork identity only to select the compatibility path; skip each helper only
@@ -121,3 +127,27 @@ generator, compositor config/action/workspace modules, session runtime,
 widths, hover probe, acceptance monitor and their service/test references; and
 the owner's external `custom.kdl` only to verify the include/override contract.
 Private values and commands from the custom file were excluded from this audit.
+
+## Validation
+
+Checked code revision `5f1e71c3` in an isolated Arch container (8 CPUs, 16 GiB),
+using a byte-matched source snapshot. No installed compositor or live config changed.
+
+| Check | Result |
+| --- | --- |
+| `cargo test --all -j2` | 250 tests/doc tests passed |
+| Collections property test, `PROPTEST_CASES=5000` | Passed |
+| Inherited slow/property suite, `RUN_SLOW_TESTS=1 PROPTEST_CASES=2000` | Passed |
+| `cargo clippy --all --all-targets -j2` | Passed; five inherited warnings, no new warnings |
+| Nightly `cargo fmt --all -- --check` | Passed |
+| `cargo check --no-default-features -j2` | Passed |
+| Built binary `niri validate --config resources/default-config.kdl` | Passed |
+| Version marker and capability wire/CLI tests | Passed |
+
+The default-difference and parsed-config snapshots explicitly record the intended
+preferences and default-on native flag. Nacre frozen parity references were not
+changed. The CI test job now validates the bundled config. Nested visual/hover
+acceptance was not rerun because the test host was unreachable; unit coverage
+includes camera preservation, hidden-preview metadata, opt-out/reload behavior,
+and separation from the ordinary event stream. N0107 desktop CI is recorded in
+the paired Nacre spec and task report.
