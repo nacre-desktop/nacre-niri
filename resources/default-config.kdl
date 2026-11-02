@@ -630,3 +630,72 @@ binds {
     // moving the mouse or pressing any other key.
     Mod+Shift+P { power-off-monitors; }
 }
+
+// Nacre's portable niri defaults. These are compositor behavior only: Nacre's
+// command bindings, palette, host output settings and private custom.kdl remain
+// in the session configuration that includes this file.
+prefer-no-csd
+
+layout {
+    gaps 12
+    default-column-width { proportion 0.5; }
+    preset-column-widths {
+        proportion 0.33333
+        proportion 0.5
+        proportion 0.66667
+        proportion 1.0
+    }
+    focus-ring { width 1; }
+}
+
+input {
+    touchpad {
+        natural-scroll
+        scroll-factor 0.75
+    }
+    focus-follows-mouse max-scroll-amount="0%"
+}
+
+// Nacre and Bead wallpapers are intentionally drawn behind the overview.
+layer-rule {
+    match namespace="^(nacre-background|bead-wallpaper|bead-wallpaper-video)$"
+    place-within-backdrop true
+}
+layout { background-color "transparent" }
+
+overview {
+    workspace-shadow {
+        on
+        softness 40
+        spread 10
+        offset x=0 y=8
+        color "#00000070"
+    }
+}
+
+// Enable the fork's overview hover capability. Remove or set false to retain
+// upstream niri behavior for overview pointer movement.
+nacre { overview-hover; }
+
+// Bead Pearl windows render their own chrome. Keep the transparent prewarm
+// floating and unfocused, without compositor decorations or background blur.
+window-rule {
+    match app-id="^bead[.]pearl([.]pending)?$"
+    open-floating true
+    open-focused false
+    default-floating-position x=0 y=0 relative-to="top-left"
+    border { off; }
+    focus-ring { off; }
+    shadow { off; }
+    background-effect { blur false; }
+}
+
+window-rule {
+    match app-id="^bead[.]pearl[.]pending$"
+    opacity 0.0
+}
+
+window-rule {
+    match app-id="^nacre-widgets$"
+    background-effect { blur false; }
+}
