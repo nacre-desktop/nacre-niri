@@ -52,8 +52,8 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Serial, Size, Transform};
 use tile::{Tile, TileRenderElement};
 use workspace::{WorkspaceAddWindowTarget, WorkspaceId};
 
-pub use self::monitor::MonitorRenderElement;
 pub use self::collection_overview::CollectionOverviewRenderElement;
+pub use self::monitor::MonitorRenderElement;
 use self::monitor::{Monitor, WorkspaceSwitch};
 use self::workspace::{OutputId, Workspace};
 use crate::animation::{Animation, Clock};
@@ -77,8 +77,8 @@ use crate::utils::{
 use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;
-pub mod collections;
 mod collection_overview;
+pub mod collections;
 pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
@@ -734,9 +734,12 @@ impl<W: LayoutElement> Layout<W> {
             })
             .collect();
 
-        let pending = workspaces.iter().zip(&config.workspaces)
+        let pending = workspaces
+            .iter()
+            .zip(&config.workspaces)
             .filter(|(_, config)| config.open_on_output.is_some())
-            .map(|(workspace, _)| workspace.id()).collect();
+            .map(|(workspace, _)| workspace.id())
+            .collect();
 
         let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
@@ -973,21 +976,47 @@ impl<W: LayoutElement> Layout<W> {
         let id = window.id().clone();
 
         let hidden_target = self.collections.iter().enumerate().find_map(|(ci, c)| {
-            c.workspaces.iter().enumerate().find_map(|(wi, ws)| match target {
-                AddWindowTarget::Workspace(id) if ws.id() == id => Some((ci, wi, WorkspaceAddWindowTarget::Auto)),
-                AddWindowTarget::NextTo(next) if ws.has_window(next) => Some((ci, wi, WorkspaceAddWindowTarget::NextTo(next))),
-                _ => None,
-            })
+            c.workspaces
+                .iter()
+                .enumerate()
+                .find_map(|(wi, ws)| match target {
+                    AddWindowTarget::Workspace(id) if ws.id() == id => {
+                        Some((ci, wi, WorkspaceAddWindowTarget::Auto))
+                    }
+                    AddWindowTarget::NextTo(next) if ws.has_window(next) => {
+                        Some((ci, wi, WorkspaceAddWindowTarget::NextTo(next)))
+                    }
+                    _ => None,
+                })
         });
         if let Some((ci, wi, target)) = hidden_target {
             let ws = &mut self.collections[ci].workspaces[wi];
             let width = ws.resolve_scrolling_width(&window, width);
             let tile = ws.make_tile(window);
-            ws.add_tile(tile, target, ActivateWindow::No, width, is_full_width, is_floating);
-            if !is_floating { if let Some(height) = scrolling_height { ws.set_window_height(Some(&id), height); } }
+            ws.add_tile(
+                tile,
+                target,
+                ActivateWindow::No,
+                width,
+                is_full_width,
+                is_floating,
+            );
+            if !is_floating {
+                if let Some(height) = scrolling_height {
+                    ws.set_window_height(Some(&id), height);
+                }
+            }
             ws.refresh(false, false);
             let c = &mut self.collections[ci];
-            if c.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) { c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone())); }
+            if c.workspaces
+                .last()
+                .is_some_and(|ws| ws.has_windows_or_name())
+            {
+                c.workspaces.push(Workspace::new_no_outputs(
+                    self.clock.clone(),
+                    self.options.clone(),
+                ));
+            }
             return None;
         }
 
@@ -1319,7 +1348,14 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_workspace_by_id(&self, id: WorkspaceId) -> Option<(usize, &Workspace<W>)> {
         for c in &self.collections {
-            if let Some((idx, ws)) = c.workspaces.iter().enumerate().find(|(_, ws)| ws.id() == id) { return Some((idx, ws)); }
+            if let Some((idx, ws)) = c
+                .workspaces
+                .iter()
+                .enumerate()
+                .find(|(_, ws)| ws.id() == id)
+            {
+                return Some((idx, ws));
+            }
         }
         match &self.monitor_set {
             MonitorSet::Normal { ref monitors, .. } => {
@@ -1348,7 +1384,12 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn find_workspace_by_name(&self, workspace_name: &str) -> Option<(usize, &Workspace<W>)> {
         for c in &self.collections {
-            if let Some((idx, ws)) = c.workspaces.iter().enumerate().find(|(_, ws)| ws.name().is_some_and(|name| name.eq_ignore_ascii_case(workspace_name))) { return Some((idx, ws)); }
+            if let Some((idx, ws)) = c.workspaces.iter().enumerate().find(|(_, ws)| {
+                ws.name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case(workspace_name))
+            }) {
+                return Some((idx, ws));
+            }
         }
         match &self.monitor_set {
             MonitorSet::Normal { ref monitors, .. } => {
@@ -1452,7 +1493,9 @@ impl<W: LayoutElement> Layout<W> {
 
         for c in &self.collections {
             for ws in &c.workspaces {
-                if let Some(win) = ws.find_wl_surface(wl_surface) { return Some((win, None)); }
+                if let Some(win) = ws.find_wl_surface(wl_surface) {
+                    return Some((win, None));
+                }
             }
         }
         match &self.monitor_set {
@@ -1489,7 +1532,9 @@ impl<W: LayoutElement> Layout<W> {
 
         for c in &mut self.collections {
             for ws in &mut c.workspaces {
-                if let Some(win) = ws.find_wl_surface_mut(wl_surface) { return Some((win, None)); }
+                if let Some(win) = ws.find_wl_surface_mut(wl_surface) {
+                    return Some((win, None));
+                }
             }
         }
         match &mut self.monitor_set {
@@ -1603,7 +1648,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window(&mut self, window: &W::Id) {
-        if let Some(id) = self.collections.iter().find(|c| c.workspaces.iter().any(|ws| ws.has_window(window))).map(|c| c.id) {
+        if let Some(id) = self
+            .collections
+            .iter()
+            .find(|c| c.workspaces.iter().any(|ws| ws.has_window(window)))
+            .map(|c| c.id)
+        {
             self.focus_collection(&WorkspaceReference::Id(id));
         }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
@@ -1642,7 +1692,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window_without_raising(&mut self, window: &W::Id) {
-        if let Some(id) = self.collections.iter().find(|c| c.workspaces.iter().any(|ws| ws.has_window(window))).map(|c| c.id) {
+        if let Some(id) = self
+            .collections
+            .iter()
+            .find(|c| c.workspaces.iter().any(|ws| ws.has_window(window)))
+            .map(|c| c.id)
+        {
             self.focus_collection(&WorkspaceReference::Id(id));
         }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
@@ -1774,7 +1829,9 @@ impl<W: LayoutElement> Layout<W> {
 
         for c in &self.collections {
             for ws in &c.workspaces {
-                for (tile, layout) in ws.tiles_with_ipc_layouts() { f(tile.window(), None, Some(ws.id()), layout); }
+                for (tile, layout) in ws.tiles_with_ipc_layouts() {
+                    f(tile.window(), None, Some(ws.id()), layout);
+                }
             }
         }
         match &self.monitor_set {
@@ -1804,7 +1861,9 @@ impl<W: LayoutElement> Layout<W> {
 
         for c in &mut self.collections {
             for ws in &mut c.workspaces {
-                for win in ws.windows_mut() { f(win, None); }
+                for win in ws.windows_mut() {
+                    f(win, None);
+                }
             }
         }
         match &mut self.monitor_set {
@@ -2237,12 +2296,34 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         if let Some(window) = window {
-            if let Some((ci, wi)) = self.collections.iter().enumerate().find_map(|(ci, c)| c.workspaces.iter().position(|ws| ws.has_window(window)).map(|wi| (ci, wi))) {
+            if let Some((ci, wi)) = self.collections.iter().enumerate().find_map(|(ci, c)| {
+                c.workspaces
+                    .iter()
+                    .position(|ws| ws.has_window(window))
+                    .map(|wi| (ci, wi))
+            }) {
                 let c = &mut self.collections[ci];
-                if wi == idx || idx >= c.workspaces.len() { return; }
+                if wi == idx || idx >= c.workspaces.len() {
+                    return;
+                }
                 let removed = c.workspaces[wi].remove_tile(window, Transaction::new());
-                c.workspaces[idx].add_tile(removed.tile, WorkspaceAddWindowTarget::Auto, ActivateWindow::No, removed.width, removed.is_full_width, removed.is_floating);
-                if c.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) { c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone())); }
+                c.workspaces[idx].add_tile(
+                    removed.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                    removed.is_floating,
+                );
+                if c.workspaces
+                    .last()
+                    .is_some_and(|ws| ws.has_windows_or_name())
+                {
+                    c.workspaces.push(Workspace::new_no_outputs(
+                        self.clock.clone(),
+                        self.options.clone(),
+                    ));
+                }
                 return;
             }
         }
@@ -2571,18 +2652,36 @@ impl<W: LayoutElement> Layout<W> {
 
         if self.options.layout.collections.enabled {
             let mut collection_ids = HashSet::new();
-            for collection in &self.collections { assert!(collection_ids.insert(collection.id), "collection IDs must be unique"); }
+            for collection in &self.collections {
+                assert!(
+                    collection_ids.insert(collection.id),
+                    "collection IDs must be unique"
+                );
+            }
             let mut shown_ids = HashSet::new();
             for monitor in self.monitors() {
-                let id = monitor.collection_id.expect("monitor must show a collection");
+                let id = monitor
+                    .collection_id
+                    .expect("monitor must show a collection");
                 assert!(collection_ids.contains(&id), "shown collection must exist");
                 assert!(shown_ids.insert(id), "a collection cannot be shown twice");
-                assert!(self.collections.iter().find(|c| c.id == id).unwrap().workspaces.is_empty(), "shown stack must be leased exclusively to its monitor");
+                assert!(
+                    self.collections
+                        .iter()
+                        .find(|c| c.id == id)
+                        .unwrap()
+                        .workspaces
+                        .is_empty(),
+                    "shown stack must be leased exclusively to its monitor"
+                );
             }
         }
         let mut window_ids = Vec::new();
         for (_, window) in self.windows() {
-            assert!(!window_ids.contains(&window.id()), "window IDs must be unique across all stacks");
+            assert!(
+                !window_ids.contains(&window.id()),
+                "window IDs must be unique across all stacks"
+            );
             window_ids.push(window.id());
         }
         let mut seen_workspace_id = HashSet::new();
@@ -2590,7 +2689,10 @@ impl<W: LayoutElement> Layout<W> {
 
         for collection in &self.collections {
             for workspace in &collection.workspaces {
-                assert!(seen_workspace_id.insert(workspace.id()), "workspace id must be unique");
+                assert!(
+                    seen_workspace_id.insert(workspace.id()),
+                    "workspace id must be unique"
+                );
                 assert!(workspace.current_output().is_none());
                 assert_eq!(workspace.base_options, self.options);
                 workspace.verify_invariants(move_win_id.as_ref());
@@ -2732,7 +2834,11 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        for c in &mut self.collections { for ws in &mut c.workspaces { ws.advance_animations(); } }
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces {
+                ws.advance_animations();
+            }
+        }
         let _span = tracy_client::span!("Layout::advance_animations");
 
         let mut dnd_scroll = None;
@@ -2877,7 +2983,14 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
-        if self.overview_open && self.collections.iter().any(|c| c.workspaces.iter().any(|ws| ws.are_animations_ongoing())) { return true; }
+        if self.overview_open
+            && self
+                .collections
+                .iter()
+                .any(|c| c.workspaces.iter().any(|ws| ws.are_animations_ongoing()))
+        {
+            return true;
+        }
         // Keep advancing animations if we might need to scroll the view.
         if let Some(dnd) = &self.dnd {
             if output.is_none_or(|output| *output == dnd.output) {
@@ -2978,7 +3091,11 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn update_shaders(&mut self) {
         self.collection_overview.clear();
-        for c in &mut self.collections { for ws in &mut c.workspaces { ws.update_shaders(); } }
+        for c in &mut self.collections {
+            for ws in &mut c.workspaces {
+                ws.update_shaders();
+            }
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             move_.tile.update_shaders();
         }
@@ -3147,7 +3264,9 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         for c in &mut self.collections {
-            for ws in &mut c.workspaces { ws.update_config(options.clone()); }
+            for ws in &mut c.workspaces {
+                ws.update_config(options.clone());
+            }
         }
         self.options = options;
         self.configure_collections();
@@ -3461,13 +3580,41 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         if let Some(window) = window {
-            if self.collections.iter().any(|c| c.workspaces.iter().any(|ws| ws.has_window(window))) {
-                let target = self.monitors().find(|m| m.output() == output).and_then(|m| m.workspaces.get(target_ws_idx.unwrap_or(m.active_workspace_idx))).map(|ws| ws.id());
-                let Some(target) = target else { return; };
-                let Some(mut removed) = self.remove_window(window, Transaction::new()) else { return; };
+            if self
+                .collections
+                .iter()
+                .any(|c| c.workspaces.iter().any(|ws| ws.has_window(window)))
+            {
+                let target = self
+                    .monitors()
+                    .find(|m| m.output() == output)
+                    .and_then(|m| {
+                        m.workspaces
+                            .get(target_ws_idx.unwrap_or(m.active_workspace_idx))
+                    })
+                    .map(|ws| ws.id());
+                let Some(target) = target else {
+                    return;
+                };
+                let Some(mut removed) = self.remove_window(window, Transaction::new()) else {
+                    return;
+                };
                 removed.tile.stop_move_animations();
-                self.monitor_for_output_mut(output).unwrap().add_tile(removed.tile, MonitorAddWindowTarget::Workspace { id: target, column_idx: None }, activate, true, removed.width, removed.is_full_width, removed.is_floating);
-                if activate.map_smart(|| false) { self.focus_output(output); }
+                self.monitor_for_output_mut(output).unwrap().add_tile(
+                    removed.tile,
+                    MonitorAddWindowTarget::Workspace {
+                        id: target,
+                        column_idx: None,
+                    },
+                    activate,
+                    true,
+                    removed.width,
+                    removed.is_full_width,
+                    removed.is_floating,
+                );
+                if activate.map_smart(|| false) {
+                    self.focus_output(output);
+                }
                 return;
             }
         }
@@ -3984,8 +4131,15 @@ impl<W: LayoutElement> Layout<W> {
                 .find(|(ws, _)| ws.has_window(&window_id))
                 .map(|(ws, geo)| (mon, ws, geo))
         });
-        let preview = self.collection_overview_is_open().then(|| self.collection_window_preview(output, &window_id)).flatten();
-        let Some((ws, ws_geo, zoom)) = preview.or_else(|| regular.and_then(|(mon, ws, geo)| (mon.output() == output).then_some((ws, geo, mon.overview_zoom())))) else {
+        let preview = self
+            .collection_overview_is_open()
+            .then(|| self.collection_window_preview(output, &window_id))
+            .flatten();
+        let Some((ws, ws_geo, zoom)) = preview.or_else(|| {
+            regular.and_then(|(mon, ws, geo)| {
+                (mon.output() == output).then_some((ws, geo, mon.overview_zoom()))
+            })
+        }) else {
             return false;
         };
 
@@ -4721,7 +4875,10 @@ impl<W: LayoutElement> Layout<W> {
 
         for c in &mut self.collections {
             if c.workspaces.last().is_some_and(|last| last.id() == wsid) {
-                c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone()));
+                c.workspaces.push(Workspace::new_no_outputs(
+                    self.clock.clone(),
+                    self.options.clone(),
+                ));
                 return;
             }
         }
@@ -5066,7 +5223,9 @@ impl<W: LayoutElement> Layout<W> {
         let _span = tracy_client::span!("Layout::refresh");
 
         for c in &mut self.collections {
-            for ws in &mut c.workspaces { ws.refresh(false, false); }
+            for ws in &mut c.workspaces {
+                ws.refresh(false, false);
+            }
         }
         self.clean_up_collections();
 
@@ -5180,7 +5339,9 @@ impl<W: LayoutElement> Layout<W> {
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
         iter_normal.chain(iter_no_outputs).chain(
-            self.collections.iter().flat_map(|c| c.workspaces.iter().enumerate().map(|(i, ws)| (None, i, ws)))
+            self.collections
+                .iter()
+                .flat_map(|c| c.workspaces.iter().enumerate().map(|(i, ws)| (None, i, ws))),
         )
     }
 
@@ -5207,7 +5368,11 @@ impl<W: LayoutElement> Layout<W> {
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
-        iter_normal.chain(iter_no_outputs).chain(self.collections.iter_mut().flat_map(|c| c.workspaces.iter_mut()))
+        iter_normal.chain(iter_no_outputs).chain(
+            self.collections
+                .iter_mut()
+                .flat_map(|c| c.workspaces.iter_mut()),
+        )
     }
 
     pub fn windows(&self) -> impl Iterator<Item = (Option<&Monitor<W>>, &W)> {

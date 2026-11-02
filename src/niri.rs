@@ -3596,7 +3596,10 @@ impl Niri {
         // A hidden collection's local workspace index is not an index on the active monitor.
         // Collection selection makes it visible; index-only upstream operations cannot address
         // a hidden stack safely.
-        if self.layout.collection_overview_is_enabled() && target_output.is_none() && self.layout.active_output().is_some() {
+        if self.layout.collection_overview_is_enabled()
+            && target_output.is_none()
+            && self.layout.active_output().is_some()
+        {
             return None;
         }
         Some((target_output.cloned(), target_workspace_index))
@@ -4371,7 +4374,10 @@ impl Niri {
             mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
 
             if self.layout.collection_overview_is_open() {
-                self.layout.render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| push(elem.into()));
+                self.layout
+                    .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {
+                        push(elem.into())
+                    });
             } else {
                 mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
             }
@@ -4416,7 +4422,10 @@ impl Niri {
             }
 
             if self.layout.collection_overview_is_open() {
-                self.layout.render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| push(elem.into()));
+                self.layout
+                    .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {
+                        push(elem.into())
+                    });
             } else {
                 mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
             }

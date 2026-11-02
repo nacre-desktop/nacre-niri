@@ -130,7 +130,9 @@ pub struct CollectionsState {
 
 impl EventStreamStatePart for CollectionsState {
     fn replicate(&self) -> Vec<Event> {
-        vec![Event::CollectionsChanged { collections: self.collections.clone() }]
+        vec![Event::CollectionsChanged {
+            collections: self.collections.clone(),
+        }]
     }
 
     fn apply(&mut self, event: Event) -> Option<Event> {
@@ -364,7 +366,9 @@ mod collections_tests {
             workspace_ids: vec![21, 22],
         }];
         assert!(state
-            .apply(Event::CollectionsChanged { collections: collections.clone() })
+            .apply(Event::CollectionsChanged {
+                collections: collections.clone()
+            })
             .is_none());
         assert_eq!(state.collections, collections);
 

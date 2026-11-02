@@ -80,7 +80,10 @@ impl TouchOverviewGrab {
                         }
                     };
 
-                    let ws_id = layout.workspaces().find(|(_, _, ws)| ws_matches(ws)).map(|(_, _, ws)| ws.id());
+                    let ws_id = layout
+                        .workspaces()
+                        .find(|(_, _, ws)| ws_matches(ws))
+                        .map(|(_, _, ws)| ws.id());
                     if let Some(ws_id) = ws_id {
                         layout.select_overview_workspace(&self.output, ws_id);
                     }

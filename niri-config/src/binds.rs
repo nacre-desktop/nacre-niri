@@ -519,11 +519,17 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::FocusWorkspacePrevious {} => Self::FocusWorkspacePrevious,
             niri_ipc::Action::FocusCollectionNext {} => Self::FocusCollectionNext,
             niri_ipc::Action::FocusCollectionPrevious {} => Self::FocusCollectionPrevious,
-            niri_ipc::Action::FocusCollection { reference } => Self::FocusCollection(WorkspaceReference::from(reference)),
+            niri_ipc::Action::FocusCollection { reference } => {
+                Self::FocusCollection(WorkspaceReference::from(reference))
+            }
             niri_ipc::Action::CreateCollection { name } => Self::CreateCollection(name),
             niri_ipc::Action::MoveWindowToCollectionNext {} => Self::MoveWindowToCollectionNext,
-            niri_ipc::Action::MoveWindowToCollectionPrevious {} => Self::MoveWindowToCollectionPrevious,
-            niri_ipc::Action::MoveWindowToCollection { reference } => Self::MoveWindowToCollection(WorkspaceReference::from(reference)),
+            niri_ipc::Action::MoveWindowToCollectionPrevious {} => {
+                Self::MoveWindowToCollectionPrevious
+            }
+            niri_ipc::Action::MoveWindowToCollection { reference } => {
+                Self::MoveWindowToCollection(WorkspaceReference::from(reference))
+            }
             niri_ipc::Action::MoveWindowToWorkspaceDown { focus } => {
                 Self::MoveWindowToWorkspaceDown(focus)
             }

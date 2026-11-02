@@ -117,10 +117,6 @@ pub struct Workspace<W: LayoutElement> {
 pub struct OutputId(String);
 
 impl OutputId {
-    pub fn matches_name(&self, name: &str) -> bool {
-        self.0 == name
-    }
-
     pub fn matches(&self, output: &Output) -> bool {
         let output_name = output.user_data().get::<OutputName>().unwrap();
         output_name.matches(&self.0)

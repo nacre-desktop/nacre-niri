@@ -151,27 +151,74 @@ mod collection_cli_tests {
             Cli::try_parse_from(["niri", "msg", "collections"])
                 .unwrap()
                 .subcommand,
-            Some(Sub::Msg { msg: Msg::Collections, .. })
+            Some(Sub::Msg {
+                msg: Msg::Collections,
+                ..
+            })
         ));
 
-        let Cli { subcommand: Some(Sub::Msg { msg: Msg::Action { action }, .. }), .. } =
-            Cli::try_parse_from(["niri", "msg", "action", "focus-collection", "2"]).unwrap()
-        else { panic!("expected focus-collection action") };
-        assert!(matches!(action, niri_ipc::Action::FocusCollection { reference: WorkspaceReferenceArg::Index(2) }));
+        let Cli {
+            subcommand:
+                Some(Sub::Msg {
+                    msg: Msg::Action { action },
+                    ..
+                }),
+            ..
+        } = Cli::try_parse_from(["niri", "msg", "action", "focus-collection", "2"]).unwrap()
+        else {
+            panic!("expected focus-collection action")
+        };
+        assert!(matches!(
+            action,
+            niri_ipc::Action::FocusCollection {
+                reference: WorkspaceReferenceArg::Index(2)
+            }
+        ));
 
-        let Cli { subcommand: Some(Sub::Msg { msg: Msg::Action { action }, .. }), .. } =
-            Cli::try_parse_from(["niri", "msg", "action", "focus-collection", "work"]).unwrap()
-        else { panic!("expected focus-collection action") };
-        assert!(matches!(action, niri_ipc::Action::FocusCollection { reference: WorkspaceReferenceArg::Name(name) } if name == "work"));
+        let Cli {
+            subcommand:
+                Some(Sub::Msg {
+                    msg: Msg::Action { action },
+                    ..
+                }),
+            ..
+        } = Cli::try_parse_from(["niri", "msg", "action", "focus-collection", "work"]).unwrap()
+        else {
+            panic!("expected focus-collection action")
+        };
+        assert!(
+            matches!(action, niri_ipc::Action::FocusCollection { reference: WorkspaceReferenceArg::Name(name) } if name == "work")
+        );
 
-        let Cli { subcommand: Some(Sub::Msg { msg: Msg::Action { action }, .. }), .. } =
-            Cli::try_parse_from(["niri", "msg", "action", "create-collection"]).unwrap()
-        else { panic!("expected create-collection action") };
-        assert!(matches!(action, niri_ipc::Action::CreateCollection { name: None }));
+        let Cli {
+            subcommand:
+                Some(Sub::Msg {
+                    msg: Msg::Action { action },
+                    ..
+                }),
+            ..
+        } = Cli::try_parse_from(["niri", "msg", "action", "create-collection"]).unwrap()
+        else {
+            panic!("expected create-collection action")
+        };
+        assert!(matches!(
+            action,
+            niri_ipc::Action::CreateCollection { name: None }
+        ));
 
-        let Cli { subcommand: Some(Sub::Msg { msg: Msg::Action { action }, .. }), .. } =
-            Cli::try_parse_from(["niri", "msg", "action", "create-collection", "work"]).unwrap()
-        else { panic!("expected create-collection action") };
-        assert!(matches!(action, niri_ipc::Action::CreateCollection { name: Some(name) } if name == "work"));
+        let Cli {
+            subcommand:
+                Some(Sub::Msg {
+                    msg: Msg::Action { action },
+                    ..
+                }),
+            ..
+        } = Cli::try_parse_from(["niri", "msg", "action", "create-collection", "work"]).unwrap()
+        else {
+            panic!("expected create-collection action")
+        };
+        assert!(
+            matches!(action, niri_ipc::Action::CreateCollection { name: Some(name) } if name == "work")
+        );
     }
 }

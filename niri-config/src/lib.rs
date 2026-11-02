@@ -696,9 +696,18 @@ mod tests {
         );
         assert_eq!(config.binds.0.len(), 4);
         assert_eq!(config.binds.0[0].action, Action::CreateCollection(None));
-        assert_eq!(config.binds.0[1].action, Action::CreateCollection(Some("work".into())));
-        assert_eq!(config.binds.0[2].action, Action::FocusCollection(WorkspaceReference::Index(2)));
-        assert_eq!(config.binds.0[3].action, Action::FocusCollection(WorkspaceReference::Name("work".into())));
+        assert_eq!(
+            config.binds.0[1].action,
+            Action::CreateCollection(Some("work".into()))
+        );
+        assert_eq!(
+            config.binds.0[2].action,
+            Action::FocusCollection(WorkspaceReference::Index(2))
+        );
+        assert_eq!(
+            config.binds.0[3].action,
+            Action::FocusCollection(WorkspaceReference::Name("work".into()))
+        );
     }
 
     #[track_caller]

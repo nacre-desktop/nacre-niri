@@ -18,7 +18,11 @@ fn add_window(layout: &mut Layout<TestWindow>, id: usize) {
 
 fn output(layout: &Layout<TestWindow>, number: usize) -> Output {
     let name = format!("output{number}");
-    layout.outputs().find(|output| output.name() == name).unwrap().clone()
+    layout
+        .outputs()
+        .find(|output| output.name() == name)
+        .unwrap()
+        .clone()
 }
 
 #[test]
@@ -35,21 +39,36 @@ fn configured_empty_collection_survives_close_and_reload_until_unconfigured() {
     layout.remove_window(&1, Transaction::new()).unwrap();
     layout.refresh(true);
     layout.verify_invariants();
-    assert!(layout.collections().iter().any(|collection| collection.id == work));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == work));
 
     config.layout.collections.names.push("extra".into());
     layout.update_config(&config);
     layout.refresh(true);
     layout.verify_invariants();
-    assert!(layout.collections().iter().any(|collection| collection.id == work));
-    assert!(layout.collections().iter().any(|collection| collection.name.as_deref() == Some("extra")));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == work));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.name.as_deref() == Some("extra")));
 
     config.layout.collections.names.clear();
     layout.update_config(&config);
     layout.refresh(true);
     layout.verify_invariants();
-    assert!(!layout.collections().iter().any(|collection| collection.id == work));
-    assert!(!layout.collections().iter().any(|collection| collection.name.as_deref() == Some("extra")));
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == work));
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.name.as_deref() == Some("extra")));
 }
 
 #[test]
@@ -65,16 +84,24 @@ fn toggling_collections_restores_original_output_ownership_after_swap() {
     layout.focus_output(&first);
     layout.focus_collection(&WorkspaceReference::Id(second_collection));
     layout.verify_invariants();
-    assert!(layout.windows_for_output(&first).any(|window| *window.id() == 2));
-    assert!(layout.windows_for_output(&second).any(|window| *window.id() == 1));
+    assert!(layout
+        .windows_for_output(&first)
+        .any(|window| *window.id() == 2));
+    assert!(layout
+        .windows_for_output(&second)
+        .any(|window| *window.id() == 1));
 
     let mut config = Config::default();
     config.layout.collections.enabled = false;
     layout.update_config(&config);
     layout.verify_invariants();
     assert!(layout.collections().is_empty());
-    assert!(layout.windows_for_output(&first).any(|window| *window.id() == 1));
-    assert!(layout.windows_for_output(&second).any(|window| *window.id() == 2));
+    assert!(layout
+        .windows_for_output(&first)
+        .any(|window| *window.id() == 1));
+    assert!(layout
+        .windows_for_output(&second)
+        .any(|window| *window.id() == 2));
 
     config.layout.collections.enabled = true;
     layout.update_config(&config);
@@ -120,15 +147,26 @@ fn explicit_hidden_window_moves_between_workspaces_and_onto_output() {
     let shown = layout.create_collection(Some("scratch".into()));
     layout.move_to_workspace(Some(&1), 1, ActivateWindow::Yes);
     layout.verify_invariants();
-    assert!(layout.collection_workspaces(hidden).nth(1).unwrap().has_window(&1));
+    assert!(layout
+        .collection_workspaces(hidden)
+        .nth(1)
+        .unwrap()
+        .has_window(&1));
     assert_eq!(layout.collection_for_output(&first), Some(shown));
 
     layout.move_to_output(Some(&1), &first, None, ActivateWindow::No);
     layout.verify_invariants();
-    assert!(layout.windows_for_output(&first).any(|window| *window.id() == 1));
+    assert!(layout
+        .windows_for_output(&first)
+        .any(|window| *window.id() == 1));
     // The connected monitor's original empty desk remains available for rotation.
-    assert!(layout.collections().iter().any(|collection| collection.id == hidden));
-    assert!(layout.collection_workspaces(hidden).all(|workspace| !workspace.has_windows()));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == hidden));
+    assert!(layout
+        .collection_workspaces(hidden)
+        .all(|workspace| !workspace.has_windows()));
     assert_eq!(layout.collection_for_output(&first), Some(shown));
     assert_eq!(layout.windows().count(), 1);
 }
@@ -140,22 +178,33 @@ fn new_window_can_target_a_hidden_collection_without_showing_it() {
     add_window(&mut layout, 1);
     let first = output(&layout, 1);
     let hidden = layout.collection_for_output(&first).unwrap();
-    let workspace = layout.collection_workspaces(hidden).find(|workspace| workspace.has_window(&1)).unwrap().id();
+    let workspace = layout
+        .collection_workspaces(hidden)
+        .find(|workspace| workspace.has_window(&1))
+        .unwrap()
+        .id();
     let shown = layout.create_collection(Some("scratch".into()));
-    assert!(layout.add_window(
-        TestWindow::new(TestWindowParams::new(2)),
-        AddWindowTarget::Workspace(workspace),
-        None,
-        None,
-        false,
-        false,
-        ActivateWindow::Yes,
-    ).is_none());
+    assert!(layout
+        .add_window(
+            TestWindow::new(TestWindowParams::new(2)),
+            AddWindowTarget::Workspace(workspace),
+            None,
+            None,
+            false,
+            false,
+            ActivateWindow::Yes,
+        )
+        .is_none());
     layout.refresh(true);
     layout.verify_invariants();
     assert_eq!(layout.collection_for_output(&first), Some(shown));
-    assert!(layout.collection_workspaces(hidden).any(|workspace| workspace.has_window(&2)));
-    let (monitor, window) = layout.windows().find(|(_, window)| *window.id() == 2).unwrap();
+    assert!(layout
+        .collection_workspaces(hidden)
+        .any(|workspace| workspace.has_window(&2)));
+    let (monitor, window) = layout
+        .windows()
+        .find(|(_, window)| *window.id() == 2)
+        .unwrap();
     assert!(monitor.is_none());
     assert!(!window.0.pending_activated.get());
 }
@@ -175,24 +224,48 @@ fn window_opened_before_first_output_gets_a_trailing_empty_workspace() {
 fn configured_workspaces_route_to_their_first_outputs_without_splitting_on_replug() {
     let mut config = Config::default();
     config.layout.collections.enabled = true;
-    config.workspaces = [1, 2].into_iter().map(|number| WorkspaceConfig {
-        name: WorkspaceName(format!("workspace{number}")),
-        open_on_output: Some(format!("output{number}")),
-        layout: None,
-    }).collect();
+    config.workspaces = [1, 2]
+        .into_iter()
+        .map(|number| WorkspaceConfig {
+            name: WorkspaceName(format!("workspace{number}")),
+            open_on_output: Some(format!("output{number}")),
+            layout: None,
+        })
+        .collect();
     let mut layout = Layout::<TestWindow>::new(Clock::with_time(Duration::ZERO), &config);
     check_ops_on_layout(&mut layout, [Op::AddOutput(1), Op::AddOutput(2)]);
     let first = output(&layout, 1);
     let second = output(&layout, 2);
-    assert_eq!(layout.monitor_for_workspace("workspace1").unwrap().output(), &first);
-    assert_eq!(layout.monitor_for_workspace("workspace2").unwrap().output(), &second);
+    assert_eq!(
+        layout.monitor_for_workspace("workspace1").unwrap().output(),
+        &first
+    );
+    assert_eq!(
+        layout.monitor_for_workspace("workspace2").unwrap().output(),
+        &second
+    );
     layout.focus_output(&second);
     add_window(&mut layout, 2);
     let collection = layout.collection_for_output(&second).unwrap();
-    let workspaces = layout.collections().into_iter().find(|candidate| candidate.id == collection).unwrap().workspace_ids;
+    let workspaces = layout
+        .collections()
+        .into_iter()
+        .find(|candidate| candidate.id == collection)
+        .unwrap()
+        .workspace_ids;
     check_ops_on_layout(&mut layout, [Op::RemoveOutput(2), Op::AddOutput(2)]);
     let restored = output(&layout, 2);
     assert_eq!(layout.collection_for_output(&restored), Some(collection));
-    assert_eq!(layout.collections().into_iter().find(|candidate| candidate.id == collection).unwrap().workspace_ids, workspaces);
-    assert!(layout.windows_for_output(&restored).any(|window| *window.id() == 2));
+    assert_eq!(
+        layout
+            .collections()
+            .into_iter()
+            .find(|candidate| candidate.id == collection)
+            .unwrap()
+            .workspace_ids,
+        workspaces
+    );
+    assert!(layout
+        .windows_for_output(&restored)
+        .any(|window| *window.id() == 2));
 }

@@ -592,7 +592,9 @@ impl State {
     }
 
     fn ipc_refresh_collections(&mut self) {
-        let Some(server) = &self.niri.ipc_server else { return; };
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
         let collections = self.niri.layout.collections();
         let mut state = server.event_stream_state.borrow_mut();
         if state.collections.collections != collections {

@@ -5,11 +5,19 @@ fn enabled_layout() -> Layout<TestWindow> {
 }
 
 fn shown(layout: &Layout<TestWindow>, output: &str) -> u64 {
-    layout.collections().iter().find(|c| c.output.as_deref() == Some(output)).unwrap().id
+    layout
+        .collections()
+        .iter()
+        .find(|c| c.output.as_deref() == Some(output))
+        .unwrap()
+        .id
 }
 
 fn add_window(layout: &mut Layout<TestWindow>, id: usize) {
-    Op::AddWindow { params: TestWindowParams::new(id) }.apply(layout);
+    Op::AddWindow {
+        params: TestWindowParams::new(id),
+    }
+    .apply(layout);
 }
 
 #[test]
@@ -21,14 +29,22 @@ fn unplug_keeps_collection_detached() {
     Op::FocusOutput(2).apply(&mut layout);
     add_window(&mut layout, 1);
     let external = shown(&layout, "output2");
-    let workspace_ids = layout.collections().into_iter().find(|c| c.id == external).unwrap().workspace_ids;
+    let workspace_ids = layout
+        .collections()
+        .into_iter()
+        .find(|c| c.id == external)
+        .unwrap()
+        .workspace_ids;
     Op::RemoveOutput(2).apply(&mut layout);
     let collections = layout.collections();
     let detached = collections.iter().find(|c| c.id == external).unwrap();
     assert!(detached.output.is_none());
     assert_eq!(detached.workspace_ids, workspace_ids);
     let laptop = collections.iter().find(|c| c.id == laptop).unwrap();
-    assert!(laptop.workspace_ids.iter().all(|id| !workspace_ids.contains(id)));
+    assert!(laptop
+        .workspace_ids
+        .iter()
+        .all(|id| !workspace_ids.contains(id)));
     assert!(layout.has_window(&1));
     layout.verify_invariants();
 }
@@ -94,7 +110,10 @@ fn empty_laptop_home_remains_available_and_empty_virtual_desk_expires() {
     assert_ne!(home, desk);
     layout.focus_collection_previous();
     assert_eq!(shown(&layout, "output1"), home);
-    assert!(!layout.collections().iter().any(|collection| collection.id == desk));
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == desk));
     layout.verify_invariants();
 }
 
@@ -126,7 +145,12 @@ fn overview_hit_testing_selects_detached_column() {
     layout.focus_collection(&WorkspaceReference::Id(first));
     layout.open_overview();
     let output = layout.active_output().unwrap().clone();
-    let columns = super::super::collection_overview::columns(layout.collections().iter().map(|c| c.id), first, (1280., 720.).into(), layout.overview_zoom());
+    let columns = super::super::collection_overview::columns(
+        layout.collections().iter().map(|c| c.id),
+        first,
+        (1280., 720.).into(),
+        layout.overview_zoom(),
+    );
     let column = columns.iter().find(|c| c.id == other).unwrap();
     let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
     let workspace = layout.workspace_under(false, &output, point).unwrap().id();
@@ -150,7 +174,12 @@ fn overview_drag_moves_window_into_hidden_collection() {
     layout.focus_collection(&WorkspaceReference::Id(first));
     layout.open_overview();
     let output = layout.active_output().unwrap().clone();
-    let columns = super::super::collection_overview::columns(layout.collections().iter().map(|c| c.id), first, (1280., 720.).into(), layout.overview_zoom());
+    let columns = super::super::collection_overview::columns(
+        layout.collections().iter().map(|c| c.id),
+        first,
+        (1280., 720.).into(),
+        layout.overview_zoom(),
+    );
     let source = columns.iter().find(|c| c.id == first).unwrap();
     let destination = columns.iter().find(|c| c.id == other).unwrap();
     let from = (source.bounds.loc.x + 40., 360.).into();
@@ -158,7 +187,11 @@ fn overview_drag_moves_window_into_hidden_collection() {
     assert!(layout.interactive_move_begin(1, &output, from));
     assert!(layout.interactive_move_update(&1, (300., 0.).into(), output, to));
     layout.interactive_move_end(&1);
-    assert!(layout.find_workspace_by_id(target).unwrap().1.has_window(&1));
+    assert!(layout
+        .find_workspace_by_id(target)
+        .unwrap()
+        .1
+        .has_window(&1));
     assert_eq!(shown(&layout, "output1"), first);
     layout.verify_invariants();
 }
