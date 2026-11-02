@@ -401,7 +401,14 @@ binds {
     // You can also move the mouse into the top-left hot corner,
     // or do a four-finger swipe up on a touchpad.
     Mod+O repeat=false { toggle-overview; }
-    Mod+Ctrl+Tab repeat=false { toggle-overview; }
+    Mod+Tab repeat=false { toggle-overview; }
+
+    // Collections group workspaces into separate desks (Nacre-Niri extension).
+    Mod+Ctrl+Tab repeat=false { focus-collection-next; }
+    Mod+Ctrl+Shift+Tab repeat=false { focus-collection-previous; }
+    Mod+Ctrl+N repeat=false { create-collection; }
+    Mod+Ctrl+Shift+Page_Down { move-window-to-collection-next; }
+    Mod+Ctrl+Shift+Page_Up   { move-window-to-collection-previous; }
 
     Mod+Q repeat=false { close-window; }
 
