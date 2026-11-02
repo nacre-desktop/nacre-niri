@@ -184,11 +184,104 @@ fn overview_hit_testing_selects_detached_column() {
     );
     let column = columns.iter().find(|c| c.id == other).unwrap();
     let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
+    let focused = *layout.focus().unwrap().id();
+    let camera = layout.active_monitor().unwrap().workspace_render_idx();
+    // The workspace center may be empty: test windows keep a small client buffer until
+    // their first configure acknowledgement. Aim inside the actual rendered tile.
+    let (workspace, geometry, zoom) = layout.collection_window_preview(&output, &2).unwrap();
+    let (tile, position, _) = workspace
+        .tiles_with_render_positions()
+        .find(|(tile, _, visible)| *visible && tile.window().id() == &2)
+        .unwrap();
+    let hover = geometry.loc + (position + tile.tile_size().to_point().downscale(2.)).upscale(zoom);
+    assert_eq!(layout.window_under(&output, hover).unwrap().0.id(), &2);
+    assert!(!layout.activate_window_without_scrolling(&2));
+    assert_eq!(layout.focus().unwrap().id(), &focused);
+    assert_eq!(
+        layout.active_monitor().unwrap().workspace_render_idx(),
+        camera
+    );
     let workspace = layout.workspace_under(false, &output, point).unwrap().id();
     assert_eq!(workspace, target);
     layout.select_overview_workspace(&output, workspace);
     assert_eq!(shown(&layout, "output1"), other);
     assert!(!layout.is_overview_open());
+    layout.verify_invariants();
+}
+
+#[test]
+fn overview_hover_selects_visible_workspace_without_moving_camera() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    Op::FocusWorkspaceDown.apply(&mut layout);
+    add_window(&mut layout, 2);
+    Op::FocusWorkspaceUp.apply(&mut layout);
+    layout.open_overview();
+    let camera = layout.monitors().next().unwrap().workspace_render_idx();
+
+    assert!(layout.activate_window_without_scrolling(&2));
+    layout.refresh(true);
+    assert_eq!(layout.focus().unwrap().id(), &2);
+    assert_eq!(
+        layout.monitors().next().unwrap().workspace_render_idx(),
+        camera
+    );
+    layout.verify_invariants();
+    layout.close_overview();
+    layout.verify_invariants();
+}
+
+#[test]
+fn overview_hover_works_when_collections_are_disabled() {
+    let mut options = Options::default();
+    options.layout.collections.enabled = false;
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    Op::FocusWorkspaceDown.apply(&mut layout);
+    add_window(&mut layout, 2);
+    Op::FocusWorkspaceUp.apply(&mut layout);
+    layout.open_overview();
+    let camera = layout.monitors().next().unwrap().workspace_render_idx();
+
+    assert!(layout.activate_window_without_scrolling(&2));
+    layout.refresh(true);
+    assert_eq!(layout.focus().unwrap().id(), &2);
+    assert_eq!(
+        layout.monitors().next().unwrap().workspace_render_idx(),
+        camera
+    );
+    layout.verify_invariants();
+}
+
+#[test]
+fn disabling_overview_hover_clears_hover_camera_state() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    Op::FocusWorkspaceDown.apply(&mut layout);
+    add_window(&mut layout, 2);
+    Op::FocusWorkspaceUp.apply(&mut layout);
+    layout.open_overview();
+    assert!(layout.activate_window_without_scrolling(&2));
+    assert!(matches!(
+        layout.monitors().next().unwrap().workspace_switch.as_ref(),
+        Some(super::super::monitor::WorkspaceSwitch::Hover(_))
+    ));
+
+    layout.update_options(Options {
+        nacre: niri_config::Nacre {
+            overview_hover: false,
+        },
+        ..Default::default()
+    });
+
+    assert!(!layout.activate_window_without_scrolling(&1));
+    assert!(!matches!(
+        layout.monitors().next().unwrap().workspace_switch.as_ref(),
+        Some(super::super::monitor::WorkspaceSwitch::Hover(_))
+    ));
     layout.verify_invariants();
 }
 

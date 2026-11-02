@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -48,6 +48,7 @@ pub struct IpcServer {
     pub socket_path: Option<PathBuf>,
     event_streams: Rc<RefCell<Vec<EventStreamSender>>>,
     event_stream_state: Rc<RefCell<EventStreamState>>,
+    overview_hover: Rc<Cell<Option<u64>>>,
 }
 
 struct ClientCtx {
@@ -56,6 +57,7 @@ struct ClientCtx {
     ipc_outputs: Arc<Mutex<IpcOutputMap>>,
     event_streams: Rc<RefCell<Vec<EventStreamSender>>>,
     event_stream_state: Rc<RefCell<EventStreamState>>,
+    overview_hover: Rc<Cell<Option<u64>>>,
 }
 
 struct EventStreamClient {
@@ -65,6 +67,7 @@ struct EventStreamClient {
 }
 
 struct EventStreamSender {
+    overview_hover: bool,
     events: Sender<Event>,
     disconnect: Sender<()>,
 }
@@ -109,6 +112,7 @@ impl IpcServer {
             socket_path,
             event_streams: Rc::new(RefCell::new(Vec::new())),
             event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
+            overview_hover: Rc::new(Cell::new(None)),
         })
     }
 
@@ -116,6 +120,9 @@ impl IpcServer {
         let mut streams = self.event_streams.borrow_mut();
         let mut to_remove = Vec::new();
         for (idx, stream) in streams.iter_mut().enumerate() {
+            if matches!(event, Event::NacreOverviewHoverChanged { .. }) && !stream.overview_hover {
+                continue;
+            }
             match stream.events.try_send(event.clone()) {
                 Ok(()) => (),
                 Err(TrySendError::Closed(_)) => to_remove.push(idx),
@@ -132,6 +139,19 @@ impl IpcServer {
         for idx in to_remove.into_iter().rev() {
             let stream = streams.swap_remove(idx);
             let _ = stream.disconnect.send_blocking(());
+        }
+    }
+
+    pub fn has_overview_hover_clients(&self) -> bool {
+        self.event_streams
+            .borrow()
+            .iter()
+            .any(|stream| stream.overview_hover)
+    }
+
+    pub fn update_overview_hover(&self, id: Option<u64>) {
+        if self.overview_hover.replace(id) != id {
+            self.send_event(Event::NacreOverviewHoverChanged { id });
         }
     }
 }
@@ -172,6 +192,7 @@ fn on_new_ipc_client(state: &mut State, stream: UnixStream) {
         ipc_outputs: state.backend.ipc_outputs(),
         event_streams: ipc_server.event_streams.clone(),
         event_stream_state: ipc_server.event_stream_state.clone(),
+        overview_hover: ipc_server.overview_hover.clone(),
     };
 
     let future = async move {
@@ -206,7 +227,8 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             .context("error parsing request")
             .map_err(|err| err.to_string());
         let requested_error = matches!(request, Ok(Request::ReturnError));
-        let requested_event_stream = matches!(request, Ok(Request::EventStream));
+        let requested_hover = matches!(request, Ok(Request::NacreOverviewHoverStream));
+        let requested_event_stream = requested_hover || matches!(request, Ok(Request::EventStream));
 
         let reply = match request {
             Ok(request) => process(&ctx, request).await,
@@ -224,7 +246,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
         buf.push(b'\n');
         write.write_all(&buf).await.context("error writing reply")?;
 
-        if requested_event_stream {
+        if requested_event_stream && reply.is_ok() {
             let (events_tx, events_rx) = async_channel::bounded(EVENT_STREAM_BUFFER_SIZE);
             let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
@@ -256,7 +278,15 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             // Add it to the list.
             {
                 let mut streams = ctx.event_streams.borrow_mut();
+                if requested_hover {
+                    events_tx
+                        .try_send(Event::NacreOverviewHoverChanged {
+                            id: ctx.overview_hover.get(),
+                        })
+                        .expect("initial hover event exceeded buffer");
+                }
                 let sender = EventStreamSender {
+                    overview_hover: requested_hover,
                     events: events_tx,
                     disconnect: disconnect_tx,
                 };
@@ -272,6 +302,22 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
     let response = match request {
         Request::ReturnError => return Err(String::from("example compositor error")),
         Request::Version => Response::Version(version()),
+        Request::NacreCapabilities => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let config = state.niri.config.borrow();
+                let _ = tx.send_blocking(niri_ipc::NacreCapabilities {
+                    workspace_collections: config.layout.collections.enabled,
+                    proportional_x11_widths: false,
+                    overview_hover: config.nacre.overview_hover,
+                });
+            });
+            let capabilities = rx
+                .recv()
+                .await
+                .map_err(|_| String::from("error getting Nacre capabilities"))?;
+            Response::NacreCapabilities(capabilities)
+        }
         Request::Outputs => {
             let ipc_outputs = ctx.ipc_outputs.lock().unwrap().clone();
             let outputs = ipc_outputs.values().cloned().map(|o| (o.name.clone(), o));
@@ -343,6 +389,29 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let windows = &state.windows.windows;
             let window = windows.values().find(|win| win.is_focused).cloned();
             Response::FocusedWindow(window)
+        }
+        Request::WindowUnderCursor => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let id = state
+                    .niri
+                    .window_under_cursor()
+                    .map(|window| window.id().get());
+                let _ = tx.send_blocking(id);
+            });
+            let id = rx
+                .recv()
+                .await
+                .map_err(|_| String::from("error reading window under pointer"))?;
+            let window = id.and_then(|id| {
+                ctx.event_stream_state
+                    .borrow()
+                    .windows
+                    .windows
+                    .get(&id)
+                    .cloned()
+            });
+            Response::WindowUnderCursor(window)
         }
         Request::PickWindow => {
             let (tx, rx) = async_channel::bounded(1);
@@ -449,6 +518,31 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::FocusedOutput(output)
         }
         Request::EventStream => Response::Handled,
+        Request::NacreOverviewHoverStream => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let enabled = state.niri.config.borrow().nacre.overview_hover;
+                let id = if enabled
+                    && state.niri.layout.is_overview_open()
+                    && state.niri.pointer_visibility.is_visible()
+                {
+                    state
+                        .niri
+                        .window_under_cursor()
+                        .map(|window| window.id().get())
+                } else {
+                    None
+                };
+                if let Some(server) = state.niri.ipc_server.as_ref() {
+                    server.update_overview_hover(id);
+                }
+                let _ = tx.send_blocking(enabled);
+            });
+            if !rx.recv().await.unwrap_or(false) {
+                return Err(String::from("Nacre overview hover is disabled"));
+            }
+            Response::Handled
+        }
         Request::OverviewState => {
             let state = ctx.event_stream_state.borrow();
             let is_open = state.overview.is_open;
@@ -959,5 +1053,59 @@ impl State {
         let event = Event::ScreenshotCaptured { path };
         state.apply(event.clone());
         server.send_event(event);
+    }
+}
+
+#[cfg(test)]
+mod nacre_hover_tests {
+    use super::*;
+
+    #[test]
+    fn overview_hover_is_opt_in_and_does_not_leak_to_regular_streams() {
+        let server = IpcServer {
+            socket_path: None,
+            event_streams: Rc::new(RefCell::new(Vec::new())),
+            event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
+            overview_hover: Rc::new(Cell::new(None)),
+        };
+        let (regular_tx, regular_rx) = async_channel::bounded(4);
+        let (hover_tx, hover_rx) = async_channel::bounded(4);
+        let (regular_disconnect, _) = async_channel::bounded(1);
+        let (hover_disconnect, _) = async_channel::bounded(1);
+        server.event_streams.borrow_mut().extend([
+            EventStreamSender {
+                overview_hover: false,
+                events: regular_tx,
+                disconnect: regular_disconnect,
+            },
+            EventStreamSender {
+                overview_hover: true,
+                events: hover_tx,
+                disconnect: hover_disconnect,
+            },
+        ]);
+
+        assert!(server.has_overview_hover_clients());
+        server.update_overview_hover(Some(7));
+        assert!(regular_rx.try_recv().is_err());
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::NacreOverviewHoverChanged { id: Some(7) })
+        ));
+        server.update_overview_hover(Some(7));
+        assert!(hover_rx.try_recv().is_err());
+        server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
+        for receiver in [&regular_rx, &hover_rx] {
+            assert!(matches!(
+                receiver.try_recv(),
+                Ok(Event::OverviewOpenedOrClosed { is_open: true })
+            ));
+        }
+        server.update_overview_hover(None);
+        assert!(regular_rx.try_recv().is_err());
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::NacreOverviewHoverChanged { id: None })
+        ));
     }
 }

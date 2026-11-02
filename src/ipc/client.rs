@@ -31,8 +31,10 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
 
     let request = match &msg {
         Msg::Version => Request::Version,
+        Msg::NacreCapabilities => Request::NacreCapabilities,
         Msg::Outputs => Request::Outputs,
         Msg::FocusedWindow => Request::FocusedWindow,
+        Msg::WindowUnderCursor => Request::WindowUnderCursor,
         Msg::FocusedOutput => Request::FocusedOutput,
         Msg::PickWindow => Request::PickWindow,
         Msg::PickColor => Request::PickColor,
@@ -180,6 +182,21 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 print_window(&window);
             } else {
                 println!("No window is focused.");
+            }
+        }
+        Msg::WindowUnderCursor => {
+            let Response::WindowUnderCursor(window) = response else {
+                bail!("unexpected response: expected WindowUnderCursor, got {response:?}");
+            };
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&window).context("error formatting response")?
+                );
+            } else if let Some(window) = window {
+                print_window(&window);
+            } else {
+                println!("No window is under the pointer.");
             }
         }
         Msg::Windows => {
@@ -491,6 +508,9 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::OverviewOpenedOrClosed { is_open: opened } => {
                         println!("Overview toggled: {opened}");
                     }
+                    Event::NacreOverviewHoverChanged { id } => {
+                        println!("Overview hovered window changed: {id:?}");
+                    }
                     Event::ConfigLoaded { failed } => {
                         let status = if failed {
                             "with an error"
@@ -538,6 +558,29 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             } else {
                 println!("Overview is closed.");
             }
+        }
+        Msg::NacreCapabilities => {
+            let Response::NacreCapabilities(capabilities) = response else {
+                bail!("unexpected response: expected NacreCapabilities, got {response:?}");
+            };
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&capabilities).context("error formatting response")?
+                );
+                return Ok(());
+            }
+
+            println!(
+                "Workspace collections: {}",
+                capabilities.workspace_collections
+            );
+            println!(
+                "Proportional X11 widths: {}",
+                capabilities.proportional_x11_widths
+            );
+            println!("Overview hover: {}", capabilities.overview_hover);
         }
         Msg::Casts => {
             let Response::Casts(mut casts) = response else {

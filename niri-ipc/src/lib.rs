@@ -67,6 +67,8 @@ pub mod state;
 pub enum Request {
     /// Request the version string for the running niri instance.
     Version,
+    /// Request the active Nacre native capabilities.
+    NacreCapabilities,
     /// Request information about connected outputs.
     Outputs,
     /// Request information about workspaces.
@@ -83,6 +85,8 @@ pub enum Request {
     FocusedOutput,
     /// Request information about the focused window.
     FocusedWindow,
+    /// Request information about the window under the pointer.
+    WindowUnderCursor,
     /// Request picking a window and get its information.
     PickWindow,
     /// Request picking a color from the screen.
@@ -115,6 +119,8 @@ pub enum Request {
     /// been removed. This can happen if the corresponding [`Event::WorkspacesChanged`] arrives
     /// before the corresponding [`Event::WindowOpenedOrChanged`].
     EventStream,
+    /// Start an event stream that includes overview preview hover changes.
+    NacreOverviewHoverStream,
     /// Respond with an error (for testing error handling).
     ReturnError,
     /// Request information about the overview.
@@ -141,6 +147,8 @@ pub enum Response {
     Handled,
     /// The version string for the running niri instance.
     Version(String),
+    /// Active Nacre native capabilities.
+    NacreCapabilities(NacreCapabilities),
     /// Information about connected outputs.
     ///
     /// Map from output name to output info.
@@ -159,6 +167,8 @@ pub enum Response {
     FocusedOutput(Option<Output>),
     /// Information about the focused window.
     FocusedWindow(Option<Window>),
+    /// Information about the window under the pointer.
+    WindowUnderCursor(Option<Window>),
     /// Information about the picked window.
     PickedWindow(Option<Window>),
     /// Information about the picked color.
@@ -169,6 +179,18 @@ pub enum Response {
     OverviewState(Overview),
     /// Information about screencasts.
     Casts(Vec<Cast>),
+}
+
+/// Capabilities implemented by this nacre-niri instance and enabled in its config.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct NacreCapabilities {
+    /// Workspace collections and their native IPC are available.
+    pub workspace_collections: bool,
+    /// Continuous proportional X11 width enforcement is available.
+    pub proportional_x11_widths: bool,
+    /// Pointer hover metadata for overview previews is enabled.
+    pub overview_hover: bool,
 }
 
 /// Overview information.
@@ -1722,6 +1744,11 @@ pub enum Event {
         /// The new state of the overview.
         is_open: bool,
     },
+    /// The identity of the window under the pointer in an overview preview.
+    NacreOverviewHoverChanged {
+        /// Window ID, or `None` when no preview window is hovered.
+        id: Option<u64>,
+    },
     /// The configuration was reloaded.
     ///
     /// You will always receive this event when connecting to the event stream, indicating the last
@@ -2158,5 +2185,22 @@ mod tests {
         );
         assert!("-".parse::<PositionChange>().is_err());
         assert!("10% ".parse::<PositionChange>().is_err());
+    }
+
+    #[test]
+    fn nacre_capabilities_ipc_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&Request::NacreCapabilities).unwrap(),
+            "\"NacreCapabilities\""
+        );
+        let reply = Ok::<_, String>(Response::NacreCapabilities(NacreCapabilities {
+            workspace_collections: true,
+            proportional_x11_widths: false,
+            overview_hover: true,
+        }));
+        assert_eq!(
+            serde_json::to_string(&reply).unwrap(),
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}}}"#,
+        );
     }
 }

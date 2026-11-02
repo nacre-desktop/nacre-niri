@@ -94,6 +94,8 @@ pub struct Monitor<W: LayoutElement> {
 
 #[derive(Debug)]
 pub enum WorkspaceSwitch {
+    /// Overview pointer selection keeps the overview camera in place.
+    Hover(f64),
     Animation(Animation),
     Gesture(WorkspaceSwitchGesture),
 }
@@ -201,6 +203,7 @@ pub type MonitorRenderElement<R> =
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
         match self {
+            WorkspaceSwitch::Hover(idx) => *idx,
             WorkspaceSwitch::Animation(anim) => anim.value(),
             WorkspaceSwitch::Gesture(gesture) => {
                 gesture.current_idx + gesture.animation.as_ref().map_or(0., |anim| anim.value())
@@ -210,6 +213,7 @@ impl WorkspaceSwitch {
 
     pub fn target_idx(&self) -> f64 {
         match self {
+            WorkspaceSwitch::Hover(idx) => *idx,
             WorkspaceSwitch::Animation(anim) => anim.to(),
             WorkspaceSwitch::Gesture(gesture) => gesture.current_idx,
         }
@@ -217,6 +221,7 @@ impl WorkspaceSwitch {
 
     pub fn offset(&mut self, delta: isize) {
         match self {
+            WorkspaceSwitch::Hover(idx) => *idx += delta as f64,
             WorkspaceSwitch::Animation(anim) => anim.offset(delta as f64),
             WorkspaceSwitch::Gesture(gesture) => {
                 if delta >= 0 {
@@ -232,6 +237,7 @@ impl WorkspaceSwitch {
 
     fn is_animation_ongoing(&self) -> bool {
         match self {
+            WorkspaceSwitch::Hover(_) => false,
             WorkspaceSwitch::Animation(_) => true,
             WorkspaceSwitch::Gesture(gesture) => gesture.animation.is_some(),
         }
@@ -433,6 +439,16 @@ impl<W: LayoutElement> Monitor<W> {
         self.add_workspace_at(self.workspaces.len());
     }
 
+    pub fn activate_workspace_without_scrolling(&mut self, idx: usize) {
+        if self.active_workspace_idx == idx {
+            return;
+        }
+        let view = self.workspace_render_idx();
+        self.previous_workspace_id = Some(self.workspaces[self.active_workspace_idx].id());
+        self.active_workspace_idx = idx;
+        self.workspace_switch = Some(WorkspaceSwitch::Hover(view));
+    }
+
     pub fn activate_workspace(&mut self, idx: usize) {
         self.activate_workspace_with_anim_config(idx, None);
     }
@@ -470,7 +486,9 @@ impl<W: LayoutElement> Monitor<W> {
             }
             _ => {
                 // Don't animate if nothing changed.
-                if prev_active_idx == idx {
+                if prev_active_idx == idx
+                    && !matches!(self.workspace_switch, Some(WorkspaceSwitch::Hover(_)))
+                {
                     return;
                 }
 
@@ -1069,7 +1087,7 @@ impl<W: LayoutElement> Monitor<W> {
                     }
                 }
             }
-            None => (),
+            Some(WorkspaceSwitch::Hover(_)) | None => (),
         }
 
         for ws in &mut self.workspaces {
@@ -1099,8 +1117,10 @@ impl<W: LayoutElement> Monitor<W> {
             .as_ref()
             .and_then(|hint| hint.workspace.existing_id());
 
+        let selected = self.active_workspace_ref().id();
+        let overview_hover = self.overview_open && self.options.nacre.overview_hover;
         for (ws, geo) in self.workspaces_with_render_geo_mut(true) {
-            ws.update_render_elements(is_active);
+            ws.update_render_elements(is_active && (!overview_hover || ws.id() == selected));
 
             if Some(ws.id()) == insert_hint_ws_id {
                 insert_hint_ws_geo = Some(geo);
@@ -1189,6 +1209,15 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn update_config(&mut self, base_options: Rc<Options>) {
         let options =
             Rc::new(Options::clone(&base_options).with_merged_layout(self.layout_config.as_ref()));
+
+        if !options.nacre.overview_hover
+            && matches!(
+                self.workspace_switch.as_ref(),
+                Some(WorkspaceSwitch::Hover(_))
+            )
+        {
+            self.activate_workspace(self.active_workspace_idx);
+        }
 
         if self.options.layout.empty_workspace_above_first
             != options.layout.empty_workspace_above_first

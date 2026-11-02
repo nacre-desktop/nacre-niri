@@ -41,6 +41,9 @@ jobs:
       - name: Test
         run: cargo test --all --exclude niri-visual-tests -- --nocapture
 
+      - name: Validate fork default configuration
+        run: cargo run --locked -- validate --config resources/default-config.kdl
+
   build:
     strategy:
       fail-fast: false

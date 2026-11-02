@@ -493,6 +493,7 @@ enum Op {
     FocusWindowOrWorkspaceDown,
     FocusWindowOrWorkspaceUp,
     FocusWindow(#[proptest(strategy = "1..=5usize")] usize),
+    HoverFocusWindow(#[proptest(strategy = "1..=5usize")] usize),
     FocusWindowInColumn(#[proptest(strategy = "1..=5u8")] u8),
     FocusWindowTop,
     FocusWindowBottom,
@@ -1078,6 +1079,9 @@ impl Op {
             Op::FocusWindowOrWorkspaceDown => layout.focus_window_or_workspace_down(),
             Op::FocusWindowOrWorkspaceUp => layout.focus_window_or_workspace_up(),
             Op::FocusWindow(id) => layout.activate_window(&id),
+            Op::HoverFocusWindow(id) => {
+                layout.activate_window_without_scrolling(&id);
+            }
             Op::FocusWindowInColumn(index) => layout.focus_window_in_column(index),
             Op::FocusWindowTop => layout.focus_window_top(),
             Op::FocusWindowBottom => layout.focus_window_bottom(),
@@ -3810,4 +3814,64 @@ proptest! {
 
         check_ops_with_options(options, ops);
     }
+}
+
+#[test]
+fn hover_focus_preserves_view_for_partially_visible_tile() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::FocusColumnFirst,
+        Op::CompleteAnimations,
+    ]);
+    let before = layout.active_workspace().unwrap().scrolling().view_pos();
+    layout.activate_window_without_scrolling(&3);
+    layout.update_window(&3, None);
+    layout.refresh(true);
+    assert_eq!(*layout.focus().unwrap().id(), 3);
+    assert_eq!(
+        layout.active_workspace().unwrap().scrolling().view_pos(),
+        before
+    );
+    layout.verify_invariants();
+    layout.focus_column_first();
+    layout.verify_invariants();
+}
+
+#[test]
+fn hover_focus_in_overview_preserves_workspace_camera_until_close() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::FocusWorkspaceDown,
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::FocusWorkspaceUp,
+        Op::ToggleOverview,
+        Op::CompleteAnimations,
+    ]);
+    let before = layout.monitors().next().unwrap().workspace_render_idx();
+    layout.activate_window_without_scrolling(&2);
+    layout.refresh(true);
+    assert_eq!(*layout.focus().unwrap().id(), 2);
+    assert_eq!(
+        layout.monitors().next().unwrap().workspace_render_idx(),
+        before
+    );
+    layout.verify_invariants();
+    layout.close_overview();
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+    assert_eq!(layout.monitors().next().unwrap().workspace_render_idx(), 1.);
+    layout.verify_invariants();
 }

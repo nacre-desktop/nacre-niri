@@ -2617,7 +2617,7 @@ impl State {
             }
         }
 
-        self.niri.handle_focus_follows_mouse(&under);
+        self.niri.handle_focus_follows_mouse(&under, new_pos);
 
         self.niri.pointer_contents.clone_from(&under);
 
@@ -2720,7 +2720,7 @@ impl State {
 
         let under = self.niri.contents_under(pos);
 
-        self.niri.handle_focus_follows_mouse(&under);
+        self.niri.handle_focus_follows_mouse(&under, pos);
 
         self.niri.pointer_contents.clone_from(&under);
 
