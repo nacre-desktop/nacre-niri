@@ -18,6 +18,12 @@ every workspace belongs to exactly one collection and exists in exactly one plac
 Global workspace/window iterators include hidden collections. Hidden windows stay
 mapped, receive commits/config updates, and are deactivated and leave their output.
 
+Consumers of those iterators must handle an absent monitor even while outputs are
+connected. The recent-windows switcher lists windows in shown collections only;
+hidden windows become eligible after their collection is shown. Overview previews
+may refer to hidden workspaces, whose collection-local index must never be used
+as an index into a shown monitor's workspace stack.
+
 ## Output lifetime
 
 An output initially receives its original collection, or a new collection.
@@ -81,6 +87,10 @@ events continue to expose hidden windows; collection membership is obtained from
 workspace IDs. Clients that need collection updates request the Nacre-Niri extension
 with `niri msg event-stream --collections`; the default event stream omits collection
 events so stock Niri 26.04 clients can still parse the stream.
+Showing a collection changes the standard workspace snapshot: newly shown
+workspaces have their output and active/focused flags, while hidden workspaces
+have no output and are inactive and unfocused. Stock clients do not need the
+collection event extension to observe those changes.
 
 ## Empty removal
 
