@@ -434,28 +434,35 @@ impl WorkspaceReferenceOp {
 fn resolve_workspace_target(
     layout: &mut Layout<TestWindow>,
     reference: &WorkspaceReferenceOp,
-) -> Option<(Output, usize)> {
+    show_collection: bool,
+) -> Option<(Option<Output>, usize)> {
     let reference = reference.resolve(layout);
-    layout.show_workspace_collection(&reference);
-    match reference {
-        WorkspaceReference::Index(index) => {
-            let idx = index.saturating_sub(1) as usize;
-            let monitor = layout.active_monitor_ref()?;
-            monitor.workspaces.get(idx)?;
-            Some((monitor.output().clone(), idx))
-        }
-        WorkspaceReference::Name(name) => layout.workspaces().find_map(|(monitor, idx, ws)| {
-            (monitor.is_some()
-                && ws
-                    .name()
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&name)))
-            .then(|| (monitor.unwrap().output().clone(), idx))
-        }),
-        WorkspaceReference::Id(id) => layout.workspaces().find_map(|(monitor, idx, ws)| {
-            (monitor.is_some() && ws.id().get() == id)
-                .then(|| (monitor.unwrap().output().clone(), idx))
-        }),
+    if show_collection {
+        layout.show_workspace_collection(&reference);
     }
+    let target = match reference {
+        WorkspaceReference::Index(index) => return Some((None, index.saturating_sub(1) as usize)),
+        WorkspaceReference::Name(name) => layout.workspaces().find_map(|(_, idx, ws)| {
+            ws.name()
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&name))
+                .then(|| (ws.current_output().cloned(), idx))
+        }),
+        WorkspaceReference::Id(id) => layout.workspaces().find_map(|(_, idx, ws)| {
+            (ws.id().get() == id).then(|| (ws.current_output().cloned(), idx))
+        }),
+    }?;
+
+    // Match Niri::find_output_and_workspace_index: hidden collection workspaces have only a
+    // local index, which cannot safely address a workspace on the active output. Focus actions
+    // reveal the collection before resolving; move/reorder actions do not.
+    if !show_collection
+        && target.0.is_none()
+        && layout.collection_overview_is_enabled()
+        && layout.active_output().is_some()
+    {
+        return None;
+    }
+    Some(target)
 }
 
 #[derive(Debug, Clone, Arbitrary)]
@@ -1275,8 +1282,10 @@ impl Op {
             Op::FocusWorkspaceUp => layout.switch_workspace_up(),
             Op::FocusWorkspace(idx) => layout.switch_workspace(idx),
             Op::FocusWorkspaceByReference(reference) => {
-                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
-                    layout.focus_output(&output);
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference, true) {
+                    if let Some(output) = output {
+                        layout.focus_output(&output);
+                    }
                     layout.switch_workspace(idx);
                 }
             }
@@ -1338,17 +1347,19 @@ impl Op {
                 reference,
                 focus,
             } => {
-                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference, false) {
                     let window_id = window_id.filter(|id| layout.has_window(id));
                     let activate = if focus {
                         ActivateWindow::Smart
                     } else {
                         ActivateWindow::No
                     };
-                    if layout.active_output() == Some(&output) {
+                    if layout.active_output() == output.as_ref() {
                         layout.move_to_workspace(window_id.as_ref(), idx, activate);
-                    } else {
+                    } else if let Some(output) = output {
                         layout.move_to_output(window_id.as_ref(), &output, Some(idx), activate);
+                    } else {
+                        layout.move_to_workspace(window_id.as_ref(), idx, activate);
                     }
                 }
             }
@@ -1356,11 +1367,13 @@ impl Op {
             Op::MoveColumnToWorkspaceUp(focus) => layout.move_column_to_workspace_up(focus),
             Op::MoveColumnToWorkspace(idx, focus) => layout.move_column_to_workspace(idx, focus),
             Op::MoveColumnToWorkspaceByReference(reference, focus) => {
-                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
-                    if layout.active_output() == Some(&output) {
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference, false) {
+                    if layout.active_output() == output.as_ref() {
                         layout.move_column_to_workspace(idx, focus);
-                    } else {
+                    } else if let Some(output) = output {
                         layout.move_column_to_output(&output, Some(idx), focus);
+                    } else {
+                        layout.move_column_to_workspace(idx, focus);
                     }
                 }
             }
@@ -1433,8 +1446,8 @@ impl Op {
                 reference,
                 target_idx,
             } => {
-                if let Some((output, idx)) = resolve_workspace_target(layout, &reference) {
-                    layout.move_workspace_to_idx(Some((Some(output), idx)), target_idx);
+                if let Some((output, idx)) = resolve_workspace_target(layout, &reference, false) {
+                    layout.move_workspace_to_idx(Some((output, idx)), target_idx);
                 }
             }
             Op::MoveWorkspaceToMonitor {
@@ -1624,10 +1637,12 @@ impl Op {
                 else {
                     return;
                 };
-                if let Some((old_output, old_idx)) = resolve_workspace_target(layout, &reference) {
+                if let Some((old_output, old_idx)) =
+                    resolve_workspace_target(layout, &reference, false)
+                {
                     layout.move_workspace_to_output_by_id(
                         old_idx,
-                        Some(old_output),
+                        old_output,
                         &output,
                     );
                 }
