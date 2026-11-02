@@ -5,7 +5,9 @@ use super::client::ClientId;
 use super::Fixture;
 
 fn one_window() -> (Fixture, ClientId, WlSurface) {
-    let mut fixture = Fixture::new();
+    let mut config = Config::default();
+    config.layout.collections.enabled = true;
+    let mut fixture = Fixture::with_config(config);
     fixture.add_output(1, (1280, 720));
     let client = fixture.add_client();
     let surface = {
@@ -116,4 +118,33 @@ fn mru_and_overview_survive_hidden_populated_and_detached_empty_collections() {
     assert!(!niri.layout.is_overview_open());
     niri.layout.focus_collection(&niri_config::WorkspaceReference::Id(original));
     niri.layout.verify_invariants();
+}
+
+#[test]
+fn dispatched_workspace_mru_overview_and_screenshot_actions_tolerate_collections() {
+    let (mut fixture, _client, _surface) = one_window();
+    fixture.niri().layout.create_collection(None);
+    fixture.niri().layout.create_collection(None);
+
+    use niri_config::Action;
+    let state = fixture.niri_state();
+    state.do_action(Action::OpenOverview, false);
+    assert!(state.niri.layout.is_overview_open());
+    state.do_action(Action::CloseOverview, false);
+    assert!(!state.niri.layout.is_overview_open());
+    state.do_action(Action::FocusCollectionPrevious, false);
+    state.do_action(Action::FocusCollectionNext, false);
+    state.do_action(Action::MoveWindowToCollectionPrevious, false);
+    state.do_action(Action::MoveWindowToCollectionNext, false);
+    state.do_action(Action::ScreenshotScreen(false, false, None), false);
+    state.do_action(
+        Action::MruAdvance {
+            direction: niri_config::MruDirection::Forward,
+            scope: None,
+            filter: None,
+        },
+        false,
+    );
+    state.do_action(Action::MruCancel, false);
+    state.niri.layout.verify_invariants();
 }
