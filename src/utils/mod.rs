@@ -142,7 +142,7 @@ impl ResizeEdge {
 
 pub fn version() -> String {
     if let Some(v) = option_env!("NIRI_BUILD_VERSION_STRING") {
-        return String::from(v);
+        return format!("{v} (nacre-niri)");
     }
 
     const MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -152,11 +152,12 @@ pub fn version() -> String {
     let commit =
         option_env!("NIRI_BUILD_COMMIT").unwrap_or(git_version!(fallback = "unknown commit"));
 
-    if PATCH == "0" {
+    let upstream = if PATCH == "0" {
         format!("{MAJOR}.{MINOR:0>2} ({commit})")
     } else {
         format!("{MAJOR}.{MINOR:0>2}.{PATCH} ({commit})")
-    }
+    };
+    format!("{upstream} (nacre-niri)")
 }
 
 pub fn get_monotonic_time() -> Duration {
@@ -633,5 +634,10 @@ mod tests {
         check((0, 0, 10, 20), (20, 30, 40, 5), (0, 15));
         check((0, 0, 10, 20), (20, 30, 4, 50), (6, 0));
         check((0, 0, 10, 20), (20, 30, 40, 50), (0, 0));
+    }
+
+    #[test]
+    fn version_identifies_nacre_niri_builds() {
+        assert!(version().ends_with("(nacre-niri)"));
     }
 }

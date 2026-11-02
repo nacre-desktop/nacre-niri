@@ -83,6 +83,7 @@ pub struct Config {
     pub blur: Blur,
     pub gestures: Gestures,
     pub overview: Overview,
+    pub nacre: Nacre,
     pub environment: Environment,
     pub xwayland_satellite: XwaylandSatellite,
     pub window_rules: Vec<WindowRule>,
@@ -200,6 +201,7 @@ where
                 "blur" => m_merge!(blur),
                 "gestures" => m_merge!(gestures),
                 "overview" => m_merge!(overview),
+                "nacre" => m_merge!(nacre),
                 "xwayland-satellite" => m_merge!(xwayland_satellite),
                 "switch-events" => m_merge!(switch_events),
                 "debug" => m_merge!(debug),
@@ -682,6 +684,13 @@ mod tests {
         assert_eq!(config.layout.collections.names, ["work"]);
         let config = do_parse("layout { collections { on false; }; }");
         assert!(!config.layout.collections.enabled);
+    }
+
+    #[test]
+    fn nacre_overview_hover_defaults_on_and_can_be_disabled() {
+        assert!(do_parse("").nacre.overview_hover);
+        assert!(do_parse("nacre { overview-hover; }").nacre.overview_hover);
+        assert!(!do_parse("nacre { overview-hover false; }").nacre.overview_hover);
     }
 
     #[test]

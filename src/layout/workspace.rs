@@ -1841,6 +1841,21 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
+    pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+        if self.floating.activate_window_without_raising(window) {
+            self.floating_is_active = FloatingActive::Yes;
+            true
+        } else if self.scrolling.activate_window_without_scrolling(window) {
+            self.floating_is_active = match self.floating_is_active {
+                FloatingActive::Yes => FloatingActive::NoButRaised,
+                other => other,
+            };
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn activate_window_without_raising(&mut self, window: &W::Id) -> bool {
         if self.floating.activate_window_without_raising(window) {
             self.floating_is_active = FloatingActive::Yes;

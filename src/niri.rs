@@ -814,6 +814,7 @@ impl State {
         self.niri.global_space.refresh();
         self.niri.refresh_idle_inhibit();
         self.refresh_pointer_contents();
+        self.niri.update_overview_hover();
         foreign_toplevel::refresh(self);
         ext_workspace::refresh(self);
 
@@ -3272,6 +3273,25 @@ impl Niri {
     pub fn window_under_cursor(&self) -> Option<&Mapped> {
         let pos = self.seat.get_pointer().unwrap().current_location();
         self.window_under(pos)
+    }
+
+    pub fn update_overview_hover(&self) {
+        let Some(server) = self.ipc_server.as_ref() else {
+            return;
+        };
+        if !server.has_overview_hover_clients() {
+            return;
+        }
+        let enabled = self.config.borrow().nacre.overview_hover;
+        let id = if enabled
+            && self.layout.is_overview_open()
+            && self.pointer_visibility.is_visible()
+        {
+            self.window_under_cursor().map(|window| window.id().get())
+        } else {
+            None
+        };
+        server.update_overview_hover(id);
     }
 
     /// Returns contents under the given point.
@@ -6203,7 +6223,12 @@ impl Niri {
         }
     }
 
-    pub fn handle_focus_follows_mouse(&mut self, new_focus: &PointContents) {
+    pub fn handle_focus_follows_mouse(
+        &mut self,
+        new_focus: &PointContents,
+        position: Point<f64, Logical>,
+    ) {
+        let overview_hover_enabled = self.config.borrow().nacre.overview_hover;
         let Some(ffm) = self.config.borrow().input.focus_follows_mouse else {
             return;
         };
@@ -6226,10 +6251,18 @@ impl Niri {
             }
         }
 
-        if let Some(window) = &new_focus.window {
-            if !self.layout.is_overview_open() && current_focus.window.as_ref() != Some(window) {
-                let (window, hit) = window;
-
+        if let Some((window, hit)) = &new_focus.window {
+            let overview = self.layout.is_overview_open();
+            let no_scroll = overview
+                && overview_hover_enabled
+                && ffm.max_scroll_amount.is_some_and(|amount| amount.0 == 0.);
+            let selected = if overview {
+                self.layout.focus().is_some_and(|focused| focused.window == *window)
+                    && self.layer_shell_on_demand_focus.is_none()
+            } else {
+                current_focus.window.as_ref() == new_focus.window.as_ref()
+            };
+            if !selected && (!overview || no_scroll) {
                 // Don't trigger focus-follows-mouse over the tab indicator.
                 if matches!(
                     hit,
@@ -6240,18 +6273,32 @@ impl Niri {
                     return;
                 }
 
-                if !self.layout.should_trigger_focus_follows_mouse_on(window) {
+                if !overview && !self.layout.should_trigger_focus_follows_mouse_on(window) {
                     return;
                 }
 
-                if let Some(threshold) = ffm.max_scroll_amount {
-                    if self.layout.scroll_amount_to_activate(window) > threshold.0 {
-                        return;
+                if no_scroll {
+                    // Ignore the outermost pixels where off-screen CSD input margins can peek in.
+                    if let Some((output, point)) = self.output_under(position) {
+                        let width = output_size(output).w;
+                        if point.x <= 1. || point.x >= width - 2. {
+                            return;
+                        }
                     }
+                    // Only visible monitor workspaces are searchable here. Hidden collection
+                    // previews keep hover metadata without changing keyboard selection.
+                    if self.layout.activate_window_without_scrolling(window.id()) {
+                        self.layer_shell_on_demand_focus = None;
+                    }
+                } else {
+                    if let Some(threshold) = ffm.max_scroll_amount {
+                        if self.layout.scroll_amount_to_activate(window) > threshold.0 {
+                            return;
+                        }
+                    }
+                    self.layout.activate_window_without_raising(window);
+                    self.layer_shell_on_demand_focus = None;
                 }
-
-                self.layout.activate_window_without_raising(window);
-                self.layer_shell_on_demand_focus = None;
             }
         }
 

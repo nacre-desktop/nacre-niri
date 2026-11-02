@@ -52,6 +52,9 @@ pub struct ScrollingSpace<W: LayoutElement> {
     /// for natural handling of fullscreen windows, which must ignore work area padding.
     view_offset: ViewOffset,
 
+    /// Hover focus must not re-fit the viewport when the client acknowledges focus.
+    hover_view_frozen: bool,
+
     /// Whether to activate the previous, rather than the next, column upon column removal.
     ///
     /// When a new column is created and removed with no focus changes in-between, it is more
@@ -298,6 +301,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             active_column_idx: 0,
             interactive_resize: None,
             view_offset: ViewOffset::Static(0.),
+            hover_view_frozen: false,
             activate_prev_column_on_removal: None,
             view_offset_to_restore: None,
             closing_windows: Vec::new(),
@@ -748,6 +752,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         prev_idx: Option<usize>,
         config: niri_config::Animation,
     ) {
+        self.hover_view_frozen = false;
         let new_view_offset = self.compute_new_view_offset_for_column(target_x, idx, prev_idx);
         self.animate_view_offset_with_config(idx, new_view_offset, config);
     }
@@ -774,6 +779,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     fn activate_column_with_anim_config(&mut self, idx: usize, config: niri_config::Animation) {
+        self.hover_view_frozen = false;
         if self.active_column_idx == idx
             // During a DnD scroll, animate even when activating the same window, for DnD hold.
             && (self.columns.is_empty() || !self.view_offset.is_dnd_scroll())
@@ -1386,7 +1392,10 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
             // We might need to move the view to ensure the resized window is still visible. But
             // only do it when the view isn't frozen by an interactive resize or a view gesture.
-            if self.interactive_resize.is_none() && !self.view_offset.is_gesture() {
+            if self.interactive_resize.is_none()
+                && !self.view_offset.is_gesture()
+                && !self.hover_view_frozen
+            {
                 // Synchronize the horizontal view movement with the resize so that it looks nice.
                 // This is especially important for always-centered view.
                 let config = if ongoing_resize_anim {
@@ -1430,6 +1439,24 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         let from_view_offset = target_x - new_col_x;
 
         (from_view_offset - new_view_offset).abs() / self.working_area.size.w
+    }
+
+    /// Select a tile while preserving the view, including any keyboard animation.
+    pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+        let Some(idx) = self.columns.iter().position(|col| col.contains(window)) else {
+            return false;
+        };
+        self.columns[idx].activate_window(window);
+        self.hover_view_frozen = true;
+        if self.active_column_idx != idx {
+            let delta = self.column_x(self.active_column_idx) - self.column_x(idx);
+            self.view_offset.offset(delta);
+            self.active_column_idx = idx;
+            self.activate_prev_column_on_removal = None;
+            self.view_offset_to_restore = None;
+            self.interactive_resize = None;
+        }
+        true
     }
 
     pub fn activate_window(&mut self, window: &W::Id) -> bool {

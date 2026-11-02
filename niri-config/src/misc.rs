@@ -152,6 +152,30 @@ impl MergeWith<OverviewPart> for Overview {
     }
 }
 
+/// Nacre-specific native integrations that can be disabled for upstream behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Nacre {
+    pub overview_hover: bool,
+}
+
+impl Default for Nacre {
+    fn default() -> Self {
+        Self { overview_hover: true }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct NacrePart {
+    #[knuffel(child)]
+    pub overview_hover: Option<Flag>,
+}
+
+impl MergeWith<NacrePart> for Nacre {
+    fn merge_with(&mut self, part: &NacrePart) {
+        merge!((self, part), overview_hover);
+    }
+}
+
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq, Eq)]
 pub struct Environment(#[knuffel(children)] pub Vec<EnvironmentVariable>);
 

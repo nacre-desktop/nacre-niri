@@ -1735,6 +1735,39 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
+    /// Select a window without moving the overview camera. Hidden collections are not present in
+    /// the monitor workspaces searched here, so hovering them never changes keyboard selection.
+    pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+        if self.interactive_move.is_some() {
+            return false;
+        }
+        let overview = self.overview_open;
+        let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &mut self.monitor_set
+        else {
+            return false;
+        };
+        for (monitor_idx, mon) in monitors.iter_mut().enumerate() {
+            let active_workspace = mon.active_workspace_idx();
+            for (workspace_idx, ws) in mon.workspaces.iter_mut().enumerate() {
+                if !overview && workspace_idx != active_workspace {
+                    continue;
+                }
+                if ws.activate_window_without_scrolling(window) {
+                    *active_monitor_idx = monitor_idx;
+                    if overview {
+                        mon.activate_workspace_without_scrolling(workspace_idx);
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     pub fn active_output(&self) -> Option<&Output> {
         let MonitorSet::Normal {
             monitors,
@@ -4954,6 +4987,11 @@ impl<W: LayoutElement> Layout<W> {
 
         for mon in monitors {
             mon.overview_open = self.overview_open;
+            if !self.overview_open
+                && matches!(mon.workspace_switch, Some(WorkspaceSwitch::Hover(_)))
+            {
+                mon.activate_workspace(mon.active_workspace_idx());
+            }
             mon.set_overview_progress(self.overview_progress.as_ref());
         }
     }
