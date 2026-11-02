@@ -104,7 +104,11 @@ pub enum Msg {
         action: OutputAction,
     },
     /// Start continuously receiving events from the compositor.
-    EventStream,
+    EventStream {
+        /// Include the Nacre-Niri workspace collections extension.
+        #[arg(long)]
+        collections: bool,
+    },
     /// Print the version of the running niri instance.
     Version,
     /// Print the active Nacre native capabilities.

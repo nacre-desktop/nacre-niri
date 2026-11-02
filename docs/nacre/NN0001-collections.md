@@ -76,9 +76,11 @@ focus by name/ID first shows the owning collection.
 `niri msg collections` / `Request::Collections` lists stable ID, one-based index,
 name, displayed output (null when hidden), active/focused status, and workspace IDs.
 `CollectionsChanged` replaces the collection state, follows normal layout refresh,
-and participates in initial event-stream state replication. Workspace and window
+and participates in collection-aware event-stream state replication. Workspace and window
 events continue to expose hidden windows; collection membership is obtained from
-workspace IDs. Clients must tolerate separate workspace and collection events.
+workspace IDs. Clients that need collection updates request the Nacre-Niri extension
+with `niri msg event-stream --collections`; the default event stream omits collection
+events so stock Niri 26.04 clients can still parse the stream.
 
 ## Empty removal
 

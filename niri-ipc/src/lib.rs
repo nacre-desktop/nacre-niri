@@ -121,6 +121,12 @@ pub enum Request {
     EventStream,
     /// Start an event stream that includes overview preview hover changes.
     NacreOverviewHoverStream,
+    /// Start an event stream including Nacre-Niri workspace collection events.
+    ///
+    /// Use this extension when communicating with a compositor that supports it. The standard
+    /// [`EventStream`][Request::EventStream] remains compatible with clients that do not know
+    /// about workspace collections.
+    EventStreamWithCollections,
     /// Respond with an error (for testing error handling).
     ReturnError,
     /// Request information about the overview.

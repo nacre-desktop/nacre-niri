@@ -1,0 +1,76 @@
+#!/usr/bin/bash
+set -u
+
+# Keep the stock niri session untouched and run this fork through its own units.
+if [ -n "${MANAGERPID:-}" ] && [ "${SYSTEMD_EXEC_PID:-}" = "$$" ]; then
+    case "$(ps -p "$MANAGERPID" -o cmd=)" in
+        *systemd*--user*) exec /usr/bin/nacre-niri --session ;;
+    esac
+fi
+
+prepared="${HOME:-}/.local/share/nacre/niri-on-pc/session"
+if [ -f "$prepared/source-revision" ]; then
+    config="$prepared/config/config.kdl"
+else
+    config="${HOME:-}/.config/nacre/niri/config.kdl"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user -q is-active graphical-session.target ||
+       systemctl --user -q is-active niri.service ||
+       systemctl --user -q is-active nacre-niri.service; then
+        echo 'A graphical session or Niri compositor is already running.' >&2
+        exit 1
+    fi
+fi
+
+if [ ! -f "$config" ]; then
+    echo 'Generate the Nacre Niri session config before choosing nacre-niri.' >&2
+    exit 1
+fi
+
+export NACRE_COMPOSITOR=niri XDG_CURRENT_DESKTOP=niri NACRE_NIRI_FORK=1
+export NIRI_CONFIG="$config"
+export QT_QPA_PLATFORM='wayland;xcb' QT_QPA_PLATFORMTHEME=qt6ct
+export QT_WAYLAND_DISABLE_WINDOWDECORATION=1 XCURSOR_THEME=breeze_cursors XCURSOR_SIZE=24
+case " ${UWSM_WAIT_VARNAMES-} " in
+    *' NIRI_SOCKET '*) ;;
+    *) UWSM_WAIT_VARNAMES="${UWSM_WAIT_VARNAMES-} NIRI_SOCKET" ;;
+esac
+export UWSM_WAIT_VARNAMES
+for name in WAYLAND_DISPLAY DISPLAY NIRI_SOCKET NACRE_COMPOSITOR NIRI_CONFIG NACRE_NIRI_FORK XCURSOR_SIZE XCURSOR_THEME; do
+    case " ${UWSM_FINALIZE_VARNAMES-} " in
+        *" $name "*) ;;
+        *) UWSM_FINALIZE_VARNAMES="${UWSM_FINALIZE_VARNAMES-} $name" ;;
+    esac
+done
+export UWSM_FINALIZE_VARNAMES
+unset HYPRLAND_INSTANCE_SIGNATURE HYPRCURSOR_THEME HYPRCURSOR_SIZE GDK_BACKEND
+
+if command -v uwsm >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --user daemon-reload || exit $?
+    fi
+    exec uwsm start -e -D niri -- /usr/bin/nacre-niri --session --config "$config"
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user reset-failed nacre-niri.service nacre-niri-shutdown.target || exit $?
+    systemctl --user import-environment || exit $?
+    if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+        dbus-update-activation-environment --all || exit $?
+    fi
+    status=0
+    systemctl --user --wait start nacre-niri.service || status=$?
+    systemctl --user start --job-mode=replace-irreversibly nacre-niri-shutdown.target || shutdown_status=$?
+    if [ "$status" -eq 0 ] && [ "${shutdown_status:-0}" -ne 0 ]; then
+        status=$shutdown_status
+    fi
+    systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP NIRI_SOCKET NACRE_NIRI_FORK NACRE_COMPOSITOR NIRI_CONFIG UWSM_WAIT_VARNAMES UWSM_FINALIZE_VARNAMES QT_QPA_PLATFORM QT_QPA_PLATFORMTHEME QT_WAYLAND_DISABLE_WINDOWDECORATION XCURSOR_THEME XCURSOR_SIZE || unset_status=$?
+    if [ "$status" -eq 0 ] && [ "${unset_status:-0}" -ne 0 ]; then
+        status=$unset_status
+    fi
+    exit "$status"
+else
+    echo 'nacre-niri-session requires systemd user services.' >&2
+    exit 1
+fi

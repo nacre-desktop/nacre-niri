@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Nacre (nacre-niri)
+Comment=Nacre session using the nacre-niri compositor
+Exec=nacre-niri-session
+Type=Application
+DesktopNames=niri
