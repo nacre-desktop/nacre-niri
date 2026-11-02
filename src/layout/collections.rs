@@ -123,6 +123,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub(super) fn transition_collections(&mut self, enabled: bool) {
         if enabled == self.options.layout.collections.enabled { return; }
+        self.collection_pending_workspaces.clear();
         if enabled {
             let outputs: Vec<_> = self.monitors().map(|m| m.output.clone()).collect();
             for output in outputs {
@@ -210,6 +211,38 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 self.new_collection(None, Some(name.clone()), false)
             });
+        // Only the initial configured workspaces retain upstream startup output routing.
+        // Established collection stacks stay intact during subsequent hotplug.
+        let pending = self.collection_pending_workspaces.clone();
+        let mut arriving = Vec::new();
+        for monitor in self.monitors_mut() {
+            let mut from_monitor = Vec::new();
+            for idx in (0..monitor.workspaces.len()).rev() {
+                let ws = &monitor.workspaces[idx];
+                if pending.contains(&ws.id()) && ws.original_output.matches(&output) {
+                    from_monitor.push(monitor.remove_workspace_by_idx(idx));
+                }
+            }
+            from_monitor.reverse();
+            arriving.extend(from_monitor);
+        }
+        for collection in &mut self.collections {
+            if collection.id == id { continue; }
+            let mut idx = 0;
+            while idx < collection.workspaces.len() {
+                let ws = &collection.workspaces[idx];
+                if pending.contains(&ws.id()) && ws.original_output.matches(&output) {
+                    arriving.push(collection.workspaces.remove(idx));
+                } else { idx += 1; }
+            }
+        }
+        if !arriving.is_empty() {
+            let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
+            if !collection.workspaces.iter().any(|ws| ws.has_windows_or_name()) {
+                collection.active_workspace = Some(arriving[0].id());
+            }
+            collection.workspaces.splice(0..0, arriving);
+        }
         let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
         collection.original_output = Some(name.clone());
         collection.home_output = Some(OutputId::new(&output));
@@ -223,7 +256,7 @@ impl<W: LayoutElement> Layout<W> {
         let old = std::mem::take(&mut self.monitor_set);
         self.monitor_set = match old {
             MonitorSet::Normal { mut monitors, primary_idx, active_monitor_idx } => {
-                monitors.push(self.take_collection_monitor(id, output, layout));
+                monitors.push(self.take_collection_monitor(id, output.clone(), layout));
                 MonitorSet::Normal { monitors, primary_idx, active_monitor_idx }
             }
             MonitorSet::NoOutputs { workspaces } => {
@@ -234,10 +267,12 @@ impl<W: LayoutElement> Layout<W> {
                     collection.workspaces.splice(0..0, workspaces);
                     if focus_initial { collection.active_workspace = collection.workspaces.first().map(|ws| ws.id()); }
                 }
-                let mon = self.take_collection_monitor(id, output, layout);
+                let mon = self.take_collection_monitor(id, output.clone(), layout);
                 MonitorSet::Normal { monitors: vec![mon], primary_idx: 0, active_monitor_idx: 0 }
             }
         };
+        let assigned: Vec<_> = self.collection_workspaces(id).filter(|ws| ws.original_output.matches(&output)).map(|ws| ws.id()).collect();
+        self.collection_pending_workspaces.retain(|id| !assigned.contains(id));
     }
 
     pub(super) fn remove_collection_output(&mut self, output: &Output) {

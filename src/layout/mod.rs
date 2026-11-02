@@ -343,6 +343,8 @@ pub struct Layout<W: LayoutElement> {
     collections: Vec<collections::Collection<W>>,
     /// Collection to restore when a borrowed output collection returns home.
     collection_returns: HashMap<String, u64>,
+    /// Configured workspaces awaiting their first matching output at startup.
+    collection_pending_workspaces: Vec<WorkspaceId>,
     collection_overview: collection_overview::Overview,
     /// Whether the layout should draw as active.
     ///
@@ -705,6 +707,7 @@ impl<W: LayoutElement> Layout<W> {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
             collections: vec![],
             collection_returns: HashMap::new(),
+            collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),
@@ -723,7 +726,7 @@ impl<W: LayoutElement> Layout<W> {
     fn with_options_and_workspaces(clock: Clock, config: &Config, options: Options) -> Self {
         let opts = Rc::new(options);
 
-        let workspaces = config
+        let workspaces: Vec<_> = config
             .workspaces
             .iter()
             .map(|ws| {
@@ -731,10 +734,15 @@ impl<W: LayoutElement> Layout<W> {
             })
             .collect();
 
+        let pending = workspaces.iter().zip(&config.workspaces)
+            .filter(|(_, config)| config.open_on_output.is_some())
+            .map(|(workspace, _)| workspace.id()).collect();
+
         let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
             collections: vec![],
             collection_returns: HashMap::new(),
+            collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),

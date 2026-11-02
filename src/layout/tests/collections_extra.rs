@@ -168,3 +168,29 @@ fn window_opened_before_first_output_gets_a_trailing_empty_workspace() {
     assert!(!monitor.workspaces.last().unwrap().has_windows_or_name());
     assert_eq!(layout.windows().count(), 1);
 }
+
+#[test]
+fn configured_workspaces_route_to_their_first_outputs_without_splitting_on_replug() {
+    let mut config = Config::default();
+    config.layout.collections.enabled = true;
+    config.workspaces = [1, 2].into_iter().map(|number| WorkspaceConfig {
+        name: WorkspaceName(format!("workspace{number}")),
+        open_on_output: Some(format!("output{number}")),
+        layout: None,
+    }).collect();
+    let mut layout = Layout::<TestWindow>::new(Clock::with_time(Duration::ZERO), &config);
+    check_ops_on_layout(&mut layout, [Op::AddOutput(1), Op::AddOutput(2)]);
+    let first = output(&layout, 1);
+    let second = output(&layout, 2);
+    assert_eq!(layout.monitor_for_workspace("workspace1").unwrap().output(), &first);
+    assert_eq!(layout.monitor_for_workspace("workspace2").unwrap().output(), &second);
+    layout.focus_output(&second);
+    add_window(&mut layout, 2);
+    let collection = layout.collection_for_output(&second).unwrap();
+    let workspaces = layout.collections().into_iter().find(|candidate| candidate.id == collection).unwrap().workspace_ids;
+    check_ops_on_layout(&mut layout, [Op::RemoveOutput(2), Op::AddOutput(2)]);
+    let restored = output(&layout, 2);
+    assert_eq!(layout.collection_for_output(&restored), Some(collection));
+    assert_eq!(layout.collections().into_iter().find(|candidate| candidate.id == collection).unwrap().workspace_ids, workspaces);
+    assert!(layout.windows_for_output(&restored).any(|window| *window.id() == 2));
+}
