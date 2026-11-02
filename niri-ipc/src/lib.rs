@@ -491,15 +491,27 @@ pub enum Action {
     /// Focus the previous collection.
     FocusCollectionPrevious {},
     /// Focus a collection by index or name.
-    FocusCollection { reference: WorkspaceReferenceArg },
+    FocusCollection {
+        /// Index or name of the collection to focus.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: WorkspaceReferenceArg,
+    },
     /// Create a collection with an optional name.
-    CreateCollection { name: Option<String> },
+    CreateCollection {
+        /// Optional name for the new collection.
+        #[cfg_attr(feature = "clap", arg())]
+        name: Option<String>,
+    },
     /// Move the focused window to the next collection.
     MoveWindowToCollectionNext {},
     /// Move the focused window to the previous collection.
     MoveWindowToCollectionPrevious {},
     /// Move the focused window to a collection by index or name.
-    MoveWindowToCollection { reference: WorkspaceReferenceArg },
+    MoveWindowToCollection {
+        /// Index or name of the collection to move the focused window to.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: WorkspaceReferenceArg,
+    },
     /// Move the focused window to the workspace below.
     MoveWindowToWorkspaceDown {
         /// Whether the focus should follow the target workspace.
@@ -1465,11 +1477,17 @@ pub struct Workspace {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 pub struct Collection {
+    /// Stable identifier for this collection.
     pub id: u64,
+    /// One-based position in the collection list.
     pub idx: usize,
+    /// Optional configured or user-assigned name.
     pub name: Option<String>,
+    /// Name of the output showing this collection, or `None` when detached.
     pub output: Option<String>,
+    /// Whether this collection is active on its output.
     pub is_active: bool,
+    /// Workspace ids in their display order.
     pub workspace_ids: Vec<u64>,
 }
 
@@ -1608,7 +1626,10 @@ pub enum Event {
         workspaces: Vec<Workspace>,
     },
     /// The collection configuration changed; this replaces the previous collection state.
-    CollectionsChanged { collections: Vec<Collection> },
+    CollectionsChanged {
+        /// Complete replacement collection state.
+        collections: Vec<Collection>,
+    },
     /// The workspace urgency changed.
     WorkspaceUrgencyChanged {
         /// Id of the workspace.

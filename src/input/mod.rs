@@ -1515,6 +1515,7 @@ impl State {
             Action::CreateCollection(name) => {
                 self.niri.layout.create_collection(name);
                 self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
                 self.niri.queue_redraw_all();
             }
             Action::MoveWindowToCollectionNext => {

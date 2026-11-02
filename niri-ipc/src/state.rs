@@ -124,6 +124,7 @@ impl EventStreamStatePart for EventStreamState {
 /// The workspace collections communicated over the event stream.
 #[derive(Debug, Default)]
 pub struct CollectionsState {
+    /// Latest collection list received from the compositor.
     pub collections: Vec<Collection>,
 }
 
