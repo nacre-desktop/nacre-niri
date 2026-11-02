@@ -12,9 +12,9 @@ license=('GPL-3.0-or-later')
 _commit=${_commit:-$(git rev-parse --verify HEAD)}
 [[ $_commit =~ ^[0-9a-f]{40}$ ]] || return 1
 source=("nacre-niri::git+https://github.com/nacre-desktop/nacre-niri.git#commit=${_commit}"
-        'nacre-niri-session' 'nacre-niri.desktop')
+        'nacre-niri-session' 'nacre-niri-fork.desktop')
 sha256sums=('SKIP'
-            '4de600073d9d6f3edcff521abd8c82ef40378387722d030f876370da2226527c'
+            '8277cae0d13d870f4067bbd7e5ff51285df25e2f3e4e57e2834a25e1219af6ee'
             '33b55bfedc42a061818b329f75aea93113da8501574ca033bc5c1f2298ff036e')
 # Keep stock niri available for rollback; systemd owns the fallback units and Bash runs the wrapper.
 depends=('niri>=26.04' 'systemd' 'bash' 'cairo' 'glib2' 'glibc' 'libdisplay-info' 'libgcc' 'libinput' 'libpipewire' 'libxkbcommon' 'mesa' 'pango' 'pixman' 'seatd' 'systemd-libs')
@@ -49,7 +49,7 @@ package() {
   cd "$srcdir/nacre-niri"
   install -Dm755 "$srcdir/target/release/niri" "$pkgdir/usr/bin/nacre-niri"
   install -Dm755 "$srcdir/nacre-niri-session" "$pkgdir/usr/bin/nacre-niri-session"
-  install -Dm644 "$srcdir/nacre-niri.desktop" "$pkgdir/usr/share/wayland-sessions/nacre-niri.desktop"
+  install -Dm644 "$srcdir/nacre-niri-fork.desktop" "$pkgdir/usr/share/wayland-sessions/nacre-niri-fork.desktop"
   install -Dm644 resources/niri.service "$pkgdir/usr/lib/systemd/user/nacre-niri.service"
   install -Dm644 resources/niri-shutdown.target "$pkgdir/usr/lib/systemd/user/nacre-niri-shutdown.target"
   sed -i 's/^Description=.*/Description=Shutdown running nacre-niri session/' "$pkgdir/usr/lib/systemd/user/nacre-niri-shutdown.target"

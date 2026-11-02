@@ -14,6 +14,11 @@ if [ -f "$prepared/source-revision" ]; then
 else
     config="${HOME:-}/.config/nacre/niri/config.kdl"
 fi
+# Fork-only actions live in a generated overlay; stock niri keeps config.kdl.
+overlay="${config%/*}/nacre-niri.kdl"
+if [ -f "$overlay" ]; then
+    config="$overlay"
+fi
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl --user -q is-active graphical-session.target ||
        systemctl --user -q is-active niri.service ||

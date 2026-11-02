@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 WRAPPER = ROOT / "nacre-niri-session"
 
 
-def run(active="", start_fails=False, with_nacre=False, no_config=False):
+def run(active="", start_fails=False, with_nacre=False, no_config=False, overlay=False):
     with tempfile.TemporaryDirectory(prefix="nacre-niri-session-") as temp:
         root = Path(temp)
         home = root / "home"
@@ -28,6 +28,9 @@ def run(active="", start_fails=False, with_nacre=False, no_config=False):
             config.write_text("# private test config\n")
             if with_nacre:
                 (home / ".local/share/nacre/niri-on-pc/session/source-revision").write_text("test\n")
+            if overlay:
+                config = config.with_name("nacre-niri.kdl")
+                config.write_text('include "config.kdl"\n')
         systemctl = bindir / "systemctl"
         systemctl.write_text(
             "#!/bin/sh\n"
@@ -74,7 +77,7 @@ def check(condition, message):
         raise AssertionError(message)
 
 
-for unit in ("graphical-session.target", "niri.service"):
+for unit in ("graphical-session.target", "niri.service", "nacre-niri.service"):
     code, calls, _ = run(active=unit)
     check(code != 0, f"accepted active {unit}")
     check(not any("reset-failed" in call or "import-environment" in call for call in calls),
@@ -110,4 +113,11 @@ check(f"NIRI_CONFIG={config}" in uwsm_call and "NACRE_COMPOSITOR=niri" in uwsm_c
       f"lost Nacre session environment: {calls}")
 check("NIRI_SOCKET" in uwsm_call and "NACRE_NIRI_FORK" in uwsm_call,
       f"UWSM did not manage Niri session variables: {calls}")
-print("PASS: active-session guards, renamed unit routing, shared NIRI_CONFIG, error cleanup, UWSM config launch")
+for prepared in (False, True):
+    code, calls, config = run(with_nacre=prepared, overlay=True)
+    check(code == 0 and config.endswith("/nacre-niri.kdl"),
+          f"overlay startup failed: {code}, {calls}")
+    check(any(f"NIRI_CONFIG={config}" in call for call in calls
+              if "import-environment" in call or call.startswith("uwsm|")),
+          f"fork overlay was not selected: {calls}")
+print("PASS: active-session guards, renamed units, config fallback and overlay preference, error cleanup, UWSM config launch")
