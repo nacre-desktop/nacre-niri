@@ -53,6 +53,7 @@ use tile::{Tile, TileRenderElement};
 use workspace::{WorkspaceAddWindowTarget, WorkspaceId};
 
 pub use self::monitor::MonitorRenderElement;
+pub use self::collection_overview::CollectionOverviewRenderElement;
 use self::monitor::{Monitor, WorkspaceSwitch};
 use self::workspace::{OutputId, Workspace};
 use crate::animation::{Animation, Clock};
@@ -2413,6 +2414,9 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         pos_within_output: Point<f64, Logical>,
     ) -> Option<(&W, HitType)> {
+        if self.collection_overview_is_open() {
+            return self.collection_window_under(output, pos_within_output);
+        }
         let mon = self.monitor_for_output(output)?;
         mon.window_under(pos_within_output)
     }
@@ -2437,6 +2441,10 @@ impl<W: LayoutElement> Layout<W> {
             .is_some()
         {
             return None;
+        }
+
+        if self.collection_overview_is_open() {
+            return self.collection_workspace_under(output, pos_within_output, extended_bounds);
         }
 
         let mon = self.monitor_for_output(output)?;
@@ -3920,19 +3928,15 @@ impl<W: LayoutElement> Layout<W> {
             return false;
         }
 
-        let Some((mon, (ws, ws_geo))) = self.monitors().find_map(|mon| {
+        let regular = self.monitors().find_map(|mon| {
             mon.workspaces_with_render_geo()
                 .find(|(ws, _)| ws.has_window(&window_id))
-                .map(|rv| (mon, rv))
-        }) else {
+                .map(|(ws, geo)| (mon, ws, geo))
+        });
+        let preview = self.collection_overview_is_open().then(|| self.collection_window_preview(output, &window_id)).flatten();
+        let Some((ws, ws_geo, zoom)) = preview.or_else(|| regular.and_then(|(mon, ws, geo)| (mon.output() == output).then_some((ws, geo, mon.overview_zoom())))) else {
             return false;
         };
-
-        if mon.output() != output {
-            return false;
-        }
-
-        let zoom = mon.overview_zoom();
 
         let is_floating = ws.is_floating(&window_id);
         let (tile, tile_offset, _visible) = ws
@@ -4272,6 +4276,13 @@ impl<W: LayoutElement> Layout<W> {
 
         // Dragging in the overview shouldn't switch the workspace and so on.
         let allow_to_activate_workspace = !self.overview_open;
+
+        if self.collection_overview_is_open() {
+            move_ = match self.drop_in_collection(move_) {
+                Ok(()) => return,
+                Err(moving) => moving,
+            };
+        }
 
         match &mut self.monitor_set {
             MonitorSet::Normal {

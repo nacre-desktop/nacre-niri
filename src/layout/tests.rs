@@ -14,11 +14,16 @@ use smithay::utils::Rectangle;
 use super::*;
 
 mod animations;
+mod collections;
 mod fullscreen;
 
 impl<W: LayoutElement> Default for Layout<W> {
     fn default() -> Self {
-        Self::with_options(Clock::with_time(Duration::ZERO), Default::default())
+        let mut options = Options::default();
+        // The inherited tests specify upstream hotplug semantics. Collections have a separate
+        // enabled suite below, including the same operation generator.
+        options.layout.collections.enabled = false;
+        Self::with_options(Clock::with_time(Duration::ZERO), options)
     }
 }
 
@@ -416,6 +421,11 @@ enum Op {
         layout_config: Option<Box<niri_config::LayoutPart>>,
     },
     RemoveOutput(#[proptest(strategy = "1..=5usize")] usize),
+    CreateCollection(#[proptest(strategy = "prop::option::of(1..=5usize)")] Option<usize>),
+    FocusCollection(#[proptest(strategy = "1..=5u8")] u8),
+    CycleCollection(bool),
+    MoveWindowToCollection(#[proptest(strategy = "1..=5u8")] u8),
+    MoveWindowToCollectionRelative(bool),
     FocusOutput(#[proptest(strategy = "1..=5usize")] usize),
     UpdateOutputLayoutConfig {
         #[proptest(strategy = "1..=5usize")]
@@ -758,6 +768,29 @@ enum Op {
 impl Op {
     fn apply(self, layout: &mut Layout<TestWindow>) {
         match self {
+            Op::CreateCollection(name) => {
+                layout.create_collection(name.map(|id| format!("collection{id}")));
+            }
+            Op::FocusCollection(index) => {
+                layout.focus_collection(&WorkspaceReference::Index(index));
+            }
+            Op::CycleCollection(next) => {
+                if next {
+                    layout.focus_collection_next();
+                } else {
+                    layout.focus_collection_previous();
+                }
+            }
+            Op::MoveWindowToCollection(index) => {
+                layout.move_window_to_collection(&WorkspaceReference::Index(index));
+            }
+            Op::MoveWindowToCollectionRelative(next) => {
+                if next {
+                    layout.move_window_to_collection_next();
+                } else {
+                    layout.move_window_to_collection_previous();
+                }
+            }
             Op::AddOutput(id) => {
                 let name = format!("output{id}");
                 if layout.outputs().any(|o| o.name() == name) {
@@ -1618,10 +1651,11 @@ impl Op {
                 layout.toggle_overview();
             }
             Op::UpdateConfig { layout_config } => {
-                let options = Options {
+                let mut options = Options {
                     layout: niri_config::Layout::from_part(&layout_config),
                     ..Default::default()
                 };
+                options.layout.collections.enabled = layout.options.layout.collections.enabled;
 
                 layout.update_options(options);
             }
@@ -3921,10 +3955,11 @@ proptest! {
         layout_config in arbitrary_layout_part(),
     ) {
         // eprintln!("{ops:?}");
-        let options = Options {
+        let mut options = Options {
             layout: niri_config::Layout::from_part(&layout_config),
             ..Default::default()
         };
+        options.layout.collections.enabled = false;
 
         check_ops_with_options(options, ops);
     }

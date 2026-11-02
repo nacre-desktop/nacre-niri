@@ -4364,7 +4364,11 @@ impl Niri {
 
             mon.render_insert_hint_between_workspaces(ctx.renderer, &mut |elem| push(elem.into()));
 
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            if self.layout.collection_overview_is_open() {
+                self.layout.render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| push(elem.into()));
+            } else {
+                mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            }
 
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
@@ -4405,7 +4409,11 @@ impl Niri {
                 push_popups_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
             }
 
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            if self.layout.collection_overview_is_open() {
+                self.layout.render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| push(elem.into()));
+            } else {
+                mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            }
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 // The render element namespace. This will be set to the workspace index for
@@ -6508,6 +6516,7 @@ niri_render_elements! {
 
 niri_render_elements! {
     OutputRenderElements<R> => {
+        CollectionOverview = crate::layout::CollectionOverviewRenderElement<R>,
         Monitor = MonitorRenderElement<R>,
         RescaledTile = RescaleRenderElement<TileRenderElement<R>>,
         LayerSurface = LayerSurfaceRenderElement<R>,

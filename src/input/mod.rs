@@ -3031,10 +3031,8 @@ impl State {
                 .then(|| self.niri.workspace_under_cursor(false))
                 .flatten()
             {
-                let ws_idx = self.niri.layout.find_workspace_by_id(ws.id()).unwrap().0;
-
-                self.niri.layout.focus_output(&output);
-                self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                let ws_id = ws.id();
+                self.niri.layout.select_overview_workspace(&output, ws_id);
 
                 // FIXME: granular.
                 self.niri.queue_redraw_all();
@@ -3667,12 +3665,11 @@ impl State {
                     } else if let Some((window, _)) = under.window {
                         if let Some(output) = is_overview_open.then_some(under.output).flatten() {
                             let mut workspaces = self.niri.layout.workspaces();
-                            if let Some(ws_idx) = workspaces.find_map(|(_, ws_idx, ws)| {
-                                ws.windows().any(|w| w.window == window).then_some(ws_idx)
+                            if let Some(ws_id) = workspaces.find_map(|(_, _, ws)| {
+                                ws.windows().any(|w| w.window == window).then_some(ws.id())
                             }) {
                                 drop(workspaces);
-                                self.niri.layout.focus_output(&output);
-                                self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                                self.niri.layout.select_overview_workspace(&output, ws_id);
                             }
                         }
 
@@ -3684,10 +3681,8 @@ impl State {
                         .then(|| self.niri.workspace_under(false, pos))
                         .flatten()
                     {
-                        let ws_idx = self.niri.layout.find_workspace_by_id(ws.id()).unwrap().0;
-
-                        self.niri.layout.focus_output(&output);
-                        self.niri.layout.toggle_overview_to_workspace(ws_idx);
+                        let ws_id = ws.id();
+                        self.niri.layout.select_overview_workspace(&output, ws_id);
 
                         // FIXME: granular.
                         self.niri.queue_redraw_all();
