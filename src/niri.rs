@@ -2233,7 +2233,7 @@ impl LayerMotionHandler for State {
     }
 
     fn layer_motion_now(&self) -> Duration {
-        self.niri.clock.now()
+        self.niri.clock.now_unadjusted()
     }
 
     fn layer_motion_attach(

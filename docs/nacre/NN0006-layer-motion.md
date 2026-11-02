@@ -45,6 +45,9 @@ EaseInOut cubic, EmphasizedAccelerate `t^4`, and normalized critical spring
 `[1-(1+8t)e^(-8t)]/[1-9e^(-8)]`. Per-plane opacity is either linear or
 `opaque_above`: after interpolation, alpha above the configured millionths
 threshold becomes 1.0. Threshold 1000 preserves Bead's `.001` step behavior.
+These planes animate client-buffer presentation only. Layer-shell geometry,
+exclusive zones, and compositor-rule shadows/background effects remain at the
+layer's configured geometry, matching the existing frame-driven slide path.
 
 The render path composes existing textures with destination transforms,
 fixed-frame clips and opacity. It must preserve B0185's split-panel motion: a

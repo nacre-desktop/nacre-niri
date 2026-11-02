@@ -86,6 +86,17 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
         .layer_motion_manager_state
         .tick(&root_surface, mid);
     assert!((runtime.lock().unwrap().current[0].1.destination.loc.x + 60.).abs() < 0.01);
+    f.niri().clock.set_rate(0.5);
+    f.niri().clock.set_unadjusted(mid);
+    let mapped = f.niri().mapped_layer_surfaces.values().next().unwrap();
+    assert_eq!(
+        mapped.motion_poses().unwrap()[0].1.destination.loc.x,
+        runtime.lock().unwrap().current[0].1.destination.loc.x
+    );
+    assert_eq!(
+        mapped.motion_input_point(Point::from((20., 10.))),
+        Some(Some(Point::from((80., 10.))))
+    );
 
     let output = f.niri_output(1);
     f.niri()

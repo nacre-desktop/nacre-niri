@@ -49,7 +49,7 @@ impl WlrLayerShellHandler for State {
         let wl_surface = surface.wl_surface();
         self.niri
             .layer_motion_manager_state
-            .remove_surface(wl_surface, self.niri.clock.now());
+            .remove_surface(wl_surface, self.niri.clock.now_unadjusted());
         self.niri.unmapped_layer_surfaces.remove(wl_surface);
 
         let output = if let Some((output, mut map, layer)) =
@@ -193,7 +193,7 @@ impl State {
                 if surface == &root_surface {
                     self.niri
                         .layer_motion_manager_state
-                        .unmap_surface(&root_surface, self.niri.clock.now());
+                        .unmap_surface(&root_surface, self.niri.clock.now_unadjusted());
                 }
                 // A mapped surface got unmapped via a null commit. Now it needs to do a new
                 // initial commit again.
@@ -232,7 +232,7 @@ impl State {
                 .output_state
                 .get(&output)
                 .map(|state| state.frame_clock.next_presentation_time())
-                .unwrap_or_else(|| self.niri.clock.now());
+                .unwrap_or_else(|| self.niri.clock.now_unadjusted());
             self.niri
                 .layer_motion_manager_state
                 .commit(&root_surface, next_presentation);

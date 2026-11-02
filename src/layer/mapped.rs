@@ -253,7 +253,7 @@ impl MappedLayer {
         let poses = runtime
             .active
             .as_ref()
-            .map(|active| active.sample(self.clock.now()))
+            .map(|active| active.sample(self.clock.now_unadjusted()))
             .unwrap_or_else(|| runtime.current.clone());
         Some((runtime.planes.clone(), poses))
     }
