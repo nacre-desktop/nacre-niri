@@ -196,7 +196,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     let layer = f.client(id).layer(&client_surface);
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Top),
-        size: Some((100, 100)),
+        size: Some((101, 101)),
         ..Default::default()
     });
     layer.commit();
