@@ -404,7 +404,11 @@ impl<W: LayoutElement> Layout<W> {
             let fallback = self
                 .collection_returns
                 .remove(&borrower)
-                .filter(|id| self.collections.iter().any(|c| c.id == *id))
+                .filter(|return_id| {
+                    *return_id != id
+                        && self.collections.iter().any(|c| c.id == *return_id)
+                        && !self.monitors().any(|m| m.collection_id == Some(*return_id))
+                })
                 .or_else(|| {
                     // A collection may have been swapped while both outputs were connected,
                     // before the unplug. Reuse the borrower's own hidden home in that case.
@@ -560,6 +564,11 @@ impl<W: LayoutElement> Layout<W> {
         else {
             return;
         };
+        // Focusing the already shown desk is a no-op. In particular, do not record a borrowed
+        // desk as its own return target.
+        if old == Some(id) {
+            return;
+        }
         let borrowed = self
             .collections
             .iter()

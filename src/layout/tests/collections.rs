@@ -90,6 +90,63 @@ fn replug_after_connected_swap_restores_both_home_collections() {
 }
 
 #[test]
+fn replug_after_focusing_current_borrowed_collection_does_not_duplicate_it() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(5).apply(&mut layout);
+    let output5_home = shown(&layout, "output5");
+    Op::AddOutput(1).apply(&mut layout);
+    let output1_home = shown(&layout, "output1");
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::CycleCollection(false),
+            Op::RemoveOutput(5),
+            Op::FocusCollection(1),
+            Op::AddScaledOutput {
+                id: 5,
+                scale: 1.0,
+                layout_config: None,
+            },
+        ],
+    );
+    assert_eq!(shown(&layout, "output5"), output5_home);
+    assert_eq!(shown(&layout, "output1"), output1_home);
+    layout.verify_invariants();
+}
+
+#[test]
+fn replug_does_not_swap_away_for_a_return_collection_already_shown_elsewhere() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(5).apply(&mut layout);
+    Op::AddOutput(1).apply(&mut layout);
+    Op::AddOutput(2).apply(&mut layout);
+
+    let returning = shown(&layout, "output5");
+    let already_shown = shown(&layout, "output2");
+    Op::FocusOutput(1).apply(&mut layout);
+    layout.focus_collection(&WorkspaceReference::Id(returning));
+    assert_eq!(shown(&layout, "output1"), returning);
+    Op::RemoveOutput(5).apply(&mut layout);
+
+    // A remembered return can become stale when its collection is shown on another output.
+    layout
+        .collection_returns
+        .insert("output1".to_owned(), already_shown);
+
+    Op::AddScaledOutput {
+        id: 5,
+        scale: 1.0,
+        layout_config: None,
+    }
+    .apply(&mut layout);
+
+    layout.verify_invariants();
+    assert_eq!(shown(&layout, "output5"), returning);
+    assert_eq!(shown(&layout, "output2"), already_shown);
+    assert_ne!(shown(&layout, "output1"), returning);
+}
+
+#[test]
 fn emptied_detached_collection_is_removed() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
