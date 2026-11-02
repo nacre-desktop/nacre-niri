@@ -89,7 +89,10 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     fn new_collection(&mut self, name: Option<String>, output: Option<String>, persistent: bool) -> u64 {
-        let collection = Collection::new(name, output, persistent);
+        let mut collection = Collection::new(name, output, persistent);
+        let workspace = Workspace::new_no_outputs(self.clock.clone(), self.options.clone());
+        collection.active_workspace = Some(workspace.id());
+        collection.workspaces.push(workspace);
         let id = collection.id;
         self.collections.push(collection);
         id
@@ -126,7 +129,9 @@ impl<W: LayoutElement> Layout<W> {
             let outputs: Vec<_> = self.monitors().map(|m| m.output.clone()).collect();
             for output in outputs {
                 let id = self.new_collection(None, Some(output.name()), false);
-                self.collections.iter_mut().find(|c| c.id == id).unwrap().home_output = Some(OutputId::new(&output));
+                let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
+                collection.home_output = Some(OutputId::new(&output));
+                collection.workspaces.clear();
                 self.monitors_mut().find(|m| m.output() == &output).unwrap().collection_id = Some(id);
             }
         } else {
@@ -210,7 +215,10 @@ impl<W: LayoutElement> Layout<W> {
             MonitorSet::NoOutputs { workspaces } => {
                 // Workspaces configured before the first output belong to its initial desk.
                 if !workspaces.is_empty() {
-                    self.collections.iter_mut().find(|c| c.id == id).unwrap().workspaces.extend(workspaces);
+                    let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
+                    let focus_initial = !collection.workspaces.iter().any(|ws| ws.has_windows());
+                    collection.workspaces.splice(0..0, workspaces);
+                    if focus_initial { collection.active_workspace = collection.workspaces.first().map(|ws| ws.id()); }
                 }
                 let mon = self.take_collection_monitor(id, output, layout);
                 MonitorSet::Normal { monitors: vec![mon], primary_idx: 0, active_monitor_idx: 0 }
@@ -229,6 +237,7 @@ impl<W: LayoutElement> Layout<W> {
         active_monitor_idx = active_monitor_idx.saturating_sub(usize::from(active_monitor_idx >= idx));
         self.monitor_set = if monitors.is_empty() { MonitorSet::NoOutputs { workspaces: vec![] } }
             else { MonitorSet::Normal { monitors, primary_idx, active_monitor_idx } };
+        self.collection_returns.remove(&output.name());
         self.clean_up_collections();
     }
 
@@ -262,8 +271,13 @@ impl<W: LayoutElement> Layout<W> {
         if !self.options.layout.collections.enabled { return; }
         let Some(id) = self.collections.iter().enumerate().find(|(i,c)| c.matches_reference(reference,*i)).map(|(_,c)| c.id) else { return; };
         let Some((name, old)) = self.active_monitor_ref().map(|m| (m.output_name().clone(), m.collection_id)) else { return; };
-        if self.collections.iter().any(|c| c.id == id && c.original_output.as_deref().is_some_and(|o| o != name)) {
+        let borrowed = self.collections.iter().find(|c| c.id == id).is_some_and(|c| {
+            c.home_output.as_ref().is_some_and(|home| !self.monitors().any(|m| home.matches(m.output())))
+        });
+        if borrowed {
             if let Some(old) = old { self.collection_returns.entry(name.clone()).or_insert(old); }
+        } else {
+            self.collection_returns.remove(&name);
         }
         self.show_collection_on_output(&name, id);
         self.clean_up_collections();
@@ -299,6 +313,9 @@ impl<W: LayoutElement> Layout<W> {
             let ws = &mut c.workspaces[idx];
             ws.add_tile(removed.tile, WorkspaceAddWindowTarget::Auto, ActivateWindow::No, removed.width, removed.is_full_width, removed.is_floating);
             ws.refresh(false, false);
+            if c.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) {
+                c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone()));
+            }
         }
         self.clean_up_collections();
     }

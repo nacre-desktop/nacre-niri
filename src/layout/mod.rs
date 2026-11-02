@@ -701,9 +701,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn with_options(clock: Clock, options: Options) -> Self {
-        Self {
+        let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
-            collections: if options.layout.collections.enabled { options.layout.collections.names.iter().map(|name| collections::Collection::new(Some(name.clone()), None, true)).collect() } else { vec![] },
+            collections: vec![],
             collection_returns: HashMap::new(),
             collection_overview: collection_overview::Overview::default(),
             is_active: true,
@@ -715,7 +715,9 @@ impl<W: LayoutElement> Layout<W> {
             overview_open: false,
             overview_progress: None,
             options: Rc::new(options),
-        }
+        };
+        layout.configure_collections();
+        layout
     }
 
     fn with_options_and_workspaces(clock: Clock, config: &Config, options: Options) -> Self {
@@ -729,9 +731,9 @@ impl<W: LayoutElement> Layout<W> {
             })
             .collect();
 
-        Self {
+        let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
-            collections: if opts.layout.collections.enabled { opts.layout.collections.names.iter().map(|name| collections::Collection::new(Some(name.clone()), None, true)).collect() } else { vec![] },
+            collections: vec![],
             collection_returns: HashMap::new(),
             collection_overview: collection_overview::Overview::default(),
             is_active: true,
@@ -743,7 +745,9 @@ impl<W: LayoutElement> Layout<W> {
             overview_open: false,
             overview_progress: None,
             options: opts,
-        }
+        };
+        layout.configure_collections();
+        layout
     }
 
     pub fn add_output(&mut self, output: Output, layout_config: Option<LayoutPart>) {
@@ -974,6 +978,8 @@ impl<W: LayoutElement> Layout<W> {
             ws.add_tile(tile, target, ActivateWindow::No, width, is_full_width, is_floating);
             if !is_floating { if let Some(height) = scrolling_height { ws.set_window_height(Some(&id), height); } }
             ws.refresh(false, false);
+            let c = &mut self.collections[ci];
+            if c.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) { c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone())); }
             return None;
         }
 
@@ -1397,6 +1403,13 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn unname_workspace_by_id(&mut self, id: WorkspaceId) {
+        for c in &mut self.collections {
+            if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.id() == id) {
+                ws.unname();
+                self.clean_up_collections();
+                return;
+            }
+        }
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -2211,6 +2224,17 @@ impl<W: LayoutElement> Layout<W> {
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
+                return;
+            }
+        }
+
+        if let Some(window) = window {
+            if let Some((ci, wi)) = self.collections.iter().enumerate().find_map(|(ci, c)| c.workspaces.iter().position(|ws| ws.has_window(window)).map(|wi| (ci, wi))) {
+                let c = &mut self.collections[ci];
+                if wi == idx || idx >= c.workspaces.len() { return; }
+                let removed = c.workspaces[wi].remove_tile(window, Transaction::new());
+                c.workspaces[idx].add_tile(removed.tile, WorkspaceAddWindowTarget::Auto, ActivateWindow::No, removed.width, removed.is_full_width, removed.is_floating);
+                if c.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) { c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone())); }
                 return;
             }
         }
@@ -3417,6 +3441,18 @@ impl<W: LayoutElement> Layout<W> {
     ) {
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
+                return;
+            }
+        }
+
+        if let Some(window) = window {
+            if self.collections.iter().any(|c| c.workspaces.iter().any(|ws| ws.has_window(window))) {
+                let target = self.monitors().find(|m| m.output() == output).and_then(|m| m.workspaces.get(target_ws_idx.unwrap_or(m.active_workspace_idx))).map(|ws| ws.id());
+                let Some(target) = target else { return; };
+                let Some(mut removed) = self.remove_window(window, Transaction::new()) else { return; };
+                removed.tile.stop_move_animations();
+                self.monitor_for_output_mut(output).unwrap().add_tile(removed.tile, MonitorAddWindowTarget::Workspace { id: target, column_idx: None }, activate, true, removed.width, removed.is_full_width, removed.is_floating);
+                if activate.map_smart(|| false) { self.focus_output(output); }
                 return;
             }
         }
