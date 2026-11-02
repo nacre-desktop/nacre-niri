@@ -139,11 +139,7 @@ impl State {
                     &config,
                 );
                 let mut mapped = mapped;
-                if let Some(motion) = self
-                    .niri
-                    .layer_motion_manager_state
-                    .runtime(surface)
-                {
+                if let Some(motion) = self.niri.layer_motion_manager_state.runtime(surface) {
                     mapped.set_motion_runtime(motion);
                 }
 
@@ -195,10 +191,9 @@ impl State {
             // The surface is unmapped.
             if self.niri.mapped_layer_surfaces.remove(layer).is_some() {
                 if surface == &root_surface {
-                    self.niri.layer_motion_manager_state.unmap_surface(
-                        &root_surface,
-                        self.niri.clock.now(),
-                    );
+                    self.niri
+                        .layer_motion_manager_state
+                        .unmap_surface(&root_surface, self.niri.clock.now());
                 }
                 // A mapped surface got unmapped via a null commit. Now it needs to do a new
                 // initial commit again.

@@ -8,15 +8,14 @@ use smithay::backend::renderer::element::utils::{
 };
 use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, UnderlyingStorage};
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
-use smithay::backend::renderer::Renderer;
-use smithay::utils::user_data::UserDataMap;
 use smithay::desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType};
+use smithay::utils::user_data::UserDataMap;
 use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::compositor::{remove_pre_commit_hook, HookId};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
-use super::ResolvedLayerRules;
 use super::motion::MotionPose;
+use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
@@ -155,7 +154,8 @@ impl<R: NiriRenderer> RenderElement<R> for MotionPlaneRenderElement<R> {
         opaque_regions: &[Rectangle<i32, smithay::utils::Physical>],
         cache: Option<&UserDataMap>,
     ) -> Result<(), R::Error> {
-        self.inner.draw(frame, src, dst, damage, opaque_regions, cache)
+        self.inner
+            .draw(frame, src, dst, damage, opaque_regions, cache)
     }
 
     fn underlying_storage(&self, renderer: &mut R) -> Option<UnderlyingStorage<'_>> {
@@ -263,7 +263,12 @@ impl MappedLayer {
         point: Point<f64, Logical>,
     ) -> Option<Option<Point<f64, Logical>>> {
         let (planes, poses) = self.motion_snapshot()?;
-        let pose_for = |id| poses.iter().find(|(plane, _)| *plane == id).map(|(_, pose)| *pose);
+        let pose_for = |id| {
+            poses
+                .iter()
+                .find(|(plane, _)| *plane == id)
+                .map(|(_, pose)| *pose)
+        };
         let hit = planes.iter().rev().find_map(|plane| {
             let pose = pose_for(plane.id)?;
             pose.map_input(point, plane.source)
@@ -275,7 +280,12 @@ impl MappedLayer {
         &self,
         point: Point<f64, Logical>,
         surface_type: WindowSurfaceType,
-    ) -> Option<Option<(smithay::reexports::wayland_server::protocol::wl_surface::WlSurface, Point<f64, Logical>)>> {
+    ) -> Option<
+        Option<(
+            smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+            Point<f64, Logical>,
+        )>,
+    > {
         let source_point = self.motion_input_point(point)?;
         let Some(source_point) = source_point else {
             return Some(None);
@@ -284,10 +294,7 @@ impl MappedLayer {
             self.surface
                 .surface_under(source_point, surface_type)
                 .map(|(surface, location)| {
-                    (
-                        surface.clone(),
-                        location.to_f64() + (point - source_point),
-                    )
+                    (surface.clone(), location.to_f64() + (point - source_point))
                 }),
         )
     }
@@ -504,12 +511,8 @@ impl MappedLayer {
                     };
                     let damage = plane.damage.render(visible_logical);
                     push(
-                        MotionPlaneRenderElement::new(
-                            inner,
-                            plane.render_id.clone(),
-                            damage,
-                        )
-                        .into(),
+                        MotionPlaneRenderElement::new(inner, plane.render_id.clone(), damage)
+                            .into(),
                     );
                 },
             );

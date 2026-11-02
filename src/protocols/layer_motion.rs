@@ -2,22 +2,20 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
+use bead_layer_motion_v1::BeadLayerMotionV1;
+use smithay::backend::renderer::element::Id;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
 };
 use smithay::wayland::compositor::with_states;
-use smithay::backend::renderer::element::Id;
 
-use crate::layer::motion::{
-    LayerMotionGroup, MotionCurve, MotionPose, OpacityMode,
-};
-use crate::render_helpers::damage::ExtraDamage;
+use crate::layer::motion::{LayerMotionGroup, MotionCurve, MotionPose, OpacityMode};
 use crate::protocols::raw::bead_layer_motion::v1::server::{
     bead_layer_motion_manager_v1, bead_layer_motion_v1,
 };
-use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
-use bead_layer_motion_v1::BeadLayerMotionV1;
+use crate::render_helpers::damage::ExtraDamage;
 
 const VERSION: u32 = 1;
 const MAX_PLANES: usize = 64;
@@ -75,7 +73,10 @@ pub struct LayerMotionManagerState {
 pub trait LayerMotionHandler {
     fn layer_motion_manager_state(&mut self) -> &mut LayerMotionManagerState;
     fn layer_motion_now(&self) -> Duration;
-    fn layer_motion_attach(&mut self, surface: &WlSurface) -> Option<Arc<Mutex<LayerMotionRuntime>>>;
+    fn layer_motion_attach(
+        &mut self,
+        surface: &WlSurface,
+    ) -> Option<Arc<Mutex<LayerMotionRuntime>>>;
 }
 
 impl LayerMotionManagerState {
@@ -103,8 +104,8 @@ impl LayerMotionManagerState {
         let Some(controller) = self.controllers.get_mut(surface) else {
             return;
         };
-        let surface_size = with_states(surface, crate::utils::surface_geo)
-            .map(|geometry| geometry.size.to_f64());
+        let surface_size =
+            with_states(surface, crate::utils::surface_geo).map(|geometry| geometry.size.to_f64());
         let Some(surface_size) = surface_size else {
             controller.resource.post_error(
                 bead_layer_motion_v1::Error::InvalidGeometry,
@@ -122,7 +123,9 @@ impl LayerMotionManagerState {
             );
             return;
         }
-        controller.committed_planes.clone_from(&controller.pending_planes);
+        controller
+            .committed_planes
+            .clone_from(&controller.pending_planes);
         controller.committed_curve = controller.pending_curve;
         let mut runtime = controller.runtime.lock().unwrap();
         for plane in &mut controller.committed_planes {
@@ -134,12 +137,12 @@ impl LayerMotionManagerState {
         runtime.planes.clone_from(&controller.committed_planes);
 
         if let Some(serial) = controller.pending_cancel.take() {
-            if runtime.active.as_ref().is_some_and(|motion| motion.serial == serial) {
-                let current = runtime
-                    .active
-                    .as_ref()
-                    .unwrap()
-                    .sample(next_presentation);
+            if runtime
+                .active
+                .as_ref()
+                .is_some_and(|motion| motion.serial == serial)
+            {
+                let current = runtime.active.as_ref().unwrap().sample(next_presentation);
                 runtime.active = None;
                 runtime.current.clone_from(&current);
                 send_final_state(&controller.resource, &current);
@@ -410,7 +413,9 @@ where
         }
         if let bead_layer_motion_v1::Request::Destroy = request {
             let now = state.layer_motion_now();
-            state.layer_motion_manager_state().remove_surface(&data.surface, now);
+            state
+                .layer_motion_manager_state()
+                .remove_surface(&data.surface, now);
             return;
         }
         let manager = state.layer_motion_manager_state();
@@ -435,7 +440,11 @@ where
                 clip_height,
                 from_opacity,
             } => {
-                if controller.pending_planes.iter().any(|item| item.id == plane) {
+                if controller
+                    .pending_planes
+                    .iter()
+                    .any(|item| item.id == plane)
+                {
                     resource.post_error(
                         bead_layer_motion_v1::Error::DuplicatePlane,
                         "plane identifier already exists",
@@ -500,40 +509,122 @@ where
                     opacity_mode: OpacityMode::Linear,
                 });
             }
-            bead_layer_motion_v1::Request::SetPlaneTo { plane, x, y, width, height, clip_x, clip_y, clip_width, clip_height, opacity } => {
-                let Some(item) = controller.pending_planes.iter_mut().find(|item| item.id == plane) else {
-                    resource.post_error(bead_layer_motion_v1::Error::UnknownPlane, "unknown plane identifier");
+            bead_layer_motion_v1::Request::SetPlaneTo {
+                plane,
+                x,
+                y,
+                width,
+                height,
+                clip_x,
+                clip_y,
+                clip_width,
+                clip_height,
+                opacity,
+            } => {
+                let Some(item) = controller
+                    .pending_planes
+                    .iter_mut()
+                    .find(|item| item.id == plane)
+                else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::UnknownPlane,
+                        "unknown plane identifier",
+                    );
                     return;
                 };
-                let Some(pose) = MotionPose::new(x, y, width, height, clip_x, clip_y, clip_width, clip_height, opacity) else {
-                    resource.post_error(bead_layer_motion_v1::Error::InvalidGeometry, "invalid plane geometry");
+                let Some(pose) = MotionPose::new(
+                    x,
+                    y,
+                    width,
+                    height,
+                    clip_x,
+                    clip_y,
+                    clip_width,
+                    clip_height,
+                    opacity,
+                ) else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::InvalidGeometry,
+                        "invalid plane geometry",
+                    );
                     return;
                 };
                 item.to = pose;
             }
-            bead_layer_motion_v1::Request::SetPlaneFrom { plane, x, y, width, height, clip_x, clip_y, clip_width, clip_height, opacity } => {
-                let Some(item) = controller.pending_planes.iter_mut().find(|item| item.id == plane) else {
-                    resource.post_error(bead_layer_motion_v1::Error::UnknownPlane, "unknown plane identifier");
+            bead_layer_motion_v1::Request::SetPlaneFrom {
+                plane,
+                x,
+                y,
+                width,
+                height,
+                clip_x,
+                clip_y,
+                clip_width,
+                clip_height,
+                opacity,
+            } => {
+                let Some(item) = controller
+                    .pending_planes
+                    .iter_mut()
+                    .find(|item| item.id == plane)
+                else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::UnknownPlane,
+                        "unknown plane identifier",
+                    );
                     return;
                 };
-                let Some(pose) = MotionPose::new(x, y, width, height, clip_x, clip_y, clip_width, clip_height, opacity) else {
-                    resource.post_error(bead_layer_motion_v1::Error::InvalidGeometry, "invalid plane geometry");
+                let Some(pose) = MotionPose::new(
+                    x,
+                    y,
+                    width,
+                    height,
+                    clip_x,
+                    clip_y,
+                    clip_width,
+                    clip_height,
+                    opacity,
+                ) else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::InvalidGeometry,
+                        "invalid plane geometry",
+                    );
                     return;
                 };
                 item.from = pose;
             }
-            bead_layer_motion_v1::Request::SetPlaneOpacityMode { plane, mode, threshold_millionths } => {
-                let Some(item) = controller.pending_planes.iter_mut().find(|item| item.id == plane) else {
-                    resource.post_error(bead_layer_motion_v1::Error::UnknownPlane, "unknown plane identifier");
+            bead_layer_motion_v1::Request::SetPlaneOpacityMode {
+                plane,
+                mode,
+                threshold_millionths,
+            } => {
+                let Some(item) = controller
+                    .pending_planes
+                    .iter_mut()
+                    .find(|item| item.id == plane)
+                else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::UnknownPlane,
+                        "unknown plane identifier",
+                    );
                     return;
                 };
                 let opacity_mode = match mode {
-                        WEnum::Value(bead_layer_motion_v1::OpacityMode::Linear) => Some(OpacityMode::Linear),
-                        WEnum::Value(bead_layer_motion_v1::OpacityMode::OpaqueAbove) if threshold_millionths <= 1_000_000 => Some(OpacityMode::OpaqueAbove(threshold_millionths)),
-                        _ => None,
-                    };
+                    WEnum::Value(bead_layer_motion_v1::OpacityMode::Linear) => {
+                        Some(OpacityMode::Linear)
+                    }
+                    WEnum::Value(bead_layer_motion_v1::OpacityMode::OpaqueAbove)
+                        if threshold_millionths <= 1_000_000 =>
+                    {
+                        Some(OpacityMode::OpaqueAbove(threshold_millionths))
+                    }
+                    _ => None,
+                };
                 let Some(opacity_mode) = opacity_mode else {
-                    resource.post_error(bead_layer_motion_v1::Error::InvalidGeometry, "invalid opacity mode or threshold");
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::InvalidGeometry,
+                        "invalid opacity mode or threshold",
+                    );
                     return;
                 };
                 item.opacity_mode = opacity_mode;
@@ -541,22 +632,44 @@ where
             bead_layer_motion_v1::Request::SetCurve { curve } => {
                 controller.pending_curve = match curve {
                     WEnum::Value(bead_layer_motion_v1::Curve::Linear) => MotionCurve::Linear,
-                    WEnum::Value(bead_layer_motion_v1::Curve::EaseOutCubic) => MotionCurve::EaseOutCubic,
-                    WEnum::Value(bead_layer_motion_v1::Curve::EaseInOutCubic) => MotionCurve::EaseInOutCubic,
-                    WEnum::Value(bead_layer_motion_v1::Curve::EmphasizedAccelerate) => MotionCurve::EmphasizedAccelerate,
-                    WEnum::Value(bead_layer_motion_v1::Curve::Spring) => MotionCurve::CriticalSpring,
+                    WEnum::Value(bead_layer_motion_v1::Curve::EaseOutCubic) => {
+                        MotionCurve::EaseOutCubic
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::EaseInOutCubic) => {
+                        MotionCurve::EaseInOutCubic
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::EmphasizedAccelerate) => {
+                        MotionCurve::EmphasizedAccelerate
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::Spring) => {
+                        MotionCurve::CriticalSpring
+                    }
                     WEnum::Unknown(_) => {
-                        resource.post_error(bead_layer_motion_v1::Error::InvalidGeometry, "unknown curve");
+                        resource.post_error(
+                            bead_layer_motion_v1::Error::InvalidGeometry,
+                            "unknown curve",
+                        );
                         return;
                     }
                 };
             }
-            bead_layer_motion_v1::Request::Animate { serial, duration_ms, retarget } => {
+            bead_layer_motion_v1::Request::Animate {
+                serial,
+                duration_ms,
+                retarget,
+            } => {
                 if duration_ms == 0 || duration_ms > 10_000 {
-                    resource.post_error(bead_layer_motion_v1::Error::InvalidDuration, "duration must be between 1 and 10000 ms");
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::InvalidDuration,
+                        "duration must be between 1 and 10000 ms",
+                    );
                     return;
                 }
-                controller.pending_animate = Some((serial, Duration::from_millis(duration_ms as u64), retarget != 0));
+                controller.pending_animate = Some((
+                    serial,
+                    Duration::from_millis(duration_ms as u64),
+                    retarget != 0,
+                ));
             }
             bead_layer_motion_v1::Request::Cancel { serial } => {
                 controller.pending_cancel = Some(serial);
@@ -606,7 +719,11 @@ mod tests {
             current: motion.sample(Duration::ZERO),
             active: Some(motion),
         };
-        let presented = runtime.active.as_ref().unwrap().sample(Duration::from_millis(40));
+        let presented = runtime
+            .active
+            .as_ref()
+            .unwrap()
+            .sample(Duration::from_millis(40));
         let (serial, frozen) = runtime.cancel_at(Duration::from_millis(40)).unwrap();
         assert_eq!(serial, 19);
         assert_eq!(frozen, presented);

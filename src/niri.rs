@@ -148,7 +148,7 @@ use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
 use crate::protocols::layer_motion::{
-    LayerMotionManagerState, LayerMotionRuntime, LayerMotionHandler,
+    LayerMotionHandler, LayerMotionManagerState, LayerMotionRuntime,
 };
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
@@ -3158,11 +3158,15 @@ impl Niri {
                     } | WindowSurfaceType::SUBSURFACE;
                     let pos_within_layer = pos_within_output - layer_pos_within_output;
                     let is_under = if popup {
-                        layer.surface_under(pos_within_layer, surface_type).is_some()
+                        layer
+                            .surface_under(pos_within_layer, surface_type)
+                            .is_some()
                     } else {
                         match mapped.surface_under_motion(pos_within_layer, surface_type) {
                             Some(under) => under.is_some(),
-                            None => layer.surface_under(pos_within_layer, surface_type).is_some(),
+                            None => layer
+                                .surface_under(pos_within_layer, surface_type)
+                                .is_some(),
                         }
                     };
                     if is_under {
@@ -3430,11 +3434,11 @@ impl Niri {
                             .unwrap_or_else(normal_under)
                     };
                     under.map(|(surface, pos_within_layer)| {
-                            (
-                                (surface, pos_within_layer + layer_pos_within_output),
-                                layer_surface,
-                            )
-                        })
+                        (
+                            (surface, pos_within_layer + layer_pos_within_output),
+                            layer_surface,
+                        )
+                    })
                 })
                 .map(|(s, l)| (Some(s), (None, Some(l.clone()))))
         };
@@ -4982,10 +4986,9 @@ impl Niri {
                 let mut id = Id::from_wayland_resource(surface);
 
                 if surface == layer.wl_surface() {
-                    if let Some(plane_id) = motion_ids
-                        .iter()
-                        .find(|plane_id| render_element_states.element_was_presented((*plane_id).clone()))
-                    {
+                    if let Some(plane_id) = motion_ids.iter().find(|plane_id| {
+                        render_element_states.element_was_presented((*plane_id).clone())
+                    }) {
                         id = plane_id.clone();
                     }
                 }

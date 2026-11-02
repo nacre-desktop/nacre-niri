@@ -103,7 +103,10 @@ impl MotionPose {
                 )),
             ),
             clip: Rectangle::new(
-                Point::from((lerp(self.clip.loc.x, to.clip.loc.x), lerp(self.clip.loc.y, to.clip.loc.y))),
+                Point::from((
+                    lerp(self.clip.loc.x, to.clip.loc.x),
+                    lerp(self.clip.loc.y, to.clip.loc.y),
+                )),
                 Size::from((
                     lerp(self.clip.size.w, to.clip.size.w),
                     lerp(self.clip.size.h, to.clip.size.h),
@@ -245,6 +248,10 @@ impl LayerMotionGroup {
         presentation_time >= self.start.saturating_add(self.duration)
     }
 
+    pub fn start_time(&self) -> Duration {
+        self.start
+    }
+
     pub fn retarget(
         &self,
         serial: u32,
@@ -270,9 +277,7 @@ impl LayerMotionGroup {
             .iter()
             .zip(&self.to)
             .zip(&self.opacity_modes)
-            .map(|(((id, from), (_, to)), (_, mode))| {
-                (*id, from.interpolate(*to, 1., *mode))
-            })
+            .map(|(((id, from), (_, to)), (_, mode))| (*id, from.interpolate(*to, 1., *mode)))
             .collect()
     }
 }
@@ -391,7 +396,10 @@ mod tests {
         assert_eq!(mid.destination.size.w, 100.);
         assert_eq!(mid.clip.size.w, 100.);
         assert_eq!(mid.opacity, 0.5);
-        assert_eq!(motion.sample(Duration::from_millis(100)), pose(0., 200., 1.));
+        assert_eq!(
+            motion.sample(Duration::from_millis(100)),
+            pose(0., 200., 1.)
+        );
     }
 
     #[test]
@@ -463,7 +471,10 @@ mod tests {
         .unwrap();
         let at_retarget = Duration::from_millis(40);
         let current = group.sample(at_retarget);
-        assert_eq!(current.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [4, 8]);
+        assert_eq!(
+            current.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            [4, 8]
+        );
         let target = vec![(4, pose(-100., 0., 0.)), (8, pose(0., 20., 0.5))];
         let reversed = group
             .retarget(
@@ -507,7 +518,9 @@ mod tests {
             visible.map_input(Point::from((200., 90.)), source),
             Some(Point::from((70., 30.)))
         );
-        assert!(visible.map_input(Point::from((110., 90.)), source).is_none());
+        assert!(visible
+            .map_input(Point::from((110., 90.)), source)
+            .is_none());
         let hidden = MotionPose::new(100., 50., 160., 80., 100., 50., 160., 80., 0.).unwrap();
         assert!(hidden.map_input(Point::from((150., 80.)), source).is_none());
     }

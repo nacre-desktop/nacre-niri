@@ -33,6 +33,33 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle};
 
+pub mod bead_layer_motion {
+    pub mod v1 {
+        pub mod client {
+            #![allow(dead_code, non_camel_case_types, unused_unsafe, unused_variables)]
+            #![allow(non_upper_case_globals, non_snake_case, unused_imports)]
+            #![allow(missing_docs, clippy::all)]
+
+            use wayland_client;
+            use wayland_client::protocol::*;
+
+            pub mod __interfaces {
+                use wayland_client::protocol::__interfaces::*;
+                wayland_scanner::generate_interfaces!("resources/bead-layer-motion-v1.xml");
+            }
+            use self::__interfaces::*;
+
+            wayland_scanner::generate_client_code!("resources/bead-layer-motion-v1.xml");
+        }
+    }
+}
+
+use bead_layer_motion::v1::client::{
+    bead_layer_motion_manager_v1, bead_layer_motion_v1,
+};
+use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
+use bead_layer_motion_v1::BeadLayerMotionV1;
+
 use crate::utils::id::IdCounter;
 
 pub struct Client {
@@ -55,9 +82,17 @@ pub struct State {
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
     pub viewporter: Option<WpViewporter>,
+    pub layer_motion_manager: Option<BeadLayerMotionManagerV1>,
 
     pub windows: Vec<Window>,
     pub layers: Vec<LayerSurface>,
+    pub motions: Vec<LayerMotionController>,
+}
+
+pub struct LayerMotionController {
+    pub surface: WlSurface,
+    pub motion: BeadLayerMotionV1,
+    pub events: Vec<bead_layer_motion_v1::Event>,
 }
 
 pub struct Window {
@@ -181,8 +216,10 @@ impl Client {
             layer_shell: None,
             spbm: None,
             viewporter: None,
+            layer_motion_manager: None,
             windows: Vec::new(),
             layers: Vec::new(),
+            motions: Vec::new(),
         };
 
         Self {
@@ -245,6 +282,22 @@ impl Client {
 }
 
 impl State {
+    pub fn layer_motion(&mut self, surface: &WlSurface) -> &mut LayerMotionController {
+        if !self.motions.iter().any(|motion| motion.surface == *surface) {
+            let manager = self.layer_motion_manager.as_ref().unwrap();
+            let motion = manager.get_motion(surface, &self.qh, ());
+            self.motions.push(LayerMotionController {
+                surface: surface.clone(),
+                motion,
+                events: Vec::new(),
+            });
+        }
+        self.motions
+            .iter_mut()
+            .find(|motion| motion.surface == *surface)
+            .unwrap()
+    }
+
     pub fn create_window(&mut self) -> &mut Window {
         let compositor = self.compositor.as_ref().unwrap();
         let xdg_wm_base = self.xdg_wm_base.as_ref().unwrap();
@@ -518,6 +571,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == WpViewporter::interface().name {
                     let version = min(version, WpViewporter::interface().version);
                     state.viewporter = Some(registry.bind(name, version, qh, ()));
+                } else if interface == BeadLayerMotionManagerV1::interface().name {
+                    let version = min(version, BeadLayerMotionManagerV1::interface().version);
+                    state.layer_motion_manager = Some(registry.bind(name, version, qh, ()));
                 } else if interface == WlOutput::interface().name {
                     let version = min(version, WlOutput::interface().version);
                     let output = registry.bind(name, version, qh, ());
@@ -601,6 +657,37 @@ impl Dispatch<ZwlrLayerShellV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         unreachable!()
+    }
+}
+
+impl Dispatch<BeadLayerMotionManagerV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &BeadLayerMotionManagerV1,
+        _event: <BeadLayerMotionManagerV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<BeadLayerMotionV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &BeadLayerMotionV1,
+        event: <BeadLayerMotionV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        let controller = state
+            .motions
+            .iter_mut()
+            .find(|motion| motion.motion == *proxy)
+            .unwrap();
+        controller.events.push(event);
     }
 }
 
