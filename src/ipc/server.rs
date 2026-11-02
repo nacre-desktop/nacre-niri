@@ -67,6 +67,7 @@ struct EventStreamClient {
 struct EventStreamSender {
     events: Sender<Event>,
     disconnect: Sender<()>,
+    include_collections: bool,
 }
 
 impl IpcServer {
@@ -116,6 +117,9 @@ impl IpcServer {
         let mut streams = self.event_streams.borrow_mut();
         let mut to_remove = Vec::new();
         for (idx, stream) in streams.iter_mut().enumerate() {
+            if !stream_event_allowed(&event, stream.include_collections) {
+                continue;
+            }
             match stream.events.try_send(event.clone()) {
                 Ok(()) => (),
                 Err(TrySendError::Closed(_)) => to_remove.push(idx),
@@ -133,6 +137,85 @@ impl IpcServer {
             let stream = streams.swap_remove(idx);
             let _ = stream.disconnect.send_blocking(());
         }
+    }
+}
+
+fn stream_event_allowed(event: &Event, include_collections: bool) -> bool {
+    include_collections || !matches!(event, Event::CollectionsChanged { .. })
+}
+
+fn event_stream_snapshot(state: &EventStreamState, include_collections: bool) -> Vec<Event> {
+    state
+        .replicate()
+        .into_iter()
+        .filter(|event| stream_event_allowed(event, include_collections))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{event_stream_snapshot, IpcServer};
+    use niri_ipc::state::EventStreamState;
+    use niri_ipc::Event;
+    use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn default_event_stream_snapshot_keeps_collection_events_out() {
+        let state = EventStreamState::default();
+        let legacy = event_stream_snapshot(&state, false);
+        let extension = event_stream_snapshot(&state, true);
+        assert!(legacy
+            .iter()
+            .any(|event| matches!(event, Event::WorkspacesChanged { .. })));
+        assert!(!legacy
+            .iter()
+            .any(|event| matches!(event, Event::CollectionsChanged { .. })));
+        assert!(extension
+            .iter()
+            .any(|event| matches!(event, Event::CollectionsChanged { .. })));
+        assert_eq!(extension.len(), legacy.len() + 1);
+    }
+
+    #[test]
+    fn broadcasts_gate_collection_events_per_client() {
+        let (legacy_tx, legacy_rx) = async_channel::bounded(4);
+        let (extension_tx, extension_rx) = async_channel::bounded(4);
+        let (legacy_disconnect, _) = async_channel::bounded(1);
+        let (extension_disconnect, _) = async_channel::bounded(1);
+        let server = IpcServer {
+            socket_path: None,
+            event_streams: Rc::new(RefCell::new(vec![
+                super::EventStreamSender {
+                    events: legacy_tx,
+                    disconnect: legacy_disconnect,
+                    include_collections: false,
+                },
+                super::EventStreamSender {
+                    events: extension_tx,
+                    disconnect: extension_disconnect,
+                    include_collections: true,
+                },
+            ])),
+            event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
+        };
+        server.send_event(Event::CollectionsChanged {
+            collections: vec![],
+        });
+        server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
+
+        assert!(matches!(
+            legacy_rx.try_recv(),
+            Ok(Event::OverviewOpenedOrClosed { is_open: true })
+        ));
+        assert!(legacy_rx.try_recv().is_err());
+        assert!(matches!(
+            extension_rx.try_recv(),
+            Ok(Event::CollectionsChanged { .. })
+        ));
+        assert!(matches!(
+            extension_rx.try_recv(),
+            Ok(Event::OverviewOpenedOrClosed { is_open: true })
+        ));
     }
 }
 
@@ -206,7 +289,11 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             .context("error parsing request")
             .map_err(|err| err.to_string());
         let requested_error = matches!(request, Ok(Request::ReturnError));
-        let requested_event_stream = matches!(request, Ok(Request::EventStream));
+        let requested_event_stream = match request {
+            Ok(Request::EventStream) => Some(false),
+            Ok(Request::EventStreamWithCollections) => Some(true),
+            _ => None,
+        };
 
         let reply = match request {
             Ok(request) => process(&ctx, request).await,
@@ -224,7 +311,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
         buf.push(b'\n');
         write.write_all(&buf).await.context("error writing reply")?;
 
-        if requested_event_stream {
+        if let Some(include_collections) = requested_event_stream {
             let (events_tx, events_rx) = async_channel::bounded(EVENT_STREAM_BUFFER_SIZE);
             let (disconnect_tx, disconnect_rx) = async_channel::bounded(1);
 
@@ -246,7 +333,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             // Send the initial state.
             {
                 let state = ctx.event_stream_state.borrow();
-                for event in state.replicate() {
+                for event in event_stream_snapshot(&state, include_collections) {
                     events_tx
                         .try_send(event)
                         .expect("initial event burst had more events than buffer size");
@@ -259,6 +346,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
                 let sender = EventStreamSender {
                     events: events_tx,
                     disconnect: disconnect_tx,
+                    include_collections,
                 };
                 streams.push(sender);
             }
@@ -448,7 +536,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let output = result.map_err(|_| String::from("error getting active output info"))?;
             Response::FocusedOutput(output)
         }
-        Request::EventStream => Response::Handled,
+        Request::EventStream | Request::EventStreamWithCollections => Response::Handled,
         Request::OverviewState => {
             let state = ctx.event_stream_state.borrow();
             let is_open = state.overview.is_open;

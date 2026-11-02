@@ -46,7 +46,13 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
         Msg::Windows => Request::Windows,
         Msg::Layers => Request::Layers,
         Msg::KeyboardLayouts => Request::KeyboardLayouts,
-        Msg::EventStream => Request::EventStream,
+        Msg::EventStream { collections } => {
+            if *collections {
+                Request::EventStreamWithCollections
+            } else {
+                Request::EventStream
+            }
+        }
         Msg::RequestError => Request::ReturnError,
         Msg::OverviewState => Request::OverviewState,
         Msg::Casts => Request::Casts,
@@ -416,7 +422,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 println!("{is_active}{idx} {name}");
             }
         }
-        Msg::EventStream => {
+        Msg::EventStream { .. } => {
             let Response::Handled = response else {
                 bail!("unexpected response: expected Handled, got {response:?}");
             };
