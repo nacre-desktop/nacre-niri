@@ -321,6 +321,9 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         scale: f64,
         options: Rc<Options>,
     ) {
+        if !options.nacre.overview_hover {
+            self.hover_view_frozen = false;
+        }
         let working_area = compute_working_area(parent_area, scale, options.layout.struts);
 
         for (column, data) in zip(&mut self.columns, &mut self.data) {

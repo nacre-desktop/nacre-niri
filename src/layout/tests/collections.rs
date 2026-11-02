@@ -239,6 +239,36 @@ fn overview_hover_works_when_collections_are_disabled() {
 }
 
 #[test]
+fn disabling_overview_hover_clears_hover_camera_state() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    Op::FocusWorkspaceDown.apply(&mut layout);
+    add_window(&mut layout, 2);
+    Op::FocusWorkspaceUp.apply(&mut layout);
+    layout.open_overview();
+    assert!(layout.activate_window_without_scrolling(&2));
+    assert!(matches!(
+        layout.monitors().next().unwrap().workspace_switch.as_ref(),
+        Some(super::super::monitor::WorkspaceSwitch::Hover(_))
+    ));
+
+    layout.update_options(Options {
+        nacre: niri_config::Nacre {
+            overview_hover: false,
+        },
+        ..Default::default()
+    });
+
+    assert!(!layout.activate_window_without_scrolling(&1));
+    assert!(!matches!(
+        layout.monitors().next().unwrap().workspace_switch.as_ref(),
+        Some(super::super::monitor::WorkspaceSwitch::Hover(_))
+    ));
+    layout.verify_invariants();
+}
+
+#[test]
 fn overview_drag_moves_window_into_hidden_collection() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);

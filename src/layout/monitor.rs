@@ -1117,8 +1117,10 @@ impl<W: LayoutElement> Monitor<W> {
             .as_ref()
             .and_then(|hint| hint.workspace.existing_id());
 
+        let selected = self.active_workspace_ref().id();
+        let overview_hover = self.overview_open && self.options.nacre.overview_hover;
         for (ws, geo) in self.workspaces_with_render_geo_mut(true) {
-            ws.update_render_elements(is_active);
+            ws.update_render_elements(is_active && (!overview_hover || ws.id() == selected));
 
             if Some(ws.id()) == insert_hint_ws_id {
                 insert_hint_ws_geo = Some(geo);
@@ -1207,6 +1209,12 @@ impl<W: LayoutElement> Monitor<W> {
     pub fn update_config(&mut self, base_options: Rc<Options>) {
         let options =
             Rc::new(Options::clone(&base_options).with_merged_layout(self.layout_config.as_ref()));
+
+        if !options.nacre.overview_hover
+            && matches!(self.workspace_switch.as_ref(), Some(WorkspaceSwitch::Hover(_)))
+        {
+            self.activate_workspace(self.active_workspace_idx);
+        }
 
         if self.options.layout.empty_workspace_above_first
             != options.layout.empty_workspace_above_first
