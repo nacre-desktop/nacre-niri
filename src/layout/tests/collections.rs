@@ -186,7 +186,15 @@ fn overview_hit_testing_selects_detached_column() {
     let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
     let focused = layout.focus().unwrap().id().clone();
     let camera = layout.active_monitor().unwrap().workspace_render_idx();
-    assert_eq!(layout.window_under(&output, point).unwrap().0.id(), &2);
+    // The workspace center may be empty: test windows keep a small client buffer until
+    // their first configure acknowledgement. Aim inside the actual rendered tile.
+    let (workspace, geometry, zoom) = layout.collection_window_preview(&output, &2).unwrap();
+    let (tile, position, _) = workspace
+        .tiles_with_render_positions()
+        .find(|(tile, _, visible)| *visible && tile.window().id() == &2)
+        .unwrap();
+    let hover = geometry.loc + (position + tile.tile_size().to_point().downscale(2.)).upscale(zoom);
+    assert_eq!(layout.window_under(&output, hover).unwrap().0.id(), &2);
     assert!(!layout.activate_window_without_scrolling(&2));
     assert_eq!(layout.focus().unwrap().id(), &focused);
     assert_eq!(
