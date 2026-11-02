@@ -1,6 +1,7 @@
 # Maintainer: Siverteh <92440237+Siverteh@users.noreply.github.com>
 pkgname=nacre-niri
-pkgver=26.04.r2795.gf1dea218
+# Seed only; pkgver() replaces this with the selected source revision.
+pkgver=26.04
 pkgrel=1
 pkgdesc='Nacre-compatible Niri compositor, installable beside stock niri'
 arch=('x86_64')

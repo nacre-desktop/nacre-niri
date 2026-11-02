@@ -142,7 +142,11 @@ impl ResizeEdge {
 
 pub fn version() -> String {
     if let Some(v) = option_env!("NIRI_BUILD_VERSION_STRING") {
-        return format!("{v} (nacre-niri)");
+        return if v.contains("(nacre-niri ") || v.ends_with("(nacre-niri)") {
+            String::from(v)
+        } else {
+            format!("{v} (nacre-niri)")
+        };
     }
 
     const MAJOR: &str = env!("CARGO_PKG_VERSION_MAJOR");
@@ -638,6 +642,6 @@ mod tests {
 
     #[test]
     fn version_identifies_nacre_niri_builds() {
-        assert!(version().ends_with("(nacre-niri)"));
+        assert!(version().contains("(nacre-niri"));
     }
 }

@@ -173,10 +173,13 @@ fn event_stream_snapshot(state: &EventStreamState, include_collections: bool) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{event_stream_snapshot, IpcServer};
+    use std::cell::{Cell, RefCell};
+    use std::rc::Rc;
+
     use niri_ipc::state::EventStreamState;
     use niri_ipc::Event;
-    use std::{cell::{Cell, RefCell}, rc::Rc};
+
+    use super::{event_stream_snapshot, IpcServer};
 
     #[test]
     fn default_event_stream_snapshot_keeps_collection_events_out() {
@@ -199,8 +202,10 @@ mod tests {
     fn broadcasts_gate_collection_events_per_client() {
         let (legacy_tx, legacy_rx) = async_channel::bounded(4);
         let (extension_tx, extension_rx) = async_channel::bounded(4);
+        let (hover_tx, hover_rx) = async_channel::bounded(4);
         let (legacy_disconnect, _) = async_channel::bounded(1);
         let (extension_disconnect, _) = async_channel::bounded(1);
+        let (hover_disconnect, _) = async_channel::bounded(1);
         let server = IpcServer {
             socket_path: None,
             event_streams: Rc::new(RefCell::new(vec![
@@ -216,6 +221,12 @@ mod tests {
                     disconnect: extension_disconnect,
                     include_collections: true,
                 },
+                super::EventStreamSender {
+                    overview_hover: true,
+                    events: hover_tx,
+                    disconnect: hover_disconnect,
+                    include_collections: false,
+                },
             ])),
             event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
             overview_hover: Rc::new(Cell::new(None)),
@@ -223,6 +234,7 @@ mod tests {
         server.send_event(Event::CollectionsChanged {
             collections: vec![],
         });
+        server.update_overview_hover(Some(7));
         server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
 
         assert!(matches!(
@@ -238,6 +250,15 @@ mod tests {
             extension_rx.try_recv(),
             Ok(Event::OverviewOpenedOrClosed { is_open: true })
         ));
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::NacreOverviewHoverChanged { id: Some(7) })
+        ));
+        assert!(matches!(
+            hover_rx.try_recv(),
+            Ok(Event::OverviewOpenedOrClosed { is_open: true })
+        ));
+        assert!(hover_rx.try_recv().is_err());
     }
 }
 
@@ -315,7 +336,9 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
         let requested_hover = matches!(request, Ok(Request::NacreOverviewHoverStream));
         let requested_event_stream = matches!(
             request,
-            Ok(Request::EventStream | Request::EventStreamWithCollections | Request::NacreOverviewHoverStream)
+            Ok(Request::EventStream
+                | Request::EventStreamWithCollections
+                | Request::NacreOverviewHoverStream)
         );
         let include_collections = matches!(request, Ok(Request::EventStreamWithCollections));
 
