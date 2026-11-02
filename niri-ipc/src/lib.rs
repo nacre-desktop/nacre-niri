@@ -71,6 +71,8 @@ pub enum Request {
     Outputs,
     /// Request information about workspaces.
     Workspaces,
+    /// Request information about workspace collections.
+    Collections,
     /// Request information about open windows.
     Windows,
     /// Request information about layer-shell surfaces.
@@ -145,6 +147,8 @@ pub enum Response {
     Outputs(HashMap<String, Output>),
     /// Information about workspaces.
     Workspaces(Vec<Workspace>),
+    /// Information about workspace collections.
+    Collections(Vec<Collection>),
     /// Information about open windows.
     Windows(Vec<Window>),
     /// Information about layer-shell surfaces.
@@ -482,6 +486,20 @@ pub enum Action {
     },
     /// Focus the previous workspace.
     FocusWorkspacePrevious {},
+    /// Focus the next collection.
+    FocusCollectionNext {},
+    /// Focus the previous collection.
+    FocusCollectionPrevious {},
+    /// Focus a collection by index or name.
+    FocusCollection { reference: WorkspaceReferenceArg },
+    /// Create a collection with an optional name.
+    CreateCollection { name: Option<String> },
+    /// Move the focused window to the next collection.
+    MoveWindowToCollectionNext {},
+    /// Move the focused window to the previous collection.
+    MoveWindowToCollectionPrevious {},
+    /// Move the focused window to a collection by index or name.
+    MoveWindowToCollection { reference: WorkspaceReferenceArg },
     /// Move the focused window to the workspace below.
     MoveWindowToWorkspaceDown {
         /// Whether the focus should follow the target workspace.
@@ -1443,6 +1461,18 @@ pub struct Workspace {
     pub active_window_id: Option<u64>,
 }
 
+/// A persistent stack of workspaces.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct Collection {
+    pub id: u64,
+    pub idx: usize,
+    pub name: Option<String>,
+    pub output: Option<String>,
+    pub is_active: bool,
+    pub workspace_ids: Vec<u64>,
+}
+
 /// Configured keyboard layouts.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
@@ -1577,6 +1607,8 @@ pub enum Event {
         /// workspaces are missing from here, then they were deleted.
         workspaces: Vec<Workspace>,
     },
+    /// The collection configuration changed; this replaces the previous collection state.
+    CollectionsChanged { collections: Vec<Collection> },
     /// The workspace urgency changed.
     WorkspaceUrgencyChanged {
         /// Id of the workspace.

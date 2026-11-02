@@ -9,7 +9,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use crate::{Cast, Event, KeyboardLayouts, Window, Workspace};
+use crate::{Cast, Collection, Event, KeyboardLayouts, Window, Workspace};
 
 /// Part of the state communicated via the event stream.
 pub trait EventStreamStatePart {
@@ -34,6 +34,9 @@ pub trait EventStreamStatePart {
 pub struct EventStreamState {
     /// State of workspaces.
     pub workspaces: WorkspacesState,
+
+    /// State of workspace collections.
+    pub collections: CollectionsState,
 
     /// State of workspaces.
     pub windows: WindowsState,
@@ -97,6 +100,7 @@ impl EventStreamStatePart for EventStreamState {
     fn replicate(&self) -> Vec<Event> {
         let mut events = Vec::new();
         events.extend(self.workspaces.replicate());
+        events.extend(self.collections.replicate());
         events.extend(self.windows.replicate());
         events.extend(self.keyboard_layouts.replicate());
         events.extend(self.overview.replicate());
@@ -107,12 +111,33 @@ impl EventStreamStatePart for EventStreamState {
 
     fn apply(&mut self, event: Event) -> Option<Event> {
         let event = self.workspaces.apply(event)?;
+        let event = self.collections.apply(event)?;
         let event = self.windows.apply(event)?;
         let event = self.keyboard_layouts.apply(event)?;
         let event = self.overview.apply(event)?;
         let event = self.config.apply(event)?;
         let event = self.casts.apply(event)?;
         Some(event)
+    }
+}
+
+/// The workspace collections communicated over the event stream.
+#[derive(Debug, Default)]
+pub struct CollectionsState {
+    pub collections: Vec<Collection>,
+}
+
+impl EventStreamStatePart for CollectionsState {
+    fn replicate(&self) -> Vec<Event> {
+        vec![Event::CollectionsChanged { collections: self.collections.clone() }]
+    }
+
+    fn apply(&mut self, event: Event) -> Option<Event> {
+        match event {
+            Event::CollectionsChanged { collections } => self.collections = collections,
+            _ => return Some(event),
+        }
+        None
     }
 }
 

@@ -9,6 +9,7 @@ use crate::{BorderRule, Color, FloatOrInt, InsertHintPart, ShadowRule, TabIndica
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
+    pub collections: Collections,
     pub focus_ring: FocusRing,
     pub border: Border,
     pub shadow: Shadow,
@@ -29,6 +30,7 @@ pub struct Layout {
 impl Default for Layout {
     fn default() -> Self {
         Self {
+            collections: Collections::default(),
             focus_ring: FocusRing::default(),
             border: Border::default(),
             shadow: Shadow::default(),
@@ -80,6 +82,15 @@ impl MergeWith<LayoutPart> for Layout {
             background_color,
         );
 
+        if let Some(collections) = &part.collections {
+            if let Some(on) = collections.on { self.collections.enabled = on.0; }
+            for collection in &collections.collection {
+                if !self.collections.names.contains(&collection.name) {
+                    self.collections.names.push(collection.name.clone());
+                }
+            }
+        }
+
         if let Some(x) = part.default_column_width {
             self.default_column_width = x.0;
         }
@@ -96,6 +107,8 @@ impl MergeWith<LayoutPart> for Layout {
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct LayoutPart {
+    #[knuffel(child)]
+    pub collections: Option<CollectionsPart>,
     #[knuffel(child)]
     pub focus_ring: Option<BorderRule>,
     #[knuffel(child)]
@@ -126,6 +139,30 @@ pub struct LayoutPart {
     pub struts: Option<Struts>,
     #[knuffel(child)]
     pub background_color: Option<Color>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Collections {
+    pub enabled: bool,
+    pub names: Vec<String>,
+}
+
+impl Default for Collections {
+    fn default() -> Self { Self { enabled: true, names: Vec::new() } }
+}
+
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+pub struct CollectionsPart {
+    #[knuffel(child)]
+    pub on: Option<Flag>,
+    #[knuffel(child)]
+    pub collection: Vec<CollectionPart>,
+}
+
+#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+pub struct CollectionPart {
+    #[knuffel(argument)]
+    pub name: String,
 }
 
 #[derive(knuffel::Decode, Debug, Clone, Copy, PartialEq)]

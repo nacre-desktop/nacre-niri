@@ -1494,6 +1494,44 @@ impl State {
                 // FIXME: granular
                 self.niri.queue_redraw_all();
             }
+            Action::FocusCollectionNext => {
+                self.niri.layout.focus_collection_next();
+                self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+            Action::FocusCollectionPrevious => {
+                self.niri.layout.focus_collection_previous();
+                self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+            Action::FocusCollection(reference) => {
+                self.niri.layout.focus_collection(&reference);
+                self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+            Action::CreateCollection(name) => {
+                self.niri.layout.create_collection(name);
+                self.maybe_warp_cursor_to_focus();
+                self.niri.queue_redraw_all();
+            }
+            Action::MoveWindowToCollectionNext => {
+                self.niri.layout.move_window_to_collection_next();
+                self.maybe_warp_cursor_to_focus();
+                self.niri.queue_redraw_all();
+            }
+            Action::MoveWindowToCollectionPrevious => {
+                self.niri.layout.move_window_to_collection_previous();
+                self.maybe_warp_cursor_to_focus();
+                self.niri.queue_redraw_all();
+            }
+            Action::MoveWindowToCollection(reference) => {
+                self.niri.layout.move_window_to_collection(&reference);
+                self.maybe_warp_cursor_to_focus();
+                self.niri.queue_redraw_all();
+            }
             Action::MoveWorkspaceDown => {
                 self.niri.layout.move_workspace_down();
                 // FIXME: granular

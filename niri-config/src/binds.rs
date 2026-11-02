@@ -221,6 +221,13 @@ pub enum Action {
     FocusWorkspaceUpUnderMouse,
     FocusWorkspace(#[knuffel(argument)] WorkspaceReference),
     FocusWorkspacePrevious,
+    FocusCollectionNext,
+    FocusCollectionPrevious,
+    FocusCollection(#[knuffel(argument)] WorkspaceReference),
+    CreateCollection(#[knuffel(argument)] Option<String>),
+    MoveWindowToCollectionNext,
+    MoveWindowToCollectionPrevious,
+    MoveWindowToCollection(#[knuffel(argument)] WorkspaceReference),
     MoveWindowToWorkspaceDown(#[knuffel(property(name = "focus"), default = true)] bool),
     MoveWindowToWorkspaceUp(#[knuffel(property(name = "focus"), default = true)] bool),
     MoveWindowToWorkspace(
@@ -510,6 +517,13 @@ impl From<niri_ipc::Action> for Action {
                 Self::FocusWorkspace(WorkspaceReference::from(reference))
             }
             niri_ipc::Action::FocusWorkspacePrevious {} => Self::FocusWorkspacePrevious,
+            niri_ipc::Action::FocusCollectionNext {} => Self::FocusCollectionNext,
+            niri_ipc::Action::FocusCollectionPrevious {} => Self::FocusCollectionPrevious,
+            niri_ipc::Action::FocusCollection { reference } => Self::FocusCollection(WorkspaceReference::from(reference)),
+            niri_ipc::Action::CreateCollection { name } => Self::CreateCollection(name),
+            niri_ipc::Action::MoveWindowToCollectionNext {} => Self::MoveWindowToCollectionNext,
+            niri_ipc::Action::MoveWindowToCollectionPrevious {} => Self::MoveWindowToCollectionPrevious,
+            niri_ipc::Action::MoveWindowToCollection { reference } => Self::MoveWindowToCollection(WorkspaceReference::from(reference)),
             niri_ipc::Action::MoveWindowToWorkspaceDown { focus } => {
                 Self::MoveWindowToWorkspaceDown(focus)
             }

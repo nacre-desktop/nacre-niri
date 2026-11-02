@@ -282,6 +282,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let workspaces = state.workspaces.workspaces.values().cloned().collect();
             Response::Workspaces(workspaces)
         }
+        Request::Collections => {
+            let state = ctx.event_stream_state.borrow();
+            Response::Collections(state.collections.collections.clone())
+        }
         Request::Windows => {
             let state = ctx.event_stream_state.borrow();
             let windows = state.windows.windows.values().cloned().collect();
@@ -582,8 +586,20 @@ impl State {
 
     pub fn ipc_refresh_layout(&mut self) {
         self.ipc_refresh_workspaces();
+        self.ipc_refresh_collections();
         self.ipc_refresh_windows();
         self.ipc_refresh_overview();
+    }
+
+    fn ipc_refresh_collections(&mut self) {
+        let Some(server) = &self.niri.ipc_server else { return; };
+        let collections = self.niri.layout.collections();
+        let mut state = server.event_stream_state.borrow_mut();
+        if state.collections.collections != collections {
+            let event = Event::CollectionsChanged { collections };
+            state.collections.apply(event.clone());
+            server.send_event(event);
+        }
     }
 
     fn ipc_refresh_workspaces(&mut self) {

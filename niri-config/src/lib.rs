@@ -1269,6 +1269,7 @@ mod tests {
                 },
             ],
             layout: Layout {
+                collections: Collections::default(),
                 focus_ring: FocusRing {
                     off: false,
                     width: 5.0,

@@ -65,6 +65,8 @@ pub enum Msg {
     Outputs,
     /// List workspaces.
     Workspaces,
+    /// List workspace collections.
+    Collections,
     /// List open windows.
     Windows,
     /// List open layer-shell surfaces.

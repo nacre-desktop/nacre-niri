@@ -42,6 +42,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             action: action.clone(),
         },
         Msg::Workspaces => Request::Workspaces,
+        Msg::Collections => Request::Collections,
         Msg::Windows => Request::Windows,
         Msg::Layers => Request::Layers,
         Msg::KeyboardLayouts => Request::KeyboardLayouts,
@@ -387,6 +388,13 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 println!("{is_active}{idx}{name}");
             }
         }
+        Msg::Collections => {
+            let Response::Collections(response) = response else {
+                bail!("unexpected response: expected Collections, got {response:?}");
+            };
+            let response = serde_json::to_string(&response).context("error formatting response")?;
+            println!("{response}");
+        }
         Msg::KeyboardLayouts => {
             let Response::KeyboardLayouts(response) = response else {
                 bail!("unexpected response: expected KeyboardLayouts, got {response:?}");
@@ -430,6 +438,9 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 match event {
                     Event::WorkspacesChanged { workspaces } => {
                         println!("Workspaces changed: {workspaces:?}");
+                    }
+                    Event::CollectionsChanged { collections } => {
+                        println!("Collections changed: {collections:?}");
                     }
                     Event::WorkspaceUrgencyChanged { id, urgent } => {
                         println!("Workspace {id}: urgency changed to {urgent}");
