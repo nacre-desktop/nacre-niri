@@ -520,7 +520,6 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::EventStream => Response::Handled,
         Request::NacreOverviewHoverStream => {
             let (tx, rx) = async_channel::bounded(1);
-            let hover_cache = ctx.overview_hover.clone();
             ctx.event_loop.insert_idle(move |state| {
                 let enabled = state.niri.config.borrow().nacre.overview_hover;
                 let id = if enabled
@@ -534,7 +533,9 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 } else {
                     None
                 };
-                hover_cache.set(id);
+                if let Some(server) = state.niri.ipc_server.as_ref() {
+                    server.update_overview_hover(id);
+                }
                 let _ = tx.send_blocking(enabled);
             });
             if !rx.recv().await.unwrap_or(false) {
