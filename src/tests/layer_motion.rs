@@ -58,6 +58,7 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
 
     let layer = f.client(id).layer(&client_surface);
     layer.attach_new_buffer();
+    layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
 
@@ -143,6 +144,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
 
     let layer = f.client(id).layer(&client_surface);
     layer.attach_new_buffer();
+    layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
     let root_surface = mapped_surface(&f);
@@ -188,6 +190,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     motion_proxy.animate(21, 100, 0);
     let layer = f.client(id).layer(&client_surface);
     layer.attach_new_buffer();
+    layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
     assert_eq!(runtime.lock().unwrap().active.as_ref().unwrap().serial, 21);
