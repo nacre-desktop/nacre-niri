@@ -103,7 +103,12 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
     let runtime_state = runtime.lock().unwrap();
     let retargeted = runtime_state.active.as_ref().unwrap();
     assert_eq!(retargeted.serial, 11);
-    assert!((retargeted.sample(mid).first().unwrap().1.destination.loc.x + 60.).abs() < 0.01);
+    let retarget_progress = (retargeted.start_time() - start).as_secs_f64() / 0.1;
+    let expected_x = -100. + 100. * retarget_progress.min(1.);
+    assert!(
+        (retargeted.sample(retargeted.start_time())[0].1.destination.loc.x - expected_x).abs()
+            < 0.01
+    );
 
     motion_proxy.cancel(10);
     f.client(id).layer(&client_surface).commit();
@@ -188,6 +193,14 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     motion_proxy.set_plane_from(7, -80., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.set_plane_to(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.animate(21, 100, 0);
+    let layer = f.client(id).layer(&client_surface);
+    layer.set_configure_props(LayerConfigureProps {
+        anchor: Some(Anchor::Left | Anchor::Top),
+        size: Some((100, 100)),
+        ..Default::default()
+    });
+    layer.commit();
+    f.double_roundtrip(id);
     let layer = f.client(id).layer(&client_surface);
     layer.attach_new_buffer();
     layer.set_size(100, 100);
