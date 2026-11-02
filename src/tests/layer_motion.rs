@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use smithay::desktop::layer_map_for_output;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 
@@ -25,7 +24,9 @@ fn setup_panel(f: &mut Fixture) -> (ClientId, wayland_client::protocol::wl_surfa
     (id, surface)
 }
 
-fn mapped_surface(f: &Fixture) -> smithay::reexports::wayland_server::protocol::wl_surface::WlSurface {
+fn mapped_surface(
+    f: &Fixture,
+) -> smithay::reexports::wayland_server::protocol::wl_surface::WlSurface {
     let niri = &f.state.server.state.niri;
     niri.mapped_layer_surfaces
         .keys()
@@ -98,7 +99,8 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
     f.client(id).layer(&client_surface).commit();
     f.double_roundtrip(id);
 
-    let retargeted = runtime.lock().unwrap().active.as_ref().unwrap();
+    let runtime_state = runtime.lock().unwrap();
+    let retargeted = runtime_state.active.as_ref().unwrap();
     assert_eq!(retargeted.serial, 11);
     assert!((retargeted.sample(mid).first().unwrap().1.destination.loc.x + 60.).abs() < 0.01);
 
@@ -118,14 +120,14 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
         .iter()
         .find(|controller| controller.motion == motion_proxy)
         .unwrap();
-    assert!(controller.events.iter().any(|event| matches!(
-        event,
-        bead_layer_motion_v1::Event::Cancelled { serial: 10 }
-    )));
-    assert!(controller.events.iter().any(|event| matches!(
-        event,
-        bead_layer_motion_v1::Event::Done { serial: 11 }
-    )));
+    assert!(controller
+        .events
+        .iter()
+        .any(|event| matches!(event, bead_layer_motion_v1::Event::Cancelled { serial: 10 })));
+    assert!(controller
+        .events
+        .iter()
+        .any(|event| matches!(event, bead_layer_motion_v1::Event::Done { serial: 11 })));
 }
 
 #[test]
@@ -176,10 +178,10 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         .iter()
         .find(|controller| controller.motion == motion_proxy)
         .unwrap();
-    assert!(controller.events.iter().any(|event| matches!(
-        event,
-        bead_layer_motion_v1::Event::Cancelled { serial: 20 }
-    )));
+    assert!(controller
+        .events
+        .iter()
+        .any(|event| matches!(event, bead_layer_motion_v1::Event::Cancelled { serial: 20 })));
 
     motion_proxy.set_plane_from(7, -80., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.set_plane_to(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
