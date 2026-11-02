@@ -18,6 +18,7 @@ pub struct MotionPose {
 impl MotionPose {
     const MAX_COORDINATE: f64 = 32_768.;
 
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         x: f64,
         y: f64,

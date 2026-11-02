@@ -88,6 +88,8 @@ pub struct MotionPlaneRenderElement<R: NiriRenderer> {
     damage: crate::render_helpers::damage::ExtraDamage,
 }
 
+type LayerMotionSnapshot = (Vec<MotionPlane>, Vec<(u32, MotionPose)>);
+
 impl<R: NiriRenderer> MotionPlaneRenderElement<R> {
     fn new(
         inner: MotionPlaneInner<R>,
@@ -242,7 +244,7 @@ impl MappedLayer {
         self.motion_snapshot().map(|(_, poses)| poses)
     }
 
-    fn motion_snapshot(&self) -> Option<(Vec<MotionPlane>, Vec<(u32, MotionPose)>)> {
+    fn motion_snapshot(&self) -> Option<LayerMotionSnapshot> {
         let motion = self.motion.as_ref()?;
         let runtime = motion.lock().unwrap();
         if runtime.planes.is_empty() {
@@ -336,11 +338,7 @@ impl MappedLayer {
         }
 
         let state = self.surface.cached_state();
-        if state.exclusive_zone != ExclusiveZone::DontCare {
-            return false;
-        }
-
-        true
+        state.exclusive_zone == ExclusiveZone::DontCare
     }
 
     pub fn bob_offset(&self) -> Point<f64, Logical> {
@@ -435,6 +433,7 @@ impl MappedLayer {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_motion_planes<R: NiriRenderer>(
         &self,
         renderer: &mut R,
