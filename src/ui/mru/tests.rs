@@ -21,6 +21,65 @@ fn create_thumbnail() -> Thumbnail {
     }
 }
 
+fn test_output() -> Output {
+    let output = Output::new(
+        "mru-test".to_owned(),
+        smithay::output::PhysicalProperties {
+            size: Size::from((1280, 720)),
+            subpixel: smithay::output::Subpixel::Unknown,
+            make: String::new(),
+            model: String::new(),
+            serial_number: String::new(),
+        },
+    );
+    output.change_current_state(
+        Some(smithay::output::Mode {
+            size: Size::from((1280, 720)),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    output
+}
+
+#[test]
+fn ui_open_navigate_confirm_and_cancel() {
+    let config = Rc::new(RefCell::new(Config::default()));
+    let clock = Clock::with_time(Duration::ZERO);
+    let mut ui = WindowMruUi::new(config);
+    let mut first = create_thumbnail();
+    first.timestamp = Some(Duration::from_secs(2));
+    let first_id = first.id;
+    let mut second = create_thumbnail();
+    second.timestamp = Some(Duration::from_secs(1));
+    let second_id = second.id;
+    let wmru = WindowMru {
+        thumbnails: vec![first, second],
+        current_id: Some(first_id),
+        scope: MruScope::All,
+        app_id_filter: None,
+    };
+
+    ui.open(clock, wmru, test_output());
+    assert!(ui.is_open());
+    ui.advance(MruDirection::Backward, None);
+    assert_eq!(ui.close(MruCloseRequest::Confirm), Some(second_id));
+    assert!(!ui.is_open());
+
+    let mut ui = WindowMruUi::new(Rc::new(RefCell::new(Config::default())));
+    let wmru = WindowMru {
+        thumbnails: vec![create_thumbnail()],
+        current_id: None,
+        scope: MruScope::All,
+        app_id_filter: None,
+    };
+    ui.open(Clock::with_time(Duration::ZERO), wmru, test_output());
+    assert_eq!(ui.close(MruCloseRequest::Cancel), None);
+    assert!(!ui.is_open());
+}
+
 #[test]
 fn remove_last_window_out_of_two() {
     let ops = [Op::Backward, Op::Remove(1)];

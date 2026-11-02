@@ -403,10 +403,23 @@ fn operation_generator_does_not_duplicate_detached_window_ids() {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: ProptestConfig::default().cases.max(128), ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig { cases: 100_000, ..ProptestConfig::default() })]
     #[test]
-    fn collection_operations_preserve_invariants(ops in prop::collection::vec(any::<Op>(), 0..100)) {
+    fn collection_operations_preserve_invariants(ops in prop::collection::vec(any::<Op>(), 0..24)) {
         let mut layout = enabled_layout();
+        // Start every randomized case with a visible collection, a hidden collection with a
+        // window, a hidden empty collection, and a detached collection after unplugging the
+        // output. This makes the generated action sequence exercise both workspace states.
+        check_ops_on_layout(
+            &mut layout,
+            [
+                Op::AddOutput(1),
+                Op::AddWindow { params: TestWindowParams::new(1) },
+                Op::CreateCollection(Some(1)),
+                Op::CreateCollection(Some(2)),
+                Op::RemoveOutput(1),
+            ],
+        );
         check_ops_on_layout(&mut layout, ops);
     }
 }

@@ -582,7 +582,13 @@ impl WindowMru {
         let config = niri.config.borrow().recent_windows.previews;
         let mut thumbnails = Vec::new();
         for (mon, ws_idx, ws) in niri.layout.workspaces() {
-            let mon = mon.expect("an active output exists so all workspaces have a monitor");
+            // Detached collections remain part of the layout's global workspace iterator, but
+            // the MRU UI is scoped to windows that can currently be shown on an output. In
+            // particular, do not assume every workspace belongs to a monitor while an output is
+            // active: hidden collections deliberately have no monitor.
+            let Some(mon) = mon else {
+                continue;
+            };
             let on_current_output = mon.output() == output;
             let on_current_workspace = on_current_output && mon.active_workspace_idx() == ws_idx;
 
