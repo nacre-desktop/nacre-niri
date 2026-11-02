@@ -145,6 +145,17 @@ impl IpcServer {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn workspace_snapshot(&self) -> Vec<Workspace> {
+        self.event_stream_state
+            .borrow()
+            .workspaces
+            .workspaces
+            .values()
+            .cloned()
+            .collect()
+    }
+
     pub fn has_overview_hover_clients(&self) -> bool {
         self.event_streams
             .borrow()

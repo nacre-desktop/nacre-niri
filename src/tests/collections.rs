@@ -31,30 +31,68 @@ fn shown_collection_workspaces_have_ipc_monitor_state_after_switch() {
     config.layout.collections.enabled = true;
     let mut fixture = Fixture::with_config(config);
     fixture.add_output(1, (1280, 720));
+    let ipc_server = crate::ipc::server::IpcServer::start(&fixture.handle, None)
+        .expect("headless IPC state server");
+    fixture.niri().ipc_server = Some(ipc_server);
 
-    let niri = fixture.niri();
-    let original = niri.layout.collections()[0].id;
-    let shown = niri.layout.create_collection(None);
+    let original = fixture.niri().layout.collections()[0].id;
+    fixture.niri_state().ipc_refresh_layout();
+    let shown = fixture.niri().layout.create_collection(None);
     assert_ne!(original, shown);
+    fixture.niri_state().ipc_refresh_layout();
 
     // A detached collection is represented in the global workspace query without
     // pretending that it belongs to a monitor.
-    let detached_workspace_id = niri
+    let original_workspace_ids = fixture
+        .niri()
+        .layout
+        .collections()
+        .into_iter()
+        .find(|collection| collection.id == original)
+        .expect("original collection exists")
+        .workspace_ids;
+    let detached_workspace_id = fixture
+        .niri()
         .layout
         .workspaces()
-        .find(|(_, _, ws)| {
-            niri.layout.collections().iter().any(|collection| {
-                collection.id == original && collection.workspace_ids.contains(&ws.id().get())
-            })
-        })
+        .find(|(_, _, ws)| original_workspace_ids.contains(&ws.id().get()))
         .expect("new collection has a workspace");
     assert!(detached_workspace_id.0.is_none());
     let detached_workspace_id = detached_workspace_id.2.id();
+    let ipc_original = fixture
+        .niri()
+        .ipc_server
+        .as_ref()
+        .unwrap()
+        .workspace_snapshot()
+        .into_iter()
+        .find(|workspace| workspace.id == detached_workspace_id.get())
+        .expect("IPC snapshot has hidden workspace");
+    assert!(ipc_original.output.is_none());
+    assert!(!ipc_original.is_active);
+    assert!(!ipc_original.is_focused);
 
     // Showing the collection swaps its stack onto the active monitor. These are the
     // values consumed by the IPC WorkspacesChanged snapshot.
-    niri.layout.focus_collection(&niri_config::WorkspaceReference::Id(original));
-    let shown_workspace = niri
+    fixture
+        .niri()
+        .layout
+        .focus_collection(&niri_config::WorkspaceReference::Id(original));
+    fixture.niri_state().ipc_refresh_layout();
+    let ipc_shown = fixture
+        .niri()
+        .ipc_server
+        .as_ref()
+        .unwrap()
+        .workspace_snapshot()
+        .into_iter()
+        .find(|workspace| workspace.id == detached_workspace_id.get())
+        .expect("IPC snapshot retains shown workspace");
+    assert_eq!(ipc_shown.output.as_deref(), Some("headless-1"));
+    assert!(ipc_shown.is_active);
+    assert!(ipc_shown.is_focused);
+    let shown_workspace = fixture
+        .niri()
         .layout
         .workspaces()
         .find(|(_, _, ws)| ws.id() == detached_workspace_id)
@@ -69,15 +107,19 @@ fn shown_collection_workspaces_have_ipc_monitor_state_after_switch() {
         monitor.active_workspace_idx() == shown_workspace.1
     }));
     assert_eq!(
-        niri.layout.active_workspace().map(|workspace| workspace.id()),
+        fixture
+            .niri()
+            .layout
+            .active_workspace()
+            .map(|workspace| workspace.id()),
         Some(shown_workspace.2.id())
     );
 
-    niri.layout.open_overview();
-    assert!(niri.layout.is_overview_open());
-    niri.layout.close_overview();
-    assert!(!niri.layout.is_overview_open());
-    niri.layout.verify_invariants();
+    fixture.niri().layout.open_overview();
+    assert!(fixture.niri().layout.is_overview_open());
+    fixture.niri().layout.close_overview();
+    assert!(!fixture.niri().layout.is_overview_open());
+    fixture.niri().layout.verify_invariants();
 }
 
 #[test]
@@ -117,6 +159,25 @@ fn mru_and_overview_survive_hidden_populated_and_detached_empty_collections() {
     niri.layout.close_overview();
     assert!(!niri.layout.is_overview_open());
     niri.layout.focus_collection(&niri_config::WorkspaceReference::Id(original));
+    let wmru = crate::ui::mru::WindowMru::new(niri);
+    assert!(!wmru.is_empty());
+    let output = niri.layout.active_output().unwrap().clone();
+    let clock = niri.clock.clone();
+    niri.window_mru_ui.open(clock, wmru, output);
+    assert!(niri.window_mru_ui.is_open());
+    niri.window_mru_ui
+        .advance(niri_config::MruDirection::Forward, None);
+    assert!(niri.window_mru_ui.current_window_id().is_some());
+    fixture.niri_state().confirm_mru();
+    assert!(!fixture.niri().window_mru_ui.is_open());
+
+    let niri = fixture.niri();
+    let wmru = crate::ui::mru::WindowMru::new(niri);
+    let output = niri.layout.active_output().unwrap().clone();
+    niri.window_mru_ui.open(niri.clock.clone(), wmru, output);
+    assert!(niri.window_mru_ui.is_open());
+    niri.cancel_mru();
+    assert!(!niri.window_mru_ui.is_open());
     niri.layout.verify_invariants();
 }
 
