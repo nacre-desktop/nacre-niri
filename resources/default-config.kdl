@@ -112,7 +112,7 @@ input {
 // https://niri-wm.github.io/niri/Configuration:-Layout
 layout {
     // Set gaps around windows in logical pixels.
-    gaps 12
+    gaps 6
 
     // When to center a column when changing focus, options are:
     // - "never", default behavior, focusing an off-screen column will keep at the left
@@ -148,9 +148,8 @@ layout {
     // behind windows. That is, they will show up through semitransparent windows.
     // This is because windows using client-side decorations can have an arbitrary shape.
     //
-    // If you don't like that, you should uncomment `prefer-no-csd` below.
-    // Niri will draw focus ring and border *around* windows that agree to omit their
-    // client-side decorations.
+    // With `prefer-no-csd` enabled, niri draws the focus ring and border around
+    // windows that agree to omit their client-side decorations.
     //
     // Alternatively, you can override it with a window rule called
     // `draw-border-with-background`.
@@ -199,7 +198,7 @@ layout {
         // If you enable the border, you probably want to disable the focus ring.
         off
 
-        width 4
+        width 1
         active-color "#ffc87f"
         inactive-color "#505050"
 
@@ -401,6 +400,7 @@ binds {
     // You can also move the mouse into the top-left hot corner,
     // or do a four-finger swipe up on a touchpad.
     Mod+O repeat=false { toggle-overview; }
+    Super+Ctrl+Tab repeat=false { toggle-overview; }
 
     Mod+Q repeat=false { close-window; }
 
@@ -496,8 +496,8 @@ binds {
 
     // Usually scrolling up and down with Shift in applications results in
     // horizontal scrolling; these binds replicate that.
-    Mod+Shift+WheelScrollDown      { focus-column-right; }
-    Mod+Shift+WheelScrollUp        { focus-column-left; }
+    Mod+Shift+WheelScrollDown cooldown-ms=150 { focus-column-right; }
+    Mod+Shift+WheelScrollUp cooldown-ms=150   { focus-column-left; }
     Mod+Ctrl+Shift+WheelScrollDown { move-column-right; }
     Mod+Ctrl+Shift+WheelScrollUp   { move-column-left; }
 
@@ -565,11 +565,8 @@ binds {
     Mod+F { maximize-column; }
     Mod+Shift+F { fullscreen-window; }
 
-    // While maximize-column leaves gaps and borders around the window,
-    // maximize-window-to-edges doesn't: the window expands to the edges of the screen.
-    // This bind corresponds to normal window maximizing,
-    // e.g. by double-clicking on the titlebar.
-    Mod+M { maximize-window-to-edges; }
+    // Match Nacre's column-maximize action. Mod+F is the alternate column bind.
+    Super+M { maximize-column; }
 
     // Expand the focused column to space not taken up by other fully visible columns.
     // Makes the column "fill the rest of the space".
@@ -643,6 +640,10 @@ layer-rule {
     match namespace="^(nacre-background|bead-wallpaper|bead-wallpaper-video)$"
     place-within-backdrop true
 }
+layer-rule {
+    match namespace="^nacre-(topbar|lock-preview|left-menu-handle|right-menu-handle)$"
+    background-effect { blur true; }
+}
 overview {
     workspace-shadow {
         on
@@ -656,6 +657,18 @@ overview {
 // The fork enables overview hover by default. Set the flag to false to retain
 // upstream niri behavior for overview pointer movement.
 nacre { overview-hover; }
+
+// Match the generated desktop's general window shadow and blur. Pearl windows
+// below override both effects because they render their own chrome.
+window-rule {
+    exclude app-id="^org[.]quickshell$" title="^Nacre Pearl "
+    geometry-corner-radius 10
+    clip-to-geometry true
+}
+window-rule {
+    shadow { on; }
+    background-effect { blur true; }
+}
 
 // Bead Pearl windows render their own chrome. Keep the transparent prewarm
 // floating and unfocused, without compositor decorations or background blur.
