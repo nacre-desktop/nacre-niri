@@ -3873,17 +3873,15 @@ impl State {
                         };
 
                         if let Some((output, ws)) = output_ws {
-                            if ws.current_output() != Some(&output) {
-                                continue;
+                            if ws.current_output() == Some(&output) {
+                                if let Some((ws_idx, _)) =
+                                    self.niri.layout.find_workspace_by_id(ws.id())
+                                {
+                                    self.niri
+                                        .layout
+                                        .view_offset_gesture_begin(&output, Some(ws_idx), true);
+                                }
                             }
-                            let Some((ws_idx, _)) =
-                                self.niri.layout.find_workspace_by_id(ws.id())
-                            else {
-                                continue;
-                            };
-                            self.niri
-                                .layout
-                                .view_offset_gesture_begin(&output, Some(ws_idx), true);
                         }
                     } else {
                         self.niri
