@@ -25,6 +25,22 @@ fn one_window() -> (Fixture, ClientId, WlSurface) {
     (fixture, client, surface)
 }
 
+fn add_window(fixture: &mut Fixture) {
+    let client = fixture.add_client();
+    let surface = {
+        let window = fixture.client(client).create_window();
+        let surface = window.surface.clone();
+        window.commit();
+        surface
+    };
+    fixture.roundtrip(client);
+    let window = fixture.client(client).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(100, 100);
+    window.ack_last_and_commit();
+    fixture.double_roundtrip(client);
+}
+
 #[test]
 fn shown_collection_workspaces_have_ipc_monitor_state_after_switch() {
     let mut config = Config::default();
@@ -153,6 +169,34 @@ fn mru_and_overview_survive_hidden_populated_collection() {
     // the workspace query. MRU still constructs safely while another collection
     // is active.
     fixture.niri().layout.create_collection(None);
+    fixture.add_output(2, (1024, 768));
+    fixture.niri_focus_output(2);
+    add_window(&mut fixture);
+    let detached_id = fixture
+        .niri()
+        .layout
+        .collections()
+        .into_iter()
+        .find(|collection| collection.output.as_deref() == Some("headless-2"))
+        .expect("second output collection exists")
+        .id;
+    let detached_output = fixture.niri_output(2);
+    fixture.niri().remove_output(&detached_output);
+    let detached_workspace_ids = fixture
+        .niri()
+        .layout
+        .collections()
+        .into_iter()
+        .find(|collection| collection.id == detached_id)
+        .expect("populated detached collection is retained")
+        .workspace_ids;
+    assert!(fixture
+        .niri()
+        .layout
+        .workspaces()
+        .any(|(monitor, _, ws)| monitor.is_none()
+            && detached_workspace_ids.contains(&ws.id().get())
+            && ws.has_windows()));
     let hidden_workspace_ids = fixture
         .niri()
         .layout
@@ -220,6 +264,10 @@ fn dispatched_workspace_mru_overview_and_screenshot_actions_tolerate_collections
     state.do_action(Action::MoveWindowToCollectionPrevious, false);
     state.do_action(Action::MoveWindowToCollectionNext, false);
     state.do_action(Action::ScreenshotScreen(false, false, None), false);
+    state.do_action(Action::ScreenshotWindow(false, false, None), false);
+    state.do_action(Action::Screenshot(true, None), false);
+    assert!(!state.niri.screenshot_ui.is_open());
+    state.do_action(Action::CancelScreenshot, false);
     state.do_action(
         Action::MruAdvance {
             direction: niri_config::MruDirection::Forward,
