@@ -161,20 +161,27 @@ fn mru_and_overview_survive_hidden_populated_collection() {
         .find(|collection| collection.id == original)
         .expect("original collection exists")
         .workspace_ids;
-    assert!(fixture
-        .niri()
-        .layout
-        .workspaces()
-        .any(|(monitor, _, ws)| monitor.is_none() && hidden_workspace_ids.contains(&ws.id().get())));
+    assert!(
+        fixture
+            .niri()
+            .layout
+            .workspaces()
+            .any(|(monitor, _, ws)| monitor.is_none()
+                && hidden_workspace_ids.contains(&ws.id().get()))
+    );
 
     let niri = fixture.niri();
     let wmru = crate::ui::mru::WindowMru::new(niri);
-    assert!(wmru.is_empty(), "hidden windows are excluded from shown-only MRU");
+    assert!(
+        wmru.is_empty(),
+        "hidden windows are excluded from shown-only MRU"
+    );
     niri.layout.open_overview();
     assert!(niri.layout.is_overview_open());
     niri.layout.close_overview();
     assert!(!niri.layout.is_overview_open());
-    niri.layout.focus_collection(&niri_config::WorkspaceReference::Id(original));
+    niri.layout
+        .focus_collection(&niri_config::WorkspaceReference::Id(original));
     let wmru = crate::ui::mru::WindowMru::new(niri);
     assert!(!wmru.is_empty());
     let output = niri.layout.active_output().unwrap().clone();

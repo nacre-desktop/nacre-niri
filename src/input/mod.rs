@@ -3873,9 +3873,11 @@ impl State {
                                 if let Some((ws_idx, _)) =
                                     self.niri.layout.find_workspace_by_id(ws.id())
                                 {
-                                    self.niri
-                                        .layout
-                                        .view_offset_gesture_begin(&output, Some(ws_idx), true);
+                                    self.niri.layout.view_offset_gesture_begin(
+                                        &output,
+                                        Some(ws_idx),
+                                        true,
+                                    );
                                 }
                             }
                         }
