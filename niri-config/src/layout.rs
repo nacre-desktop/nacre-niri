@@ -164,7 +164,7 @@ impl Default for Collections {
 pub struct CollectionsPart {
     #[knuffel(child)]
     pub on: Option<Flag>,
-    #[knuffel(child)]
+    #[knuffel(children(name = "collection"))]
     pub collection: Vec<CollectionPart>,
 }
 
