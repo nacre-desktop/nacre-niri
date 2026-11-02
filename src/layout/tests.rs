@@ -1219,12 +1219,12 @@ impl Op {
             Op::FocusWindowOrWorkspaceUp => layout.focus_window_or_workspace_up(),
             Op::FocusWindow(id) => layout.activate_window(&id),
             Op::FocusWindowPrevious => {
-                let current = layout.focus().map(|window| window.id().clone());
-                if let Some(previous) = layout
+                let current = layout.focus().map(|window| *window.id());
+                let previous = layout
                     .windows()
-                    .map(|(_, window)| window.id().clone())
-                    .find(|id| Some(id) != current.as_ref())
-                {
+                    .map(|(_, window)| *window.id())
+                    .find(|id| Some(id) != current.as_ref());
+                if let Some(previous) = previous {
                     layout.activate_window(&previous);
                 }
             }
@@ -1293,11 +1293,11 @@ impl Op {
             }
             Op::FocusWorkspaceUnderOutput { output_id, up } => {
                 let name = format!("output{output_id}");
-                if let Some(output) = layout
+                let output = layout
                     .outputs()
                     .find(|output| output.name() == name)
-                    .cloned()
-                {
+                    .cloned();
+                if let Some(output) = output {
                     if let Some(monitor) = layout.monitor_for_output_mut(&output) {
                         if up {
                             monitor.switch_workspace_up();
@@ -1314,16 +1314,16 @@ impl Op {
                 right,
             } => {
                 let name = format!("output{output_id}");
-                if let Some(output) = layout
+                let output = layout
                     .outputs()
                     .find(|output| output.name() == name)
-                    .cloned()
-                {
+                    .cloned();
+                if let Some(output) = output {
                     let position = Point::from((px, py));
-                    if let Some(workspace_id) = layout
+                    let workspace_id = layout
                         .workspace_under(true, &output, position)
-                        .map(|workspace| workspace.id())
-                    {
+                        .map(|workspace| workspace.id());
+                    if let Some(workspace_id) = workspace_id {
                         if let Some(workspace) = layout
                             .workspaces_mut()
                             .find(|workspace| workspace.id() == workspace_id)
