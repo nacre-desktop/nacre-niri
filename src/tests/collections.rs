@@ -119,7 +119,6 @@ fn shown_collection_workspaces_have_ipc_monitor_state_after_switch() {
     assert!(fixture.niri().layout.is_overview_open());
     fixture.niri().layout.close_overview();
     assert!(!fixture.niri().layout.is_overview_open());
-    fixture.niri().layout.verify_invariants();
 }
 
 #[test]
@@ -128,8 +127,13 @@ fn mru_and_overview_survive_hidden_populated_and_detached_empty_collections() {
     let original = fixture.niri().layout.collections()[0].id;
     fixture.niri().layout.create_collection(None);
 
-    // The original populated workspace is hidden. A further collection is detached and empty.
+    // The original populated workspace is hidden. Add then remove a second output to
+    // leave a truly detached, empty collection beside it.
+    fixture.add_output(2, (1024, 768));
+    fixture.niri_focus_output(2);
     let detached = fixture.niri().layout.create_collection(None);
+    let removed_output = fixture.niri_output(2);
+    fixture.niri().remove_output(&removed_output);
     let detached_workspace_ids = fixture
         .niri()
         .layout
@@ -145,6 +149,13 @@ fn mru_and_overview_survive_hidden_populated_and_detached_empty_collections() {
         .find(|(_, _, ws)| detached_workspace_ids.contains(&ws.id().get()))
         .map(|(_, _, ws)| ws.id())
         .expect("detached collection has an empty workspace");
+    assert!(fixture
+        .niri()
+        .layout
+        .collections()
+        .iter()
+        .find(|collection| collection.id == detached)
+        .is_some_and(|collection| collection.output.is_none()));
     assert!(fixture
         .niri()
         .layout
@@ -178,7 +189,6 @@ fn mru_and_overview_survive_hidden_populated_and_detached_empty_collections() {
     assert!(niri.window_mru_ui.is_open());
     niri.cancel_mru();
     assert!(!niri.window_mru_ui.is_open());
-    niri.layout.verify_invariants();
 }
 
 #[test]

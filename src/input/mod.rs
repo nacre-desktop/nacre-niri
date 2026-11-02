@@ -3359,22 +3359,18 @@ impl State {
                     } else {
                         if action.begin() {
                             if let Some((output, ws)) = self.niri.workspace_under_cursor(true) {
-                                if ws.current_output() != Some(&output) {
-                                    continue;
+                                if ws.current_output() == Some(&output) {
+                                    if let Some((ws_idx, _)) =
+                                        self.niri.layout.find_workspace_by_id(ws.id())
+                                    {
+                                        self.niri.layout.view_offset_gesture_begin(
+                                            &output,
+                                            Some(ws_idx),
+                                            true,
+                                        );
+                                        redraw = true;
+                                    }
                                 }
-                                let ws_id = ws.id();
-                                let Some((ws_idx, _)) =
-                                    self.niri.layout.find_workspace_by_id(ws_id)
-                                else {
-                                    continue;
-                                };
-
-                                self.niri.layout.view_offset_gesture_begin(
-                                    &output,
-                                    Some(ws_idx),
-                                    true,
-                                );
-                                redraw = true;
                             }
                         }
 
