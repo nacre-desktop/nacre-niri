@@ -9,7 +9,7 @@ url='https://github.com/nacre-desktop/nacre-niri'
 license=('GPL-3.0-or-later')
 # Build the checkout containing this recipe, or explicitly select an immutable revision.
 # Run from packaging/arch; standalone recipe copies must provide _commit.
-_commit=${_commit:-$(git -C "$startdir/../.." rev-parse --verify HEAD)}
+_commit=${_commit:-$(git rev-parse --verify HEAD)}
 [[ $_commit =~ ^[0-9a-f]{40}$ ]] || return 1
 source=("nacre-niri::git+https://github.com/nacre-desktop/nacre-niri.git#commit=${_commit}"
         'nacre-niri-session' 'nacre-niri.desktop')
