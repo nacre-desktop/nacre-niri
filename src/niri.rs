@@ -6286,13 +6286,11 @@ impl Niri {
                     }
                     // Other collection previews keep hover metadata without changing keyboard
                     // selection, including collections currently shown on a different output.
-                    let visible_id = self.layout.windows().find_map(|(monitor, mapped)| {
-                        (monitor.is_some_and(|mon| new_focus.output.as_ref() == Some(mon.output()))
-                            && mapped.window == *window)
-                            .then_some(mapped.id())
+                    let on_pointer_output = self.layout.windows().any(|(monitor, mapped)| {
+                        monitor.is_some_and(|mon| new_focus.output.as_ref() == Some(mon.output()))
+                            && mapped.window == *window
                     });
-                    if visible_id
-                        .is_some_and(|id| self.layout.activate_window_without_scrolling(&id))
+                    if on_pointer_output && self.layout.activate_window_without_scrolling(window)
                     {
                         self.layer_shell_on_demand_focus = None;
                     }

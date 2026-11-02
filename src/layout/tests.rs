@@ -1079,7 +1079,9 @@ impl Op {
             Op::FocusWindowOrWorkspaceDown => layout.focus_window_or_workspace_down(),
             Op::FocusWindowOrWorkspaceUp => layout.focus_window_or_workspace_up(),
             Op::FocusWindow(id) => layout.activate_window(&id),
-            Op::HoverFocusWindow(id) => layout.activate_window_without_scrolling(&id),
+            Op::HoverFocusWindow(id) => {
+                layout.activate_window_without_scrolling(&id);
+            }
             Op::FocusWindowInColumn(index) => layout.focus_window_in_column(index),
             Op::FocusWindowTop => layout.focus_window_top(),
             Op::FocusWindowBottom => layout.focus_window_bottom(),
