@@ -71,8 +71,6 @@ impl<W: LayoutElement> Layout<W> {
         }).collect()
     }
 
-    pub(super) fn collection_registry(&self) -> &[Collection<W>] { &self.collections }
-
     pub fn collection_for_output(&self, output: &Output) -> Option<u64> {
         self.monitors().find(|m| m.output() == output).and_then(|m| m.collection_id)
     }
@@ -135,14 +133,30 @@ impl<W: LayoutElement> Layout<W> {
                 self.monitors_mut().find(|m| m.output() == &output).unwrap().collection_id = Some(id);
             }
         } else {
-            let mut stacks: Vec<_> = self.collections.drain(..).flat_map(|c| c.workspaces).filter(|ws| ws.has_windows_or_name()).collect();
-            match &mut self.monitor_set {
-                MonitorSet::Normal { monitors, primary_idx, .. } => {
-                    for mon in monitors.iter_mut() { mon.collection_id = None; }
-                    monitors[*primary_idx].append_workspaces(stacks);
+            let mut stacks: Vec<_> = self.collections.drain(..).flat_map(|c| c.workspaces).collect();
+            let old = std::mem::take(&mut self.monitor_set);
+            self.monitor_set = match old {
+                MonitorSet::Normal { monitors, primary_idx, active_monitor_idx } => {
+                    let outputs: Vec<_> = monitors.iter().map(|m| (m.output.clone(), m.layout_config.clone(), m.workspaces[m.active_workspace_idx].id())).collect();
+                    stacks.extend(monitors.into_iter().flat_map(|m| m.workspaces));
+                    let mut assigned: Vec<Vec<Workspace<W>>> = (0..outputs.len()).map(|_| Vec::new()).collect();
+                    for ws in stacks.into_iter().filter(|ws| ws.has_windows_or_name()) {
+                        let idx = outputs.iter().position(|(output, _, _)| ws.original_output.matches(output)).unwrap_or(primary_idx);
+                        assigned[idx].push(ws);
+                    }
+                    let monitors = outputs.into_iter().zip(assigned).map(|((output, layout, active), stack)| {
+                        let mut mon = Monitor::new(output, stack, Some(active), self.clock.clone(), self.options.clone(), layout);
+                        mon.overview_open = self.overview_open;
+                        mon.set_overview_progress(self.overview_progress.as_ref());
+                        mon
+                    }).collect();
+                    MonitorSet::Normal { monitors, primary_idx, active_monitor_idx }
                 }
-                MonitorSet::NoOutputs { workspaces } => workspaces.append(&mut stacks),
-            }
+                MonitorSet::NoOutputs { mut workspaces } => {
+                    workspaces.extend(stacks.into_iter().filter(|ws| ws.has_windows_or_name()));
+                    MonitorSet::NoOutputs { workspaces }
+                }
+            };
             self.collection_returns.clear();
         }
     }

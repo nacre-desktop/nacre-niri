@@ -4704,6 +4704,13 @@ impl<W: LayoutElement> Layout<W> {
 
         let wsid = ws.id();
 
+        for c in &mut self.collections {
+            if c.workspaces.last().is_some_and(|last| last.id() == wsid) {
+                c.workspaces.push(Workspace::new_no_outputs(self.clock.clone(), self.options.clone()));
+                return;
+            }
+        }
+
         // if `empty_workspace_above_first` is set and `ws` is the first
         // workspace on a monitor, another empty workspace needs to
         // be added before.
