@@ -4869,6 +4869,21 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        for collection in &mut self.collections {
+            for workspace in &mut collection.workspaces {
+                if workspace.has_window(window) {
+                    workspace.store_unmap_snapshot_if_empty(
+                        renderer,
+                        xray,
+                        xray_has_blocked_out_layers,
+                        XrayPos::default(),
+                        window,
+                    );
+                    return;
+                }
+            }
+        }
+
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -4908,6 +4923,15 @@ impl<W: LayoutElement> Layout<W> {
             if move_.tile.window().id() == window {
                 let _ = move_.tile.take_unmap_snapshot();
                 return;
+            }
+        }
+
+        for collection in &mut self.collections {
+            for workspace in &mut collection.workspaces {
+                if workspace.has_window(window) {
+                    workspace.clear_unmap_snapshot(window);
+                    return;
+                }
             }
         }
 
@@ -4969,6 +4993,15 @@ impl<W: LayoutElement> Layout<W> {
                 let tile_pos = tile_pos - ws_geo.loc;
                 ws.start_close_animation_for_tile(renderer, snapshot, tile_size, tile_pos, blocker);
                 return;
+            }
+        }
+
+        for collection in &mut self.collections {
+            for workspace in &mut collection.workspaces {
+                if workspace.has_window(window) {
+                    workspace.start_close_animation_for_window(renderer, window, blocker);
+                    return;
+                }
             }
         }
 
