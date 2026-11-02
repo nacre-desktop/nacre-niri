@@ -5,7 +5,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::workspace::{Workspace, WorkspaceId};
+use super::workspace::{OutputId, Workspace, WorkspaceId};
 use super::LayoutElement;
 
 static COLLECTION_ID: AtomicU64 = AtomicU64::new(1);
@@ -18,6 +18,7 @@ pub(super) struct Collection<W: LayoutElement> {
     pub name: Option<String>,
     /// Output whose collection this was originally, when applicable.
     pub original_output: Option<String>,
+    home_output: Option<OutputId>,
     /// Last active workspace, used when a collection is shown again.
     pub active_workspace: Option<WorkspaceId>,
     /// Whether this collection is declared in config and therefore persistent while empty.
@@ -31,6 +32,7 @@ impl<W: LayoutElement> Collection<W> {
             id: COLLECTION_ID.fetch_add(1, Ordering::Relaxed),
             name,
             original_output,
+            home_output: None,
             active_workspace: None,
             persistent,
         }
@@ -39,7 +41,7 @@ impl<W: LayoutElement> Collection<W> {
     pub fn matches_reference(&self, reference: &niri_config::WorkspaceReference, idx: usize) -> bool {
         match reference {
             niri_config::WorkspaceReference::Id(id) => self.id == *id,
-            niri_config::WorkspaceReference::Index(index) => usize::from(*index).saturating_sub(1) == idx,
+            niri_config::WorkspaceReference::Index(index) => *index != 0 && usize::from(*index) == idx + 1,
             niri_config::WorkspaceReference::Name(name) => {
                 self.name.as_deref().is_some_and(|candidate| candidate == name)
             }
@@ -61,7 +63,7 @@ impl<W: LayoutElement> Layout<W> {
         self.collections.iter().enumerate().map(|(idx, collection)| {
             let monitor = self.monitors().find(|m| m.collection_id == Some(collection.id));
             niri_ipc::Collection {
-                id: collection.id, idx, name: collection.name.clone(),
+                id: collection.id, idx: idx + 1, name: collection.name.clone(),
                 output: monitor.map(|m| m.output_name().clone()),
                 is_active: monitor.is_some_and(|m| self.active_monitor_ref().is_some_and(|a| a.output() == m.output())),
                 workspace_ids: self.collection_workspaces(collection.id).map(|ws| ws.id().get()).collect(),
@@ -118,6 +120,28 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
+    pub(super) fn transition_collections(&mut self, enabled: bool) {
+        if enabled == self.options.layout.collections.enabled { return; }
+        if enabled {
+            let outputs: Vec<_> = self.monitors().map(|m| m.output.clone()).collect();
+            for output in outputs {
+                let id = self.new_collection(None, Some(output.name()), false);
+                self.collections.iter_mut().find(|c| c.id == id).unwrap().home_output = Some(OutputId::new(&output));
+                self.monitors_mut().find(|m| m.output() == &output).unwrap().collection_id = Some(id);
+            }
+        } else {
+            let mut stacks: Vec<_> = self.collections.drain(..).flat_map(|c| c.workspaces).filter(|ws| ws.has_windows_or_name()).collect();
+            match &mut self.monitor_set {
+                MonitorSet::Normal { monitors, primary_idx, .. } => {
+                    for mon in monitors.iter_mut() { mon.collection_id = None; }
+                    monitors[*primary_idx].append_workspaces(stacks);
+                }
+                MonitorSet::NoOutputs { workspaces } => workspaces.append(&mut stacks),
+            }
+            self.collection_returns.clear();
+        }
+    }
+
     fn store_collection_stack(&mut self, id: u64, mut workspaces: Vec<Workspace<W>>, active: Option<WorkspaceId>) {
         for ws in &mut workspaces {
             ws.set_output(None);
@@ -143,6 +167,8 @@ impl<W: LayoutElement> Layout<W> {
                 ws.set_output(Some(output.clone()));
                 ws.update_config(mon.options.clone());
             }
+            if mon.workspaces.last().is_some_and(|ws| ws.has_windows_or_name()) { mon.add_workspace_bottom(); }
+            if mon.options.layout.empty_workspace_above_first && mon.workspaces.first().is_some_and(|ws| ws.has_windows_or_name()) { mon.add_workspace_top(); }
             mon.clean_up_workspaces();
         }
         mon.collection_id = Some(id);
@@ -154,7 +180,7 @@ impl<W: LayoutElement> Layout<W> {
     pub(super) fn add_collection_output(&mut self, output: Output, layout: Option<LayoutPart>) {
         self.configure_collections();
         let name = output.name();
-        let id = self.collections.iter().find(|c| c.original_output.as_deref() == Some(&name)).map(|c| c.id)
+        let id = self.collections.iter().find(|c| c.home_output.as_ref().is_some_and(|home| home.matches(&output)) || c.original_output.as_deref() == Some(&name)).map(|c| c.id)
             .unwrap_or_else(|| {
                 // The first configured collection can serve as the first monitor's desk.
                 if self.monitors().next().is_none() {
@@ -165,6 +191,9 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 self.new_collection(None, Some(name.clone()), false)
             });
+        let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
+        collection.original_output = Some(name.clone());
+        collection.home_output = Some(OutputId::new(&output));
         // A disconnected monitor's collection may currently be borrowed by another output.
         let borrower = self.monitors().find(|m| m.collection_id == Some(id)).map(|m| m.output_name().clone());
         if let Some(borrower) = borrower {

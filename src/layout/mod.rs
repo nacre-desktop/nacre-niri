@@ -77,6 +77,7 @@ use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;
 pub mod collections;
+mod collection_overview;
 pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
@@ -341,6 +342,7 @@ pub struct Layout<W: LayoutElement> {
     collections: Vec<collections::Collection<W>>,
     /// Collection to restore when a borrowed output collection returns home.
     collection_returns: HashMap<String, u64>,
+    collection_overview: collection_overview::Overview,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -700,8 +702,9 @@ impl<W: LayoutElement> Layout<W> {
     pub fn with_options(clock: Clock, options: Options) -> Self {
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
-            collections: vec![],
+            collections: if options.layout.collections.enabled { options.layout.collections.names.iter().map(|name| collections::Collection::new(Some(name.clone()), None, true)).collect() } else { vec![] },
             collection_returns: HashMap::new(),
+            collection_overview: collection_overview::Overview::default(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -727,8 +730,9 @@ impl<W: LayoutElement> Layout<W> {
 
         Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
-            collections: vec![],
+            collections: if opts.layout.collections.enabled { opts.layout.collections.names.iter().map(|name| collections::Collection::new(Some(name.clone()), None, true)).collect() } else { vec![] },
             collection_returns: HashMap::new(),
+            collection_overview: collection_overview::Overview::default(),
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -954,6 +958,23 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<&Output> {
         let scrolling_height = height.map(SizeChange::from);
         let id = window.id().clone();
+
+        let hidden_target = self.collections.iter().enumerate().find_map(|(ci, c)| {
+            c.workspaces.iter().enumerate().find_map(|(wi, ws)| match target {
+                AddWindowTarget::Workspace(id) if ws.id() == id => Some((ci, wi, WorkspaceAddWindowTarget::Auto)),
+                AddWindowTarget::NextTo(next) if ws.has_window(next) => Some((ci, wi, WorkspaceAddWindowTarget::NextTo(next))),
+                _ => None,
+            })
+        });
+        if let Some((ci, wi, target)) = hidden_target {
+            let ws = &mut self.collections[ci].workspaces[wi];
+            let width = ws.resolve_scrolling_width(&window, width);
+            let tile = ws.make_tile(window);
+            ws.add_tile(tile, target, ActivateWindow::No, width, is_full_width, is_floating);
+            if !is_floating { if let Some(height) = scrolling_height { ws.set_window_height(Some(&id), height); } }
+            ws.refresh(false, false);
+            return None;
+        }
 
         match &mut self.monitor_set {
             MonitorSet::Normal {
@@ -2508,9 +2529,33 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if self.options.layout.collections.enabled {
+            let mut collection_ids = HashSet::new();
+            for collection in &self.collections { assert!(collection_ids.insert(collection.id), "collection IDs must be unique"); }
+            let mut shown_ids = HashSet::new();
+            for monitor in self.monitors() {
+                let id = monitor.collection_id.expect("monitor must show a collection");
+                assert!(collection_ids.contains(&id), "shown collection must exist");
+                assert!(shown_ids.insert(id), "a collection cannot be shown twice");
+                assert!(self.collections.iter().find(|c| c.id == id).unwrap().workspaces.is_empty(), "shown stack must be leased exclusively to its monitor");
+            }
+        }
+        let mut window_ids = Vec::new();
+        for (_, window) in self.windows() {
+            assert!(!window_ids.contains(&window.id()), "window IDs must be unique across all stacks");
+            window_ids.push(window.id());
+        }
         let mut seen_workspace_id = HashSet::new();
         let mut seen_workspace_name = Vec::<String>::new();
 
+        for collection in &self.collections {
+            for workspace in &collection.workspaces {
+                assert!(seen_workspace_id.insert(workspace.id()), "workspace id must be unique");
+                assert!(workspace.current_output().is_none());
+                assert_eq!(workspace.base_options, self.options);
+                workspace.verify_invariants(move_win_id.as_ref());
+            }
+        }
         let (monitors, &primary_idx, &active_monitor_idx) = match &self.monitor_set {
             MonitorSet::Normal {
                 monitors,
@@ -2573,7 +2618,9 @@ impl<W: LayoutElement> Layout<W> {
 
             monitor.verify_invariants();
 
-            if idx == primary_idx {
+            if self.options.layout.collections.enabled {
+                assert!(monitor.collection_id.is_some());
+            } else if idx == primary_idx {
                 for ws in &monitor.workspaces {
                     if ws.original_output.matches(&monitor.output) {
                         // This is the primary monitor's own workspace.
@@ -2645,6 +2692,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn advance_animations(&mut self) {
+        for c in &mut self.collections { for ws in &mut c.workspaces { ws.advance_animations(); } }
         let _span = tracy_client::span!("Layout::advance_animations");
 
         let mut dnd_scroll = None;
@@ -2789,6 +2837,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
+        if self.overview_open && self.collections.iter().any(|c| c.workspaces.iter().any(|ws| ws.are_animations_ongoing())) { return true; }
         // Keep advancing animations if we might need to scroll the view.
         if let Some(dnd) = &self.dnd {
             if output.is_none_or(|output| *output == dnd.output) {
@@ -2831,6 +2880,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
+        if self.overview_open { for c in &mut self.collections { for ws in &mut c.workspaces { ws.update_render_elements(false); } } }
         let _span = tracy_client::span!("Layout::update_render_elements");
 
         self.update_render_elements_time = self.clock.now();
@@ -2881,6 +2931,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_shaders(&mut self) {
+        for c in &mut self.collections { for ws in &mut c.workspaces { ws.update_shaders(); } }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             move_.tile.update_shaders();
         }
@@ -3022,6 +3073,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     fn update_options(&mut self, options: Options) {
+        self.transition_collections(options.layout.collections.enabled);
         let options = Rc::new(options);
 
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
