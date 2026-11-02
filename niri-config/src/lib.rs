@@ -655,12 +655,29 @@ mod tests {
         assert!(config.layout.collections.names.is_empty());
 
         let config = do_parse(
-            r#"layout { collections { on; collection "work" {}; collection "home" {} } }"#,
+            r#"
+            layout {
+                collections {
+                    on
+                    collection "work" {}
+                    collection "home" {}
+                }
+            }
+            "#,
         );
         assert!(config.layout.collections.enabled);
         assert_eq!(config.layout.collections.names, ["work", "home"]);
 
-        let config = do_parse(r#"layout { collections { off; collection "work" {} } }"#);
+        let config = do_parse(
+            r#"
+            layout {
+                collections {
+                    off
+                    collection "work" {}
+                }
+            }
+            "#,
+        );
         assert!(!config.layout.collections.enabled);
         assert_eq!(config.layout.collections.names, ["work"]);
     }
@@ -1303,7 +1320,10 @@ mod tests {
                 },
             ],
             layout: Layout {
-                collections: Collections::default(),
+                collections: Collections {
+                    enabled: true,
+                    names: [],
+                },
                 focus_ring: FocusRing {
                     off: false,
                     width: 5.0,
