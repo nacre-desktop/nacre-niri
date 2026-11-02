@@ -527,7 +527,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     && state.niri.layout.is_overview_open()
                     && state.niri.pointer_visibility.is_visible()
                 {
-                    state.niri.window_under_cursor().map(|window| window.id().get())
+                    state
+                        .niri
+                        .window_under_cursor()
+                        .map(|window| window.id().get())
                 } else {
                     None
                 };

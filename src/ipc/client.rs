@@ -572,8 +572,14 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            println!("Workspace collections: {}", capabilities.workspace_collections);
-            println!("Proportional X11 widths: {}", capabilities.proportional_x11_widths);
+            println!(
+                "Workspace collections: {}",
+                capabilities.workspace_collections
+            );
+            println!(
+                "Proportional X11 widths: {}",
+                capabilities.proportional_x11_widths
+            );
             println!("Overview hover: {}", capabilities.overview_hover);
         }
         Msg::Casts => {
