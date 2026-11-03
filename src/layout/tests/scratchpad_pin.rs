@@ -405,6 +405,44 @@ fn removing_output_with_shown_scratchpad_keeps_monitor_workspace_on_replug() {
 }
 
 #[test]
+fn dnd_hold_on_pinned_window_focuses_the_overlay_without_workspace_lookup() {
+    for collections_enabled in [false, true] {
+        for is_scratchpad in [false, true] {
+            let mut options = Options::default();
+            options.layout.collections.enabled = collections_enabled;
+            let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+            Op::AddOutput(1).apply(&mut layout);
+            add_window(&mut layout, 1);
+            if is_scratchpad {
+                layout.move_window_to_scratchpad(Some(&1));
+                layout.toggle_scratchpad();
+            } else {
+                layout.toggle_window_pinned(Some(&1));
+            }
+            add_window(&mut layout, 2);
+
+            let out = output(&layout, 1);
+            let monitor = layout.monitor_for_output(&out).unwrap();
+            let (tile, position, _) = monitor
+                .pinned_workspace
+                .tiles_with_render_positions()
+                .find(|(tile, _, _)| tile.window().id() == &1)
+                .unwrap();
+            let center = position + tile.tile_size().to_point().downscale(2.);
+
+            layout.dnd_update(out, center);
+            layout.clock.set_unadjusted(Duration::from_millis(1000));
+            layout.advance_animations();
+            layout.clock.set_unadjusted(Duration::from_millis(2000));
+            layout.advance_animations();
+
+            assert_eq!(layout.focus().unwrap().id(), &1);
+            layout.verify_invariants();
+        }
+    }
+}
+
+#[test]
 fn dragging_a_pin_to_another_output_keeps_it_sticky() {
     let mut layout = Layout::default();
     Op::AddOutput(1).apply(&mut layout);

@@ -3376,18 +3376,25 @@ impl<W: LayoutElement> Layout<W> {
                             let mon = self.monitor_for_output_mut(&output).unwrap();
 
                             let ws_idx = match hold.target {
-                                DndHoldTarget::Window(id) => mon
-                                    .workspaces
-                                    .iter_mut()
-                                    .position(|ws| ws.activate_window(&id))
-                                    .unwrap(),
+                                DndHoldTarget::Window(id) => {
+                                    let idx = mon
+                                        .workspaces
+                                        .iter_mut()
+                                        .position(|ws| ws.activate_window(&id));
+                                    if idx.is_none() {
+                                        mon.activate_pinned_window(&id);
+                                    }
+                                    idx
+                                }
                                 DndHoldTarget::Workspace(id) => {
-                                    mon.workspaces.iter().position(|ws| ws.id() == id).unwrap()
+                                    mon.workspaces.iter().position(|ws| ws.id() == id)
                                 }
                             };
 
                             mon.dnd_scroll_gesture_end();
-                            mon.activate_workspace_with_anim_config(ws_idx, config);
+                            if let Some(ws_idx) = ws_idx {
+                                mon.activate_workspace_with_anim_config(ws_idx, config);
+                            }
 
                             self.focus_output(&output);
 
