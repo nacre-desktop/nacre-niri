@@ -7,9 +7,9 @@ pub mod animation;
 pub mod backend;
 pub mod cli;
 pub mod cursor;
-pub(crate) mod edge_triggers;
 #[cfg(feature = "dbus")]
 pub mod dbus;
+pub(crate) mod edge_triggers;
 pub mod frame_clock;
 pub mod handlers;
 pub mod input;
