@@ -444,3 +444,23 @@ fn popup_bounds_and_pointer_focus_handle_overlay_and_hidden_windows() {
     assert!(!layout.should_trigger_focus_follows_mouse_on(&3));
     layout.verify_invariants();
 }
+
+#[test]
+fn pin_returns_as_an_overlay_when_its_original_collection_reconnects() {
+    let mut options = Options::default();
+    options.layout.collections.enabled = true;
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    let disconnected = output(&layout, 1);
+    layout.remove_output(&disconnected);
+    layout.verify_invariants();
+    layout.add_output(disconnected.clone(), None);
+    assert!(layout
+        .monitor_for_output(&disconnected)
+        .unwrap()
+        .pinned_workspace
+        .has_window(&1));
+    layout.verify_invariants();
+}

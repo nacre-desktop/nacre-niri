@@ -319,6 +319,7 @@ impl<W: LayoutElement> Layout<W> {
             {
                 mon.add_workspace_top();
             }
+            mon.restore_overlay_windows();
             mon.clean_up_workspaces();
         }
         mon.collection_id = Some(id);
@@ -541,7 +542,7 @@ impl<W: LayoutElement> Layout<W> {
                 );
             }
         }
-        self.store_collection_stack(id, mon.into_workspaces(), active);
+        self.store_collection_stack(id, mon.into_collection_workspaces(), active);
         primary_idx = primary_idx.saturating_sub(usize::from(primary_idx >= idx));
         active_monitor_idx =
             active_monitor_idx.saturating_sub(usize::from(active_monitor_idx >= idx));

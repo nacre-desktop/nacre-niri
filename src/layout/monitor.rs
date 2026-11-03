@@ -339,24 +339,7 @@ impl<W: LayoutElement> Monitor<W> {
         let ws = Workspace::new(output.clone(), clock.clone(), options.clone());
         workspaces.push(ws);
 
-        let mut pinned_workspace = Workspace::new(output.clone(), clock.clone(), options.clone());
-        for ws in &mut workspaces {
-            let ids: Vec<_> = ws
-                .tiles()
-                .filter(|tile| tile.pinned || tile.scratchpad)
-                .map(|tile| tile.window().id().clone())
-                .collect();
-            for id in ids {
-                let removed = ws.remove_tile(&id, Transaction::new());
-                pinned_workspace.add_overlay_tile(
-                    removed.tile,
-                    WorkspaceAddWindowTarget::Auto,
-                    ActivateWindow::No,
-                    removed.width,
-                    removed.is_full_width,
-                );
-            }
-        }
+        let pinned_workspace = Workspace::new(output.clone(), clock.clone(), options.clone());
         let mut monitor = Self {
             collection_id: None,
             output_name: output.name(),
@@ -380,11 +363,20 @@ impl<W: LayoutElement> Monitor<W> {
             options,
             layout_config,
         };
+        monitor.restore_overlay_windows();
         monitor.clean_up_workspaces();
         monitor
     }
 
-    pub fn into_workspaces(mut self) -> Vec<Workspace<W>> {
+    pub fn into_workspaces(self) -> Vec<Workspace<W>> {
+        self.into_collection_workspaces()
+            .into_iter()
+            .filter(|ws| ws.has_windows_or_name())
+            .collect()
+    }
+
+    /// Collections retain empty workspace identities across output removal.
+    pub(super) fn into_collection_workspaces(mut self) -> Vec<Workspace<W>> {
         let pinned: Vec<_> = self
             .pinned_workspace
             .windows()
@@ -401,13 +393,31 @@ impl<W: LayoutElement> Monitor<W> {
                 true,
             );
         }
-        self.workspaces.retain(|ws| ws.has_windows_or_name());
-
         for ws in &mut self.workspaces {
             ws.set_output(None);
         }
 
         self.workspaces
+    }
+
+    pub(super) fn restore_overlay_windows(&mut self) {
+        for workspace in &mut self.workspaces {
+            let ids: Vec<_> = workspace
+                .tiles()
+                .filter(|tile| tile.pinned || tile.scratchpad)
+                .map(|tile| tile.window().id().clone())
+                .collect();
+            for id in ids {
+                let removed = workspace.remove_tile(&id, Transaction::new());
+                self.pinned_workspace.add_overlay_tile(
+                    removed.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                );
+            }
+        }
     }
 
     pub fn take_pinned_workspace(&mut self) -> Workspace<W> {
