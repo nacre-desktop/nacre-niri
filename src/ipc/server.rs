@@ -238,7 +238,7 @@ mod tests {
     use niri_ipc::state::EventStreamState;
     use niri_ipc::Event;
 
-    use super::{event_stream_snapshot, IpcServer};
+    use super::{event_stream_snapshot, EventStreamSender, IpcServer};
 
     #[test]
     fn default_event_stream_snapshot_keeps_collection_events_out() {
