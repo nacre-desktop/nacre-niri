@@ -181,11 +181,26 @@ impl RasterOutput {
                     elements.iter().rev(),
                 )
                 .unwrap();
+                let first_mismatch = actual
+                    .iter()
+                    .zip(&expected)
+                    .enumerate()
+                    .find(|(_, (actual, expected))| actual != expected)
+                    .map(|(byte, (actual, expected))| {
+                        let pixel = byte / 4;
+                        (
+                            pixel % size.w as usize,
+                            pixel / size.w as usize,
+                            byte % 4,
+                            actual,
+                            expected,
+                        )
+                    });
                 let mismatches = actual.iter().zip(&expected).filter(|(a, b)| a != b).count();
                 assert_eq!(actual.len(), expected.len());
                 assert_eq!(
                     mismatches, 0,
-                    "partial repaint differs from full repaint: output {index}, {step}"
+                    "partial repaint differs from full repaint: output {index}, {step}; first differing (x, y, channel, actual, expected): {first_mismatch:?}"
                 );
 
                 // The exact same source elements must retain both pixels and damage state.
@@ -218,19 +233,6 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
             }
         }
     }
-    let scratchpad_window = fixture
-        .niri()
-        .layout
-        .windows()
-        .next()
-        .unwrap()
-        .1
-        .window
-        .clone();
-    fixture
-        .niri()
-        .layout
-        .move_window_to_scratchpad(Some(&scratchpad_window));
     fixture.niri_complete_animations();
     set_time(fixture.niri(), 0);
     let mut outputs = [
@@ -298,6 +300,7 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
             .layout
             .move_window_to_scratchpad(Some(&window));
         fixture.niri_complete_animations();
+        set_time(fixture.niri(), 0);
         let mut output = RasterOutput::new(&mut fixture, 1);
         fixture.niri().layout.open_overview();
 
@@ -310,6 +313,26 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
                 &format!("scratchpad {collections} {millis}ms"),
             );
         }
+        fixture.niri_complete_animations();
+        create_window(&mut fixture, client, 1);
+        let added = fixture
+            .niri()
+            .layout
+            .windows()
+            .next()
+            .unwrap()
+            .1
+            .window
+            .clone();
+        fixture
+            .niri()
+            .layout
+            .move_window_to_scratchpad(Some(&added));
+        output.compare(
+            &mut fixture,
+            1,
+            &format!("scratchpad content change {collections}"),
+        );
         let (preparations, builds) = fixture.niri().layout.collection_overview_cache_counts();
         assert!(
             builds > 0,
