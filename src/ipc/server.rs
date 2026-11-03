@@ -123,7 +123,8 @@ impl IpcServer {
         let mut to_remove = Vec::new();
         for (idx, stream) in streams.iter_mut().enumerate() {
             if (matches!(event, Event::NacreOverviewHoverChanged { .. }) && !stream.overview_hover)
-                || (matches!(event, Event::EdgeTriggered { .. }) && !stream.edge_triggers)
+                || (matches!(event, Event::EdgeTriggered { .. } | Event::EdgeLeft { .. })
+                    && !stream.edge_triggers)
                 || !stream_event_allowed(&event, stream.include_collections)
             {
                 continue;
@@ -183,6 +184,20 @@ impl IpcServer {
         receiver
     }
 
+    #[cfg(test)]
+    pub(crate) fn subscribe_edge_events(&self) -> Receiver<Event> {
+        let (events, receiver) = async_channel::bounded(64);
+        let (disconnect, _disconnect_receiver) = async_channel::bounded(1);
+        self.event_streams.borrow_mut().push(EventStreamSender {
+            overview_hover: false,
+            edge_triggers: true,
+            events,
+            disconnect,
+            include_collections: false,
+        });
+        receiver
+    }
+
     pub fn has_overview_hover_clients(&self) -> bool {
         self.event_streams
             .borrow()
@@ -198,6 +213,14 @@ impl IpcServer {
 
     pub fn edge_triggered(&self, output: String, edge: niri_ipc::Edge, position: [f64; 2]) {
         self.send_event(Event::EdgeTriggered {
+            output,
+            edge,
+            position,
+        });
+    }
+
+    pub fn edge_left(&self, output: String, edge: niri_ipc::Edge, position: [f64; 2]) {
+        self.send_event(Event::EdgeLeft {
             output,
             edge,
             position,
@@ -308,6 +331,7 @@ mod tests {
         server.update_overview_hover(Some(7));
         server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
         server.edge_triggered(String::from("DP-1"), niri_ipc::Edge::Left, [0., 20.]);
+        server.edge_left(String::from("DP-1"), niri_ipc::Edge::Left, [12., 20.]);
 
         assert!(matches!(
             legacy_rx.try_recv(),
@@ -322,6 +346,7 @@ mod tests {
             extension_rx.try_recv(),
             Ok(Event::OverviewOpenedOrClosed { is_open: true })
         ));
+        assert!(extension_rx.try_recv().is_err());
         assert!(matches!(
             hover_rx.try_recv(),
             Ok(Event::NacreOverviewHoverChanged { id: Some(7) })
@@ -346,6 +371,17 @@ mod tests {
         assert_eq!(output, "DP-1");
         assert_eq!(edge, niri_ipc::Edge::Left);
         assert_eq!(position, [0.0, 20.0]);
+        let Ok(Event::EdgeLeft {
+            output,
+            edge,
+            position,
+        }) = edge_rx.try_recv()
+        else {
+            panic!("opt-in edge stream did not receive the edge-left event");
+        };
+        assert_eq!(output, "DP-1");
+        assert_eq!(edge, niri_ipc::Edge::Left);
+        assert_eq!(position, [12.0, 20.0]);
         assert!(edge_rx.try_recv().is_err());
     }
 
@@ -870,8 +906,8 @@ async fn handle_event_stream_client(client: EventStreamClient) -> anyhow::Result
         buf.push(b'\n');
 
         let res = select_biased! {
-            _ = disconnect.recv().fuse() => return Ok(()),
             res = write.write_all(&buf).fuse() => res,
+            _ = disconnect.recv().fuse() => return Ok(()),
         };
 
         match res {

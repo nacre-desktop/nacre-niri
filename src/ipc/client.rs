@@ -524,6 +524,13 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     } => {
                         println!("Edge triggered on {output} {edge:?} at {position:?}");
                     }
+                    Event::EdgeLeft {
+                        output,
+                        edge,
+                        position,
+                    } => {
+                        println!("Edge left on {output} {edge:?} at {position:?}");
+                    }
                     Event::ConfigLoaded { failed } => {
                         let status = if failed {
                             "with an error"

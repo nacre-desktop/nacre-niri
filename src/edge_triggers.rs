@@ -90,6 +90,11 @@ pub fn clipped_delta(raw_delta: [f64; 2], actual_delta: [f64; 2]) -> [f64; 2] {
     ]
 }
 
+/// Converts a global logical position to coordinates local to a previously attached output.
+pub fn output_local_position(global: [f64; 2], origin: [f64; 2]) -> [f64; 2] {
+    [global[0] - origin[0], global[1] - origin[1]]
+}
+
 /// Returns whether both pressure/velocity gates are satisfied.
 pub fn gates_satisfied(
     pressure: f64,
@@ -180,6 +185,10 @@ mod tests {
             Some(Edge::Right)
         );
         assert!(is_inside_edge([1920., 1200.], [1919., 600.], Edge::Right));
+        assert_eq!(
+            output_local_position([1932., 40.], [1920., 0.]),
+            [12.0, 40.0]
+        );
     }
 
     #[test]
@@ -225,6 +234,12 @@ mod tests {
             }
             let _ = inward_delta(Edge::Left, [x, y]);
             let _ = is_suppressed(false, false, false, !output_attached, false);
+            let local = [width / scale, height / scale];
+            let origin = [x, y];
+            let global = [origin[0] + local[0], origin[1] + local[1]];
+            let reported = output_local_position(global, origin);
+            prop_assert!((reported[0] - local[0]).abs() < 1e-8);
+            prop_assert!((reported[1] - local[1]).abs() < 1e-8);
         }
     }
 }
@@ -235,6 +250,8 @@ pub(crate) struct EdgeTriggerCandidate {
     pub(crate) output: String,
     pub(crate) edge: niri_ipc::Edge,
     pub(crate) output_size: [f64; 2],
+    output_origin: [f64; 2],
+    last_position: [f64; 2],
     action: EdgeAction,
     pub(crate) pressure: f64,
     pub(crate) pressure_required: f64,
@@ -248,10 +265,35 @@ pub(crate) struct EdgeTriggerCandidate {
 
 impl Niri {
     pub(crate) fn clear_edge_trigger(&mut self) {
+        let current_position = self
+            .seat
+            .get_pointer()
+            .map(|pointer| pointer.current_location());
+        self.clear_edge_trigger_at(current_position);
+    }
+
+    fn clear_edge_trigger_at(&mut self, position: Option<Point<f64, Logical>>) {
         if let Some(token) = self.edge_trigger_timer.take() {
             self.event_loop.remove(token);
         }
-        self.edge_trigger_candidate = None;
+        let Some(candidate) = self.edge_trigger_candidate.take() else {
+            return;
+        };
+        if candidate.fired && matches!(&candidate.action, &EdgeAction::Event) {
+            let position = position.unwrap_or_else(|| {
+                Point::new(candidate.last_position[0], candidate.last_position[1])
+            });
+            if let Some(server) = self.ipc_server.as_ref() {
+                server.edge_left(
+                    candidate.output,
+                    candidate.edge,
+                    crate::edge_triggers::output_local_position(
+                        [position.x, position.y],
+                        candidate.output_origin,
+                    ),
+                );
+            }
+        }
     }
 
     fn edge_triggers_for_output(&self, output: &Output) -> niri_config::EdgeTriggers {
@@ -300,22 +342,22 @@ impl Niri {
             .filter(|elapsed| *elapsed > 0.);
 
         if !self.config.borrow().nacre.edge_triggers || self.is_locked() {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         }
 
         let Some((output, local)) = self.output_under(position) else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
         if self.edge_trigger_is_suppressed(output) {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         }
 
         let output_name = output.name();
         let Some(geometry) = self.global_space.output_geometry(output) else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
         let size = geometry.size.to_f64();
@@ -341,7 +383,7 @@ impl Niri {
         let Some(edge) =
             crate::edge_triggers::select_edge(Some([size.w, size.h]), [local.x, local.y], enabled)
         else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
         let trigger = match edge {
@@ -351,7 +393,7 @@ impl Niri {
             niri_ipc::Edge::Bottom => edges.bottom.as_ref(),
         };
         let Some(trigger) = trigger else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
 
@@ -362,7 +404,7 @@ impl Niri {
                 candidate.output == output_name && candidate.output_size != [size.w, size.h]
             })
         {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
         }
 
         let same_candidate = self
@@ -370,7 +412,7 @@ impl Niri {
             .as_ref()
             .is_some_and(|candidate| candidate.output == output_name && candidate.edge == edge);
         if !same_candidate {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             self.edge_trigger_generation = self.edge_trigger_generation.wrapping_add(1);
             let generation = self.edge_trigger_generation;
             let pressure_required = trigger.pressure.map_or(0., |pressure| pressure.0);
@@ -389,6 +431,8 @@ impl Niri {
                 output: output_name,
                 edge,
                 output_size: [size.w, size.h],
+                output_origin: [geometry.loc.x as f64, geometry.loc.y as f64],
+                last_position: [position.x, position.y],
                 action,
                 pressure: 0.,
                 pressure_required,
@@ -404,6 +448,7 @@ impl Niri {
         let Some(candidate) = self.edge_trigger_candidate.as_mut() else {
             return;
         };
+        candidate.last_position = [position.x, position.y];
         let inward_pressure = crate::edge_triggers::inward_delta(edge, clipped_delta);
         let inward_velocity = crate::edge_triggers::inward_delta(edge, [raw_delta.x, raw_delta.y]);
         candidate.pressure += inward_pressure;
@@ -477,16 +522,16 @@ impl Niri {
         }
 
         let Some((output, local)) = self.output_under(position) else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
         let Some(geometry) = self.global_space.output_geometry(output) else {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         };
         let size = geometry.size.to_f64();
         if size.w != candidate.output_size[0] || size.h != candidate.output_size[1] {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         }
         let inside = crate::edge_triggers::is_inside_edge(
@@ -508,7 +553,7 @@ impl Niri {
             || !enabled
             || self.edge_trigger_is_suppressed(output)
         {
-            self.clear_edge_trigger();
+            self.clear_edge_trigger_at(Some(position));
             return;
         }
 
@@ -526,6 +571,7 @@ impl Niri {
             }
         }
         if let Some(candidate) = self.edge_trigger_candidate.as_mut() {
+            candidate.last_position = [position.x, position.y];
             candidate.fired = true;
         }
     }
@@ -541,15 +587,11 @@ mod edge_trigger_runtime_tests {
     use super::Niri;
     use crate::tests::Fixture;
 
-    fn configured_fixture() -> Fixture {
+    fn configured_fixture_with_action(action: EdgeTriggerAction) -> Fixture {
         let mut config = Config::default();
         config.edge_triggers.left = Some(EdgeTrigger {
             off: false,
-            action: Some(EdgeTriggerAction {
-                event: true,
-                spawn: None,
-                spawn_sh: None,
-            }),
+            action: Some(action),
             dwell_time_ms: Some(350),
             pressure: None,
             velocity: None,
@@ -557,6 +599,22 @@ mod edge_trigger_runtime_tests {
         let mut fixture = Fixture::with_config(config);
         fixture.add_output(1, (1920, 1080));
         fixture
+    }
+
+    fn configured_fixture() -> Fixture {
+        configured_fixture_with_action(EdgeTriggerAction {
+            event: true,
+            spawn: None,
+            spawn_sh: None,
+        })
+    }
+
+    fn attach_edge_events(fixture: &mut Fixture) -> async_channel::Receiver<niri_ipc::Event> {
+        let server = crate::ipc::server::IpcServer::start(&fixture.niri().event_loop, None)
+            .expect("headless edge IPC server");
+        let events = server.subscribe_edge_events();
+        fixture.niri().ipc_server = Some(server);
+        events
     }
 
     fn left_edge_position(fixture: &Fixture, output_idx: u8) -> Point<f64, Logical> {
@@ -601,6 +659,131 @@ mod edge_trigger_runtime_tests {
 
         niri.update_edge_trigger(position + Point::new(20., 0.), Point::new(20., 0.));
         assert!(niri.edge_trigger_candidate.is_none());
+    }
+
+    #[test]
+    fn event_action_emits_edge_left_at_output_local_leave_position() {
+        let mut fixture = configured_fixture();
+        let events = attach_edge_events(&mut fixture);
+        let position = left_edge_position(&fixture, 1);
+        enter_left_edge(fixture.niri(), position);
+
+        let niri = fixture.niri();
+        let candidate = niri.edge_trigger_candidate.as_mut().unwrap();
+        let generation = candidate.generation;
+        candidate.armed_at = Some(Instant::now() - Duration::from_millis(351));
+        if let Some(token) = niri.edge_trigger_timer.take() {
+            niri.event_loop.remove(token);
+        }
+        niri.fire_edge_trigger(generation, position);
+
+        let Ok(niri_ipc::Event::EdgeTriggered {
+            output: started_output,
+            edge: started_edge,
+            position: started_position,
+        }) = events.try_recv()
+        else {
+            panic!("firing an event edge did not emit EdgeTriggered");
+        };
+        assert_eq!(started_output, "headless-1");
+        assert_eq!(started_edge, niri_ipc::Edge::Left);
+        assert_eq!(started_position, [0.0, 50.0]);
+        let leaving_position = position + Point::new(12., 0.);
+        niri.update_edge_trigger(leaving_position, Point::new(12., 0.));
+        let Ok(niri_ipc::Event::EdgeLeft {
+            output,
+            edge,
+            position,
+        }) = events.try_recv()
+        else {
+            panic!("leaving a fired event edge did not emit EdgeLeft");
+        };
+        assert_eq!(output, "headless-1");
+        assert_eq!(edge, niri_ipc::Edge::Left);
+        assert_eq!(position, [12.0, 50.0]);
+    }
+
+    #[test]
+    fn edge_left_tracks_position_across_scaled_output_boundary() {
+        let mut config = Config::default();
+        config.edge_triggers.left = Some(EdgeTrigger {
+            off: false,
+            action: Some(EdgeTriggerAction {
+                event: true,
+                spawn: None,
+                spawn_sh: None,
+            }),
+            dwell_time_ms: Some(350),
+            pressure: None,
+            velocity: None,
+        });
+        config.outputs.0.push(niri_config::Output {
+            name: String::from("headless-2"),
+            scale: Some(niri_config::FloatOrInt(1.5)),
+            ..Default::default()
+        });
+        let mut fixture = Fixture::with_config(config);
+        fixture.add_output(1, (1920, 1080));
+        fixture.add_output(2, (2880, 1800));
+        let output = fixture.niri_output(2);
+        let geometry = fixture
+            .niri()
+            .global_space
+            .output_geometry(&output)
+            .unwrap();
+        assert_eq!((geometry.size.w, geometry.size.h), (1920, 1200));
+        let events = attach_edge_events(&mut fixture);
+        let position = left_edge_position(&fixture, 2);
+        enter_left_edge(fixture.niri(), position);
+
+        let niri = fixture.niri();
+        let candidate = niri.edge_trigger_candidate.as_mut().unwrap();
+        let generation = candidate.generation;
+        candidate.armed_at = Some(Instant::now() - Duration::from_millis(351));
+        if let Some(token) = niri.edge_trigger_timer.take() {
+            niri.event_loop.remove(token);
+        }
+        niri.fire_edge_trigger(generation, position);
+        assert!(matches!(events.try_recv(), Ok(niri_ipc::Event::EdgeTriggered { .. })));
+
+        let leaving_position = position - Point::new(10., 0.);
+        niri.update_edge_trigger(leaving_position, Point::new(-10., 0.));
+        let Ok(niri_ipc::Event::EdgeLeft {
+            output,
+            edge,
+            position,
+        }) = events.try_recv()
+        else {
+            panic!("cross-output edge leave did not emit EdgeLeft");
+        };
+        assert_eq!(output, "headless-2");
+        assert_eq!(edge, niri_ipc::Edge::Left);
+        assert_eq!(position, [-10.0, 50.0]);
+    }
+
+    #[test]
+    fn unfired_and_spawn_action_candidates_do_not_emit_edge_left() {
+        let mut fixture = configured_fixture();
+        let events = attach_edge_events(&mut fixture);
+        let position = left_edge_position(&fixture, 1);
+        enter_left_edge(fixture.niri(), position);
+        fixture
+            .niri()
+            .update_edge_trigger(position + Point::new(12., 0.), Point::new(12., 0.));
+        assert!(events.try_recv().is_err());
+
+        let mut fixture = configured_fixture_with_action(EdgeTriggerAction {
+            event: false,
+            spawn: Some(vec!["test-command".into()]),
+            spawn_sh: None,
+        });
+        let events = attach_edge_events(&mut fixture);
+        let position = left_edge_position(&fixture, 1);
+        enter_left_edge(fixture.niri(), position);
+        let niri = fixture.niri();
+        niri.edge_trigger_candidate.as_mut().unwrap().fired = true;
+        niri.clear_edge_trigger_at(Some(position + Point::new(12., 0.)));
+        assert!(events.try_recv().is_err());
     }
 
     #[test]

@@ -123,8 +123,9 @@ pub enum Request {
     NacreOverviewHoverStream,
     /// Start a regular event stream that opts in to native screen-edge trigger events.
     ///
-    /// The initial standard state snapshot is sent first. `EdgeTriggered` events are delivered
-    /// only to clients using this request, preserving compatibility with older event clients.
+    /// The initial standard state snapshot is sent first. `EdgeTriggered` and `EdgeLeft` events
+    /// are delivered only to clients using this request, preserving compatibility with older
+    /// event clients.
     NacreEdgeTriggerStream,
     /// Start an event stream including Nacre-Niri workspace collection events.
     ///
@@ -1786,6 +1787,19 @@ pub enum Event {
         /// Pointer position in output-local logical coordinates.
         position: [f64; 2],
     },
+    /// A previously triggered event-action edge was left or became unavailable.
+    ///
+    /// The payload uses the same output-local logical coordinates as [`Event::EdgeTriggered`].
+    /// The position can be outside the prior output's rectangle after crossing to another
+    /// output. Spawn-action edges and candidates that never fired do not emit this event.
+    EdgeLeft {
+        /// Stable output connector name of the prior trigger.
+        output: String,
+        /// Edge that was previously triggered.
+        edge: Edge,
+        /// Pointer position in the prior output's local logical coordinates.
+        position: [f64; 2],
+    },
     /// The configuration was reloaded.
     ///
     /// You will always receive this event when connecting to the event stream, indicating the last
@@ -2252,5 +2266,13 @@ mod tests {
         assert!(serde_json::to_string(&event)
             .unwrap()
             .contains(r#""EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,10.0]}"#));
+        let event = Event::EdgeLeft {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [12.0, 10.0],
+        };
+        assert!(serde_json::to_string(&event)
+            .unwrap()
+            .contains(r#""EdgeLeft":{"output":"DP-1","edge":"Left","position":[12.0,10.0]}"#));
     }
 }
