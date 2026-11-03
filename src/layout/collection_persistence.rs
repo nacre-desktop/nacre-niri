@@ -78,6 +78,48 @@ pub(crate) enum PersistedWorkspaceRef {
     Ordinal(usize),
 }
 
+impl PersistedCollection {
+    fn fits_persistence_limits(&self) -> bool {
+        !self.name.is_empty()
+            && self.name.len() <= MAX_COLLECTION_NAME_BYTES
+            && self
+                .configured_origin
+                .as_ref()
+                .is_none_or(|name| !name.is_empty() && name.len() <= MAX_COLLECTION_NAME_BYTES)
+            && self.original_output.as_ref().is_none_or(|output| {
+                !output.is_empty() && output.len() <= MAX_COLLECTION_NAME_BYTES
+            })
+            && !self.workspaces.is_empty()
+            && self.workspaces.len() <= MAX_WORKSPACES_PER_COLLECTION
+            && self.workspaces.iter().all(|workspace| {
+                workspace
+                    .name
+                    .as_ref()
+                    .is_none_or(|name| !name.is_empty() && name.len() <= MAX_WORKSPACE_NAME_BYTES)
+            })
+    }
+}
+
+impl PersistedWindowRoute {
+    fn fits_persistence_limits(&self) -> bool {
+        self.app_id
+            .as_ref()
+            .is_some_and(|id| !id.is_empty() && id.len() <= MAX_APP_ID_BYTES)
+            && self
+                .title
+                .as_ref()
+                .is_none_or(|title| title.len() <= MAX_TITLE_BYTES)
+            && !self.collection.is_empty()
+            && self.collection.len() <= MAX_COLLECTION_NAME_BYTES
+            && match &self.workspace {
+                PersistedWorkspaceRef::Name(name) => {
+                    !name.is_empty() && name.len() <= MAX_WORKSPACE_NAME_BYTES
+                }
+                PersistedWorkspaceRef::Ordinal(index) => *index < MAX_WORKSPACES_PER_COLLECTION,
+            }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum PersistenceError {
     Io(io::Error),
@@ -272,6 +314,9 @@ impl PersistedCollections {
     }
 
     pub fn upsert_window_route(&mut self, route: PersistedWindowRoute) {
+        if !route.fits_persistence_limits() {
+            return;
+        }
         if let Some(existing) = self
             .window_routes
             .iter_mut()
@@ -342,7 +387,10 @@ impl PersistedCollections {
     /// those windows cannot be distinguished reliably after restart.
     pub fn replace_live_routes(&mut self, live_routes: Vec<PersistedWindowRoute>) {
         let mut groups: Vec<(Option<String>, Option<String>, Vec<PersistedWindowRoute>)> = vec![];
-        for route in live_routes {
+        for route in live_routes
+            .into_iter()
+            .filter(PersistedWindowRoute::fits_persistence_limits)
+        {
             if let Some((_, _, routes)) = groups
                 .iter_mut()
                 .find(|(app_id, title, _)| *app_id == route.app_id && *title == route.title)
@@ -367,6 +415,68 @@ impl PersistedCollections {
                 self.upsert_window_route(first.clone());
             }
         }
+    }
+
+    /// Drop unsupported stacks and route keys, then keep a deterministic prefix that fits the
+    /// versioned file-size bound. Live layout names are not changed by this persistence filter.
+    pub(crate) fn fit_for_persistence(&mut self) {
+        let mut collections = std::mem::take(&mut self.collections);
+        collections.retain(PersistedCollection::fits_persistence_limits);
+        collections.truncate(MAX_COLLECTIONS);
+        let mut routes = std::mem::take(&mut self.window_routes);
+        routes.retain(PersistedWindowRoute::fits_persistence_limits);
+        routes.truncate(MAX_WINDOW_ROUTES);
+
+        let mut fitted = Self {
+            version: self.version,
+            collections: Vec::with_capacity(collections.len()),
+            window_routes: Vec::with_capacity(routes.len()),
+            runtime_workspace_ids: std::mem::take(&mut self.runtime_workspace_ids),
+        };
+        let mut serialized_size =
+            serde_json::to_vec(&fitted).map_or(usize::MAX, |bytes| bytes.len());
+        for collection in collections {
+            let entry_size =
+                serde_json::to_vec(&collection).map_or(usize::MAX, |bytes| bytes.len());
+            let additional = entry_size.saturating_add(usize::from(!fitted.collections.is_empty()));
+            if serialized_size.saturating_add(additional) <= MAX_STATE_BYTES {
+                serialized_size += additional;
+                fitted.collections.push(collection);
+            }
+        }
+
+        let collection_indexes: HashMap<_, _> = fitted
+            .collections
+            .iter()
+            .map(|collection| (collection.name.as_str(), collection))
+            .collect();
+        fitted
+            .runtime_workspace_ids
+            .retain(|(name, _), _| collection_indexes.contains_key(name.as_str()));
+
+        for route in routes {
+            let Some(collection) = collection_indexes.get(route.collection.as_str()) else {
+                continue;
+            };
+            let workspace_exists = match &route.workspace {
+                PersistedWorkspaceRef::Name(name) => collection
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.name.as_deref() == Some(name)),
+                PersistedWorkspaceRef::Ordinal(index) => *index < collection.workspaces.len(),
+            };
+            if !workspace_exists {
+                continue;
+            }
+            let entry_size = serde_json::to_vec(&route).map_or(usize::MAX, |bytes| bytes.len());
+            let additional =
+                entry_size.saturating_add(usize::from(!fitted.window_routes.is_empty()));
+            if serialized_size.saturating_add(additional) <= MAX_STATE_BYTES {
+                serialized_size += additional;
+                fitted.window_routes.push(route);
+            }
+        }
+        *self = fitted;
     }
 
     /// Closed-window rules keep their unnamed target slot alive across the next restart.
@@ -1068,6 +1178,109 @@ mod tests {
             fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777,
             0o700
         );
+    }
+
+    #[test]
+    fn oversized_live_rules_and_stacks_do_not_block_other_desk_state() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("collections.json");
+        let mut state = sample_state();
+        let original_routes = state.window_routes.clone();
+
+        state.upsert_window_route(PersistedWindowRoute {
+            app_id: Some("a".repeat(MAX_APP_ID_BYTES + 1)),
+            title: None,
+            collection: "work".into(),
+            workspace: PersistedWorkspaceRef::Name("editor".into()),
+        });
+        state.upsert_window_route(PersistedWindowRoute {
+            app_id: Some("org.example.Editor".into()),
+            title: Some("t".repeat(MAX_TITLE_BYTES + 1)),
+            collection: "work".into(),
+            workspace: PersistedWorkspaceRef::Name("editor".into()),
+        });
+        state.replace_live_routes(vec![PersistedWindowRoute {
+            app_id: Some("org.example.Editor".into()),
+            title: Some("t".repeat(MAX_TITLE_BYTES + 1)),
+            collection: "work".into(),
+            workspace: PersistedWorkspaceRef::Name("editor".into()),
+        }]);
+        assert_eq!(state.window_routes, original_routes);
+
+        state.collections.push(PersistedCollection {
+            name: "d".repeat(MAX_COLLECTION_NAME_BYTES + 1),
+            configured_origin: None,
+            original_output: None,
+            workspaces: vec![PersistedWorkspace {
+                name: None,
+                retain_empty: true,
+            }],
+            active_workspace: 0,
+        });
+        state.collections.push(PersistedCollection {
+            name: "workspace-limit".into(),
+            configured_origin: None,
+            original_output: None,
+            workspaces: vec![PersistedWorkspace {
+                name: Some("w".repeat(MAX_WORKSPACE_NAME_BYTES + 1)),
+                retain_empty: true,
+            }],
+            active_workspace: 0,
+        });
+        state.window_routes.extend([
+            PersistedWindowRoute {
+                app_id: Some("org.example.LongDesk".into()),
+                title: None,
+                collection: "d".repeat(MAX_COLLECTION_NAME_BYTES + 1),
+                workspace: PersistedWorkspaceRef::Ordinal(0),
+            },
+            PersistedWindowRoute {
+                app_id: Some("org.example.LongWorkspace".into()),
+                title: None,
+                collection: "workspace-limit".into(),
+                workspace: PersistedWorkspaceRef::Ordinal(0),
+            },
+        ]);
+
+        state.fit_for_persistence();
+        assert_eq!(
+            state
+                .collections
+                .iter()
+                .map(|collection| collection.name.as_str())
+                .collect::<Vec<_>>(),
+            ["work"]
+        );
+        assert_eq!(state.window_routes, original_routes);
+        assert!(state.validate().is_ok());
+        state.save_atomic_to(&path).unwrap();
+        assert_eq!(PersistedCollections::load_from(&path).unwrap(), Some(state));
+    }
+
+    #[test]
+    fn fitting_many_valid_stacks_keeps_the_serialized_state_under_the_file_limit() {
+        let mut state = PersistedCollections::empty();
+        let suffix = "x".repeat(220);
+        for collection_idx in 0..100 {
+            let workspaces = (0..MAX_WORKSPACES_PER_COLLECTION)
+                .map(|workspace_idx| PersistedWorkspace {
+                    name: Some(format!("desk{collection_idx}-ws{workspace_idx}-{suffix}")),
+                    retain_empty: false,
+                })
+                .collect();
+            state.collections.push(PersistedCollection {
+                name: format!("desk{collection_idx}"),
+                configured_origin: None,
+                original_output: None,
+                workspaces,
+                active_workspace: 0,
+            });
+        }
+
+        state.fit_for_persistence();
+        assert!(state.collections.len() < 100);
+        assert!(state.validate().is_ok());
+        assert!(serde_json::to_vec(&state).unwrap().len() <= MAX_STATE_BYTES);
     }
 
     #[test]

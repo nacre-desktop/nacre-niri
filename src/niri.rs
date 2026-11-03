@@ -2767,6 +2767,7 @@ impl Niri {
         });
         next.replace_live_routes(live_routes);
         next.retain_routed_empty_workspaces();
+        next.fit_for_persistence();
 
         if next.same_persisted_state(&previous) {
             self.layout.retain_persisted_workspace_slots(&next);

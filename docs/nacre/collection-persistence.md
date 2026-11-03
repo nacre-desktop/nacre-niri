@@ -28,10 +28,15 @@ this is best effort, not session restoration. Closed-window routes remain stored
 placement can be used on a later launch.
 
 The reader accepts only the current schema and rejects files over 4 MiB, more than 128 named
-collections, more than 256 workspaces in one collection, or more than 4096 window routes. Names,
-app-ids and titles also have explicit byte limits. An unreadable, malformed or newer-version file
-is left untouched and persistence is skipped rather than replacing state this version cannot
-interpret.
+collections, more than 256 workspaces in one collection, or more than 4096 window routes.
+Collection, configured-origin, output, and workspace names are limited to 256 UTF-8 bytes; app-ids
+to 1024 bytes; and titles to 2048 bytes. Live rules with oversized app-ids or titles are omitted
+without truncation. A stack with an oversized name or workspace list is omitted from the saved
+snapshot, along with routes to it, while supported desks remain saveable. If the aggregate snapshot
+would exceed 4 MiB, supported stacks and routes are kept in collection order until the file limit
+is reached. These bounds affect restart persistence only; the live layout remains unchanged.
+An unreadable, malformed or newer-version file is left untouched and persistence is skipped rather
+than replacing state this version cannot interpret.
 
 Writes use a same-directory temporary file with mode `0600`, sync its contents, atomically rename
 it over the state file, then sync the directory. The state directory is mode `0700`. The compositor
