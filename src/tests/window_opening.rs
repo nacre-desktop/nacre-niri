@@ -65,12 +65,14 @@ fn proportional_x11_widths_apply_only_to_managed_adjustable_tiled_clients() {
 
 #[test]
 fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
-    let mut config = Config::default();
-    config.outputs = niri_config::Outputs(vec![niri_config::Output {
-        name: "headless-1".to_owned(),
-        scale: Some(niri_config::FloatOrInt(1.5)),
+    let config = Config {
+        outputs: niri_config::Outputs(vec![niri_config::Output {
+            name: "headless-1".to_owned(),
+            scale: Some(niri_config::FloatOrInt(1.5)),
+            ..Default::default()
+        }]),
         ..Default::default()
-    }]);
+    };
     let mut fixture = Fixture::with_config(config);
     fixture.add_output(1, (1920, 1080));
 
