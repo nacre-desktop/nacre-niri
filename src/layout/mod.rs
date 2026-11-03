@@ -3092,13 +3092,14 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
         if self.collection_overview_is_open() {
-            // All stacks can appear on this output, with more vertical previews visible at the
-            // smaller collection zoom than the monitor's usual culling rectangle permits. Their
-            // render elements are refreshed only after a window commit or when the overview opens.
-            let mut dirty_workspaces = self.collection_overview.take_dirty_hidden_workspaces();
-            for ws in self.workspaces_mut() {
-                if dirty_workspaces.remove(&ws.id()) {
-                    ws.update_render_elements(false);
+            // Shown collections use Monitor::update_render_elements. Hidden workspaces only
+            // prepare after source/layout changes; periodic refreshes do not invalidate them.
+            let overview = &self.collection_overview;
+            for collection in &mut self.collections {
+                for ws in &mut collection.workspaces {
+                    if overview.needs_prepare(ws.id(), ws.overview_revision()) {
+                        ws.update_render_elements(false);
+                    }
                 }
             }
         }

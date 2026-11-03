@@ -111,6 +111,9 @@ pub struct Workspace<W: LayoutElement> {
 
     /// Unique ID of this workspace.
     id: WorkspaceId,
+
+    /// Changes to source contents or layout, excluding periodic render preparation.
+    overview_revision: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -271,6 +274,7 @@ impl<W: LayoutElement> Workspace<W> {
             name: config.map(|c| c.name.0),
             layout_config,
             id: WorkspaceId::next(),
+            overview_revision: 0,
         }
     }
 
@@ -335,11 +339,16 @@ impl<W: LayoutElement> Workspace<W> {
             name: config.map(|c| c.name.0),
             layout_config,
             id: WorkspaceId::next(),
+            overview_revision: 0,
         }
     }
 
     pub fn new_no_outputs(clock: Clock, options: Rc<Options>) -> Self {
         Self::new_with_config_no_outputs(None, clock, options)
+    }
+
+    pub(super) fn overview_revision(&self) -> u64 {
+        self.overview_revision
     }
 
     pub fn id(&self) -> WorkspaceId {
@@ -351,6 +360,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn unname(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.name = None;
     }
 
@@ -363,6 +373,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn advance_animations(&mut self) {
+        if self.are_animations_ongoing() || self.are_transitions_ongoing() {
+            self.overview_revision = self.overview_revision.wrapping_add(1);
+        }
         self.scrolling.advance_animations();
         self.floating.advance_animations();
     }
@@ -393,6 +406,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn update_config(&mut self, base_options: Rc<Options>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let scale = self.scale.fractional_scale();
         let options = Rc::new(
             Options::clone(&base_options)
@@ -426,6 +440,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn update_layout_config(&mut self, layout_config: Option<niri_config::LayoutPart>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.layout_config == layout_config {
             return;
         }
@@ -435,6 +450,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn update_shaders(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.update_shaders();
         self.floating.update_shaders();
         self.shadow.update_shaders();
@@ -489,6 +505,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_output(&mut self, output: Option<Output>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.output == output {
             return;
         }
@@ -523,6 +540,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn update_output_size(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let output = self.output.as_ref().unwrap();
         let scale = output.current_scale();
         let transform = output.current_transform();
@@ -538,6 +556,7 @@ impl<W: LayoutElement> Workspace<W> {
         size: Size<f64, Logical>,
         working_area: Rectangle<f64, Logical>,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let scale_transform_changed = self.transform != transform
             || self.scale.integer_scale() != scale.integer_scale()
             || self.scale.fractional_scale() != scale.fractional_scale();
@@ -607,6 +626,7 @@ impl<W: LayoutElement> Workspace<W> {
         is_full_width: bool,
         is_floating: bool,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.enter_output_for_window(tile.window());
         tile.restore_to_floating = is_floating;
 
@@ -699,6 +719,7 @@ impl<W: LayoutElement> Workspace<W> {
         tile: Tile<W>,
         activate: bool,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.enter_output_for_window(tile.window());
         self.scrolling
             .add_tile_to_column(col_idx, tile_idx, tile, activate);
@@ -709,6 +730,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn add_column(&mut self, column: Column<W>, activate: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         for (tile, _) in column.tiles() {
             self.enter_output_for_window(tile.window());
         }
@@ -721,6 +743,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     fn update_focus_floating_tiling_after_removing(&mut self, removed_from_floating: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if removed_from_floating {
             if self.floating.is_empty() {
                 self.floating_is_active = FloatingActive::No;
@@ -734,6 +757,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_tile(&mut self, id: &W::Id, transaction: Transaction) -> RemovedTile<W> {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let mut from_floating = false;
         let removed = if self.floating.has_window(id) {
             from_floating = true;
@@ -752,6 +776,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_active_tile(&mut self, transaction: Transaction) -> Option<RemovedTile<W>> {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let from_floating = self.floating_is_active.get();
         let removed = if from_floating {
             self.floating.remove_active_tile()?
@@ -769,6 +794,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn remove_active_column(&mut self) -> Option<Column<W>> {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let from_floating = self.floating_is_active.get();
         if from_floating {
             return None;
@@ -906,6 +932,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_left(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_left()
         } else {
@@ -914,6 +941,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_right(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_right()
         } else {
@@ -922,6 +950,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_column_first(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_leftmost();
         } else {
@@ -930,6 +959,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_column_last(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_rightmost();
         } else {
@@ -938,18 +968,21 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_column_right_or_first(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.focus_right() {
             self.focus_column_first();
         }
     }
 
     pub fn focus_column_left_or_last(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.focus_left() {
             self.focus_column_last();
         }
     }
 
     pub fn focus_column(&mut self, index: usize) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.focus_tiling();
         }
@@ -957,6 +990,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_window_in_column(&mut self, index: u8) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -964,6 +998,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_down(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_down()
         } else {
@@ -972,6 +1007,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_up(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_up()
         } else {
@@ -980,6 +1016,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_down_or_left(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_down();
         } else {
@@ -988,6 +1025,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_down_or_right(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_down();
         } else {
@@ -996,6 +1034,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_up_or_left(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_up();
         } else {
@@ -1004,6 +1043,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_up_or_right(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_up();
         } else {
@@ -1012,6 +1052,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_window_top(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_topmost();
         } else {
@@ -1020,6 +1061,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_window_bottom(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.focus_bottommost();
         } else {
@@ -1028,18 +1070,21 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_window_down_or_top(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.focus_down() {
             self.focus_window_top();
         }
     }
 
     pub fn focus_window_up_or_bottom(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.focus_up() {
             self.focus_window_bottom();
         }
     }
 
     pub fn move_left(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.move_left();
             true
@@ -1049,6 +1094,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_right(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.move_right();
             true
@@ -1058,6 +1104,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_column_to_first(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1065,6 +1112,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_column_to_last(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1072,6 +1120,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_column_to_index(&mut self, index: usize) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1079,6 +1128,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_down(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.move_down();
             true
@@ -1088,6 +1138,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn move_up(&mut self) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.move_up();
             true
@@ -1097,6 +1148,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn consume_or_expel_window_left(&mut self, window: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1106,6 +1158,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn consume_or_expel_window_right(&mut self, window: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1115,6 +1168,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn consume_into_column(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1122,6 +1176,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn expel_from_column(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1129,6 +1184,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn swap_window_in_direction(&mut self, direction: ScrollDirection) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1136,6 +1192,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_column_tabbed_display(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1143,6 +1200,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_column_display(&mut self, display: ColumnDisplay) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1150,6 +1208,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn center_column(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.center_window(None);
         } else {
@@ -1158,6 +1217,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn center_window(&mut self, id: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if id.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1168,6 +1228,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn center_visible_columns(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1175,6 +1236,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_width(&mut self, forwards: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.toggle_window_width(None, forwards);
         } else {
@@ -1183,6 +1245,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_full_width(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             // Leave this unimplemented for now. For good UX, this probably needs moving the tile
             // to be against the left edge of the working area while it is full-width.
@@ -1192,6 +1255,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_column_width(&mut self, change: SizeChange) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.floating.set_window_width(None, change, true);
         } else {
@@ -1200,6 +1264,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_window_width(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1210,6 +1275,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_window_height(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1220,6 +1286,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn reset_window_height(&mut self, window: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1229,6 +1296,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_window_width(&mut self, window: Option<&W::Id>, forwards: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1239,6 +1307,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_window_height(&mut self, window: Option<&W::Id>, forwards: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if window.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1249,6 +1318,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn expand_column_to_available_width(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             return;
         }
@@ -1256,6 +1326,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_fullscreen(&mut self, window: &W::Id, is_fullscreen: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let mut restore_to_floating = false;
         if self.floating.has_window(window) {
             if is_fullscreen {
@@ -1312,6 +1383,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_fullscreen(&mut self, window: &W::Id) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let tile = self
             .tiles()
             .find(|tile| tile.window().id() == window)
@@ -1321,6 +1393,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_maximized(&mut self, window: &W::Id, maximize: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let mut restore_to_floating = false;
         if self.floating.has_window(window) {
             if maximize {
@@ -1371,6 +1444,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_maximized(&mut self, window: &W::Id) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let mut current = false;
 
         // We have to check the column property in case the window is in the scrolling layout and
@@ -1386,6 +1460,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn toggle_window_floating(&mut self, id: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let active_id = self.active_window().map(|win| win.id().clone());
         let target_is_active = id.is_none_or(|id| Some(id) == active_id.as_ref());
         let Some(id) = id.cloned().or(active_id) else {
@@ -1446,6 +1521,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn set_window_floating(&mut self, id: Option<&W::Id>, floating: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if id.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) == floating
@@ -1457,18 +1533,21 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn focus_floating(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.floating_is_active.get() {
             self.switch_focus_floating_tiling();
         }
     }
 
     pub fn focus_tiling(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating_is_active.get() {
             self.switch_focus_floating_tiling();
         }
     }
 
     pub fn switch_focus_floating_tiling(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.is_empty() {
             // If floating is empty, keep focus on scrolling.
             return;
@@ -1491,6 +1570,7 @@ impl<W: LayoutElement> Workspace<W> {
         y: PositionChange,
         animate: bool,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if id.map_or(self.floating_is_active.get(), |id| {
             self.floating.has_window(id)
         }) {
@@ -1695,6 +1775,7 @@ impl<W: LayoutElement> Workspace<W> {
         xray_pos: XrayPos,
         window: &W::Id,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let view_size = self.view_size();
         for (tile, tile_pos) in self.tiles_with_render_positions_mut(false) {
             if tile.window().id() == window {
@@ -1714,6 +1795,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn clear_unmap_snapshot(&mut self, window: &W::Id) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         for tile in self.tiles_mut() {
             if tile.window().id() == window {
                 let _ = tile.take_unmap_snapshot();
@@ -1728,6 +1810,7 @@ impl<W: LayoutElement> Workspace<W> {
         window: &W::Id,
         blocker: TransactionBlocker,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.has_window(window) {
             self.floating
                 .start_close_animation_for_window(renderer, window, blocker);
@@ -1745,11 +1828,13 @@ impl<W: LayoutElement> Workspace<W> {
         tile_pos: Point<f64, Logical>,
         blocker: TransactionBlocker,
     ) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.floating
             .start_close_animation_for_tile(renderer, snapshot, tile_size, tile_pos, blocker);
     }
 
     pub fn start_open_animation(&mut self, id: &W::Id) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.start_open_animation(id) || self.floating.start_open_animation(id)
     }
 
@@ -1801,10 +1886,12 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn descendants_added(&mut self, id: &W::Id) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.floating.descendants_added(id)
     }
 
     pub fn update_window(&mut self, window: &W::Id, serial: Option<Serial>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if !self.floating.update_window(window, serial) {
             self.scrolling.update_window(window, serial);
         }
@@ -1830,6 +1917,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn activate_window(&mut self, window: &W::Id) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.activate_window(window) {
             self.floating_is_active = FloatingActive::Yes;
             true
@@ -1842,6 +1930,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.activate_window_without_raising(window) {
             self.floating_is_active = FloatingActive::Yes;
             true
@@ -1857,6 +1946,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn activate_window_without_raising(&mut self, window: &W::Id) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.activate_window_without_raising(window) {
             self.floating_is_active = FloatingActive::Yes;
             true
@@ -1884,6 +1974,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn view_offset_gesture_begin(&mut self, is_touchpad: bool) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.view_offset_gesture_begin(is_touchpad);
     }
 
@@ -1893,19 +1984,23 @@ impl<W: LayoutElement> Workspace<W> {
         timestamp: Duration,
         is_touchpad: bool,
     ) -> Option<bool> {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling
             .view_offset_gesture_update(delta_x, timestamp, is_touchpad)
     }
 
     pub fn view_offset_gesture_end(&mut self, is_touchpad: Option<bool>) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.view_offset_gesture_end(is_touchpad)
     }
 
     pub fn dnd_scroll_gesture_begin(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.dnd_scroll_gesture_begin();
     }
 
     pub fn dnd_scroll_gesture_scroll(&mut self, pos: Point<f64, Logical>, speed: f64) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         let config = &self.options.gestures.dnd_edge_view_scroll;
         let trigger_width = config.trigger_width;
 
@@ -1937,10 +2032,12 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn dnd_scroll_gesture_end(&mut self) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         self.scrolling.dnd_scroll_gesture_end();
     }
 
     pub fn interactive_resize_begin(&mut self, window: W::Id, edges: ResizeEdge) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.has_window(&window) {
             self.floating.interactive_resize_begin(window, edges)
         } else {
@@ -1953,6 +2050,7 @@ impl<W: LayoutElement> Workspace<W> {
         window: &W::Id,
         delta: Point<f64, Logical>,
     ) -> bool {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.has_window(window) {
             self.floating.interactive_resize_update(window, delta)
         } else {
@@ -1961,6 +2059,7 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn interactive_resize_end(&mut self, window: Option<&W::Id>) {
+        self.overview_revision = self.overview_revision.wrapping_add(1);
         if let Some(window) = window {
             if self.floating.has_window(window) {
                 self.floating.interactive_resize_end(Some(window));

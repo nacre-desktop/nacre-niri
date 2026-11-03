@@ -1,6 +1,8 @@
 //! Shared collection-column geometry for rendering, pointer selection, and drag targets.
 
 use std::cell::RefCell;
+#[cfg(test)]
+use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 
 use pangocairo::cairo::{self, ImageSurface};
@@ -8,7 +10,9 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
 };
-use smithay::backend::renderer::element::Kind;
+use smithay::backend::renderer::element::{Id, Kind};
+use smithay::backend::renderer::utils::CommitCounter;
+use smithay::backend::renderer::{Color32F, ContextId, Renderer as _};
 use smithay::backend::renderer::gles::GlesTexture;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size, Transform};
@@ -23,7 +27,7 @@ use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::XrayPos;
-use crate::render_helpers::RenderCtx;
+use crate::render_helpers::{render_to_texture, RenderCtx, RenderTarget};
 use crate::utils::output_size;
 
 #[derive(Debug, Default)]
@@ -31,6 +35,12 @@ pub(super) struct Overview {
     labels: RefCell<HashMap<(u64, String, u64), TextureBuffer<GlesTexture>>>,
     dirty_hidden_workspaces: RefCell<HashSet<WorkspaceId>>,
     preview_geometry: RefCell<HashMap<Vec<u64>, Vec<PreviewGeometry>>>,
+    prepared_revisions: RefCell<HashMap<WorkspaceId, u64>>,
+    textures: RefCell<Vec<PreviewTexture>>,
+    #[cfg(test)]
+    preparations: Cell<u64>,
+    #[cfg(test)]
+    texture_builds: Cell<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,7 +57,43 @@ niri_render_elements! {
         Background = CropRenderElement<RelocateRenderElement<RescaleRenderElement<SolidColorRenderElement>>>,
         Shadow = CropRenderElement<RelocateRenderElement<RescaleRenderElement<ShadowRenderElement>>>,
         Label = PrimaryGpuTextureRenderElement,
+        CachedPreview = CropRenderElement<RelocateRenderElement<RescaleRenderElement<PrimaryGpuTextureRenderElement>>>,
     }
+}
+
+niri_render_elements! {
+    HiddenSnapshotRenderElement<R> => {
+        Workspace = WorkspaceRenderElement<R>,
+        Background = SolidColorRenderElement,
+    }
+}
+
+/// The target and renderer are part of identity: output and capture privacy rules must never
+/// share snapshots, nor may a texture from one GL context be used in another.
+#[derive(Debug, PartialEq)]
+struct TextureKey {
+    output: Output,
+    context: ContextId<GlesTexture>,
+    target: RenderTarget,
+    workspace: WorkspaceId,
+    revision: u64,
+    scale: f64,
+    location: Point<f64, Logical>,
+    zoom: f64,
+    xray: Option<[(Id, CommitCounter); 2]>,
+    xray_geometry: Option<XrayGeometry>,
+}
+
+#[derive(Debug, PartialEq)]
+struct XrayGeometry {
+    backdrop_color: Color32F,
+    workspaces: Vec<(Rectangle<f64, Logical>, Color32F)>,
+}
+
+#[derive(Debug)]
+struct PreviewTexture {
+    key: TextureKey,
+    buffer: TextureBuffer<GlesTexture>,
 }
 
 pub(super) struct Preview<'a, W: LayoutElement> {
@@ -58,6 +104,11 @@ pub(super) struct Preview<'a, W: LayoutElement> {
 }
 
 impl<W: LayoutElement> Layout<W> {
+    #[cfg(test)]
+    pub(crate) fn collection_overview_cache_counts(&self) -> (u64, u64) {
+        (self.collection_overview.preparations.get(), self.collection_overview.texture_builds.get())
+    }
+
     pub fn collection_overview_is_enabled(&self) -> bool {
         self.options.layout.collections.enabled
     }
@@ -407,16 +458,16 @@ impl<W: LayoutElement> Layout<W> {
         &self,
         mut ctx: RenderCtx<R>,
         output: &Output,
-        focus_ring: bool,
+        _focus_ring: bool,
         push: &mut dyn FnMut(CollectionOverviewRenderElement<R>),
     ) {
         let scale = output.current_scale().fractional_scale();
         let crop = Rectangle::from_size(output_size(output)).to_physical_precise_round(scale);
         let active = self.collection_for_output(output);
+        let columns = self.collection_columns(output);
         for collection in &self.collections {
-            let Some(column) = self
-                .collection_columns(output)
-                .into_iter()
+            let Some(column) = columns
+                .iter()
                 .find(|c| c.id == collection.id)
             else {
                 continue;
@@ -456,29 +507,38 @@ impl<W: LayoutElement> Layout<W> {
             if active == Some(preview.id) {
                 continue;
             }
+            // Invisible rows need neither render-element traversal nor GPU allocation.
+            if preview.geometry.intersection(Rectangle::from_size(output_size(output))).is_none() {
+                continue;
+            }
             let location = preview.geometry.loc.to_physical_precise_round(scale);
             let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
-            let mut render = |elem| {
+            if let Some(buffer) = self.collection_overview.texture(ctx.r(), output, &preview) {
+                let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                    buffer, (0., 0.), 1., None, Some(preview.workspace.view_size()), Kind::Unspecified,
+                ));
                 let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
                 let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
                 if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
-                    push(CollectionOverviewRenderElement::Workspace(elem));
+                    push(CollectionOverviewRenderElement::CachedPreview(elem));
                 }
-            };
-            let ring = focus_ring && active == Some(preview.id);
-            preview
-                .workspace
-                .render_floating(ctx.r(), xray_pos, ring, &mut render);
-            preview
-                .workspace
-                .render_scrolling(ctx.r(), xray_pos, ring, &mut render);
-            let background = preview.workspace.render_background();
-            let background =
-                RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
-            let background =
-                RelocateRenderElement::from_element(background, location, Relocate::Relative);
-            if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
-                push(CollectionOverviewRenderElement::Background(background));
+            } else {
+                // Allocation/render failure preserves a correct native rendering path.
+                let mut render = |elem| {
+                    let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+                    let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+                    if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+                        push(CollectionOverviewRenderElement::Workspace(elem));
+                    }
+                };
+                preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut render);
+                preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut render);
+                let background = preview.workspace.render_background();
+                let background = RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
+                let background = RelocateRenderElement::from_element(background, location, Relocate::Relative);
+                if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
+                    push(CollectionOverviewRenderElement::Background(background));
+                }
             }
             let alpha = self
                 .overview_progress
@@ -497,9 +557,82 @@ impl<W: LayoutElement> Layout<W> {
 }
 
 impl Overview {
+    fn texture<W: LayoutElement, R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        output: &Output,
+        preview: &Preview<'_, W>,
+    ) -> Option<TextureBuffer<GlesTexture>> {
+        let mut ctx = ctx.as_gles();
+        // fill_xray_elements marks content pending; its commit changes only on preparation.
+        // Flush pending damage before the cache lookup or a changed wallpaper could stay stale.
+        if let Some(xray) = ctx.xray {
+            for buffer in [&xray.background[ctx.target as usize], &xray.backdrop[ctx.target as usize]] {
+                if !buffer.borrow_mut().prepare(ctx.renderer, false) { return None; }
+            }
+        }
+        let xray_stamp = |ctx: &RenderCtx<_>| ctx.xray.map(|xray| {
+            let background = xray.background[ctx.target as usize].borrow();
+            let backdrop = xray.backdrop[ctx.target as usize].borrow();
+            [(background.id().clone(), background.commit()),
+             (backdrop.id().clone(), backdrop.commit())]
+        });
+        let mut key = TextureKey {
+            output: output.clone(),
+            context: ctx.renderer.context_id(),
+            target: ctx.target,
+            workspace: preview.workspace.id(),
+            revision: preview.workspace.overview_revision(),
+            scale: output.current_scale().fractional_scale(),
+            location: preview.geometry.loc,
+            zoom: preview.zoom,
+            xray: xray_stamp(&ctx),
+            xray_geometry: ctx.xray.map(|xray| XrayGeometry {
+                backdrop_color: xray.backdrop_color,
+                workspaces: xray.workspaces.clone(),
+            }),
+        };
+        if let Some(cached) = self.textures.borrow().iter().find(|entry| entry.key == key) {
+            return Some(cached.buffer.clone());
+        }
+        let mut elements: Vec<HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>> = Vec::new();
+        let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
+        preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut |elem| elements.push(elem.into()));
+        preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut |elem| elements.push(elem.into()));
+        elements.push(preview.workspace.render_background().into());
+        // Render at the final preview resolution, keeping source logical coordinates intact.
+        let scale = key.scale * preview.zoom;
+        let size = preview.workspace.view_size().to_physical_precise_ceil(scale);
+        let (texture, _sync) = render_to_texture(ctx.renderer, size, scale.into(), Transform::Normal,
+            Fourcc::Argb8888, elements.iter().rev()).ok()?;
+        let buffer = TextureBuffer::from_texture(ctx.renderer, texture, scale, Transform::Normal, Vec::new());
+        // Xray preparation can update buffer commits while collecting the elements.
+        key.xray = xray_stamp(&ctx);
+        let mut textures = self.textures.borrow_mut();
+        textures.retain(|entry| !(entry.key.output == key.output && entry.key.target == key.target
+            && entry.key.workspace == key.workspace));
+        // Bound retained textures across removed outputs/workspaces and GL context replacement.
+        if textures.len() >= 64 { textures.clear(); }
+        textures.push(PreviewTexture { key, buffer: buffer.clone() });
+        #[cfg(test)]
+        self.texture_builds.set(self.texture_builds.get() + 1);
+        Some(buffer)
+    }
+
+    pub(super) fn needs_prepare(&self, workspace: WorkspaceId, revision: u64) -> bool {
+        let previous = self.prepared_revisions.borrow_mut().insert(workspace, revision);
+        let dirty = self.dirty_hidden_workspaces.borrow_mut().remove(&workspace);
+        let needs = dirty || previous != Some(revision);
+        #[cfg(test)]
+        if needs { self.preparations.set(self.preparations.get() + 1); }
+        needs
+    }
+
     pub(super) fn clear(&self) {
         self.labels.borrow_mut().clear();
         self.preview_geometry.borrow_mut().clear();
+        self.prepared_revisions.borrow_mut().clear();
+        self.textures.borrow_mut().clear();
     }
 
     pub(super) fn mark_hidden_workspace_dirty(&self, workspace: WorkspaceId) {
@@ -508,10 +641,6 @@ impl Overview {
 
     pub(super) fn mark_hidden_workspaces_dirty(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
         self.dirty_hidden_workspaces.borrow_mut().extend(workspaces);
-    }
-
-    pub(super) fn take_dirty_hidden_workspaces(&self) -> HashSet<WorkspaceId> {
-        std::mem::take(&mut *self.dirty_hidden_workspaces.borrow_mut())
     }
 
     fn label<R: NiriRenderer>(
