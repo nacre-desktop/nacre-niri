@@ -17,33 +17,28 @@ use crate::niri::Niri;
 /// of global definitions because they can add event actions or override them.
 pub(crate) fn event_source_available(config: &niri_config::Config) -> bool {
     config.nacre.edge_triggers
-        && (has_event_action(
-            &config.edge_triggers.left,
-            &config.edge_triggers.right,
-            &config.edge_triggers.top,
-            &config.edge_triggers.bottom,
-        ) || config.outputs.0.iter().any(|output| {
-            output.edge_triggers.as_ref().is_some_and(|edges| {
-                has_event_action(&edges.left, &edges.right, &edges.top, &edges.bottom)
-            })
-        }))
+        && (has_event_action(&config.edge_triggers)
+            || config.outputs.0.iter().any(|output| {
+                let mut edges = config.edge_triggers.clone();
+                if let Some(overrides) = &output.edge_triggers {
+                    niri_config::utils::MergeWith::merge_with(&mut edges, overrides);
+                }
+                has_event_action(&edges)
+            }))
 }
 
-fn has_event_action(
-    left: &Option<niri_config::EdgeTrigger>,
-    right: &Option<niri_config::EdgeTrigger>,
-    top: &Option<niri_config::EdgeTrigger>,
-    bottom: &Option<niri_config::EdgeTrigger>,
-) -> bool {
-    [left, right, top, bottom].into_iter().any(|trigger| {
-        trigger.as_ref().is_some_and(|trigger| {
-            !trigger.off
-                && trigger
-                    .action
-                    .as_ref()
-                    .is_none_or(|action| action.spawn.is_none() && action.spawn_sh.is_none())
+fn has_event_action(edges: &niri_config::EdgeTriggers) -> bool {
+    [&edges.left, &edges.right, &edges.top, &edges.bottom]
+        .into_iter()
+        .any(|trigger| {
+            trigger.as_ref().is_some_and(|trigger| {
+                !trigger.off
+                    && trigger
+                        .action
+                        .as_ref()
+                        .is_none_or(|action| action.spawn.is_none() && action.spawn_sh.is_none())
+            })
         })
-    })
 }
 
 #[derive(Debug, Clone)]
@@ -210,14 +205,30 @@ mod tests {
         config.edge_triggers.left = Some(event_trigger());
         assert!(event_source_available(&config));
 
+        config.edge_triggers.left.as_mut().unwrap().action = None;
+        assert!(event_source_available(&config));
+
+        config.edge_triggers.left = Some(EdgeTrigger {
+            action: Some(EdgeTriggerAction {
+                event: false,
+                spawn: Some(vec![String::from("panel-command")]),
+                spawn_sh: None,
+            }),
+            ..event_trigger()
+        });
         let mut output = Output {
             name: String::from("DP-1"),
             edge_triggers: Some(EdgeTriggersPart::default()),
             ..Output::default()
         };
-        output.edge_triggers.as_mut().unwrap().right = Some(event_trigger());
-        config.edge_triggers.left = None;
+        output.edge_triggers.as_mut().unwrap().left = Some(EdgeTrigger {
+            action: None,
+            ..event_trigger()
+        });
         config.outputs.0.push(output);
+        assert!(event_source_available(&config));
+
+        config.outputs.0[0].edge_triggers.as_mut().unwrap().left = Some(event_trigger());
         assert!(event_source_available(&config));
     }
 
