@@ -669,8 +669,8 @@ nacre { overview-hover; proportional-x11-widths; edge-triggers; }
 // Native edge triggers replace invisible panel edge surfaces. Use the dedicated
 // NacreEdgeTriggerStream to receive EdgeTriggered IPC events.
 // edge-triggers {
-//     left { action { event; } dwell-time-ms 250; pressure 0; velocity 0; }
-//     right { action { spawn "nacre-panel" "right"; } }
+//     left { action { event; }; dwell-time-ms 250; pressure 0; velocity 0; }
+//     right { action { spawn "panel-command" "right"; }; }
 // }
 
 // Match the generated desktop's general window shadow and blur. Pearl windows

@@ -737,12 +737,12 @@ mod tests {
                     pressure 12
                     velocity 600
                 }
-                right { action { spawn "nacre-panel" "right"; } }
+                right { action { spawn "nacre-panel" "right"; }; }
             }
             output "DP-1" {
                 edge-triggers {
                     left { off; }
-                    bottom { action { event; } }
+                    bottom { action { event; }; }
                 }
             }
             nacre { edge-triggers false; }
