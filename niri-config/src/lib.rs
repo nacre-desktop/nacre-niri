@@ -698,6 +698,13 @@ mod tests {
     }
 
     #[test]
+    fn nacre_proportional_x11_widths_defaults_on_and_can_be_disabled() {
+        assert!(do_parse("").nacre.proportional_x11_widths);
+        assert!(do_parse("nacre { proportional-x11-widths; }").nacre.proportional_x11_widths);
+        assert!(!do_parse("nacre { proportional-x11-widths false; }").nacre.proportional_x11_widths);
+    }
+
+    #[test]
     fn collection_actions_decode_with_optional_create_name() {
         let config = do_parse(
             r#"binds {
@@ -1771,6 +1778,7 @@ mod tests {
             },
             nacre: Nacre {
                 overview_hover: true,
+                proportional_x11_widths: true,
             },
             environment: Environment(
                 [
