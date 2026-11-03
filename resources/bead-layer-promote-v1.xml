@@ -13,7 +13,7 @@
   </description>
   <interface name="bead_layer_promote_manager_v1" version="1">
     <enum name="error">
-      <entry name="invalid_surface" value="0" summary="Surface has no layer-shell role and output"/>
+      <entry name="invalid_surface" value="0" summary="Surface has no live layer-shell role"/>
       <entry name="duplicate_controller" value="1" summary="Surface already has a controller"/>
     </enum>
     <request name="destroy" type="destructor">
@@ -21,8 +21,10 @@
     </request>
     <request name="get_promotion">
       <description summary="Control the presentation of an existing layer root">
-        The root must have a layer-shell role associated with an output. A
-        controller may be obtained before the root has its first buffer.
+        The root must have a live layer-shell role. A controller may be obtained
+        before the root has its first buffer, including while an output is
+        being removed. A closing layer's normal close event still applies;
+        creating a controller does not make an unavailable output usable.
         Destroying the layer role invalidates its controller. The client must
         destroy that controller before obtaining another for a new role.
       </description>
@@ -60,6 +62,10 @@
         units; the body must fit the mapped surface at commit. Geometry that
         does not fit the current buffer is rejected without changing ownership.
         The compositor derives global placement from its current layer position.
+        A mapped root keeps its previous compositor pose even if pending layer
+        geometry changes accompany this commit. A root's first content commit
+        instead uses its newly committed layer placement, allowing restoration
+        of saved positions without creating a second content surface.
         A non-null seat requires a current pointer button grab on this surface
         and its button press serial. At commit the compositor preserves the grab
         point and includes movement since that press, then moves the content

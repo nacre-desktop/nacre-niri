@@ -2272,14 +2272,24 @@ impl LayerMotionHandler for State {
         &mut self,
         surface: &WlSurface,
     ) -> Option<Arc<Mutex<LayerMotionRuntime>>> {
+        if !self
+            .niri
+            .layer_shell_state
+            .layer_surfaces()
+            .any(|layer| layer.wl_surface() == surface && layer.alive())
+        {
+            return None;
+        }
         let layer = self.niri.layout.outputs().find_map(|output| {
             layer_map_for_output(output)
                 .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
                 .cloned()
-        })?;
+        });
         let runtime = Arc::new(Mutex::new(LayerMotionRuntime::default()));
-        if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
-            mapped.set_motion_runtime(runtime.clone());
+        if let Some(layer) = layer {
+            if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
+                mapped.set_motion_runtime(runtime.clone());
+            }
         }
         Some(runtime)
     }

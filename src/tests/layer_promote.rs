@@ -651,3 +651,102 @@ fn close_window_targets_the_focused_promotion_instead_of_the_window_below() {
     assert!(f.client(id).layer(&surface).close_requested);
     assert!(!f.client(id).window(&window_surface).close_requested);
 }
+
+#[test]
+fn controllers_can_be_created_while_a_monitorless_layer_is_closing() {
+    let mut f = Fixture::new();
+    let id = f.add_client();
+    let layer = f
+        .client(id)
+        .create_layer(None, Layer::Top, "closing-native");
+    let surface = layer.surface.clone();
+    layer.set_configure_props(LayerConfigureProps {
+        anchor: Some(Anchor::Left | Anchor::Top),
+        size: Some((96, 72)),
+        ..Default::default()
+    });
+    // These requests can already be queued when the client receives close.
+    // Both optional controllers validate the live role, not output presence.
+    f.client(id).state.layer_promotion(&surface);
+    f.client(id).state.layer_motion(&surface);
+    f.client(id).layer(&surface).commit();
+    f.double_roundtrip(id);
+    assert!(f.client(id).layer(&surface).close_requested);
+    assert!(f.niri().layer_promote_manager_state.promoted.is_empty());
+    assert!(f.niri().mapped_layer_surfaces.is_empty());
+    assert!(f.niri().layout.active_output().is_none());
+}
+
+#[test]
+fn mapped_promotion_preserves_actual_pose_and_first_content_uses_saved_placement() {
+    use super::client::LayerMargin;
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    f.client(id)
+        .layer(&surface)
+        .set_configure_props(LayerConfigureProps {
+            margin: Some(LayerMargin {
+                top: 60,
+                right: 0,
+                bottom: 0,
+                left: 80,
+            }),
+            ..Default::default()
+        });
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].body_origin,
+        Point::from((8., 4.))
+    );
+    assert!(f
+        .niri()
+        .contents_under(Point::from((20., 20.)))
+        .surface
+        .is_some_and(|(s, _)| s == root));
+    assert!(f
+        .niri()
+        .contents_under(Point::from((120., 100.)))
+        .surface
+        .is_none());
+
+    let layer = f.client(id).create_layer(None, Layer::Top, "restore-first");
+    let restored = layer.surface.clone();
+    layer.set_configure_props(LayerConfigureProps {
+        anchor: Some(Anchor::Left | Anchor::Top),
+        size: Some((96, 72)),
+        ..Default::default()
+    });
+    layer.commit();
+    f.double_roundtrip(id);
+    let restoration = f
+        .client(id)
+        .state
+        .layer_promotion(&restored)
+        .promotion
+        .clone();
+    restoration.promote(1, None, 0, 8., 4., 40., 30.);
+    let layer = f.client(id).layer(&restored);
+    layer.set_configure_props(LayerConfigureProps {
+        margin: Some(LayerMargin {
+            top: 100,
+            right: 0,
+            bottom: 0,
+            left: 120,
+        }),
+        ..Default::default()
+    });
+    layer.attach_new_buffer();
+    layer.set_size(96, 72);
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+    let p = f
+        .niri()
+        .layer_promote_manager_state
+        .promoted
+        .values()
+        .find(|p| p.layer.namespace() == "restore-first")
+        .unwrap();
+    assert_eq!(p.body_origin, Point::from((128., 104.)));
+}

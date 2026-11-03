@@ -51,6 +51,10 @@ not insert a fake xdg window into the layout or change collection IPC.
 If layout cleanup reclaims an otherwise empty workspace, promotion follows the
 active workspace within the same collection; it never follows a different
 collection merely because that collection occupies the old output.
+Controller creation validates a live layer role rather than output membership.
+During startup or output loss, the client may already have queued motion and
+promotion controller requests before receiving the layer's close event. Both
+requests remain harmless; a missing output does not disconnect the client.
 
 Dock restores ordinary layer ownership on the current output; cancel prefers
 the original output if it survives. The retained root returns to its dock using

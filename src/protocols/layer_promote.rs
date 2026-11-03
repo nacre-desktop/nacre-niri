@@ -461,7 +461,11 @@ impl State {
         true
     }
     /// Root commit is the only switch between ordinary layer and floating ownership.
-    pub fn layer_promotion_commit(&mut self, surface: &WlSurface) {
+    pub fn layer_promotion_commit(
+        &mut self,
+        surface: &WlSurface,
+        previous_origin: Option<Point<f64, Logical>>,
+    ) {
         if !is_mapped(surface) {
             self.niri
                 .layer_promote_manager_state
@@ -548,19 +552,21 @@ impl State {
                         .unwrap()
                         .loc
                         .to_f64();
-                    let origin = output_origin
-                        + layer_map_for_output(&output)
-                            .layer_geometry(&layer)
-                            .unwrap()
-                            .loc
-                            .to_f64()
-                        + body.loc
-                        + self
-                            .niri
-                            .mapped_layer_surfaces
-                            .get(&layer)
-                            .map(|m| m.bob_offset())
-                            .unwrap_or_default();
+                    let root_origin = previous_origin.unwrap_or_else(|| {
+                        output_origin
+                            + layer_map_for_output(&output)
+                                .layer_geometry(&layer)
+                                .unwrap()
+                                .loc
+                                .to_f64()
+                            + self
+                                .niri
+                                .mapped_layer_surfaces
+                                .get(&layer)
+                                .map(|m| m.bob_offset())
+                                .unwrap_or_default()
+                    });
+                    let origin = root_origin + body.loc;
                     if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
                         mapped.clear_promotion_return();
                     }
@@ -657,8 +663,13 @@ impl Dispatch<BeadLayerPromoteManagerV1, ()> for State {
                 resource.post_error(1u32, "duplicate promotion controller");
                 return;
             }
-            if state.promotion_layer(&surface).is_none() {
-                resource.post_error(0u32, "surface must have a layer-shell role and output");
+            if !state
+                .niri
+                .layer_shell_state
+                .layer_surfaces()
+                .any(|layer| layer.wl_surface() == &surface && layer.alive())
+            {
+                resource.post_error(0u32, "surface must have a live layer-shell role");
                 return;
             }
             let controller = init.init(id, PromotionData(surface.clone()));
