@@ -1345,7 +1345,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 InteractiveMoveState::Moving(move_) => {
                     if move_.tile.window().id() == window {
-                        let Some(InteractiveMoveState::Moving(move_)) =
+                        let Some(InteractiveMoveState::Moving(mut move_)) =
                             self.interactive_move.take()
                         else {
                             unreachable!()
@@ -1359,6 +1359,8 @@ impl<W: LayoutElement> Layout<W> {
                         for ws in self.workspaces_mut() {
                             ws.dnd_scroll_gesture_end();
                         }
+
+                        move_.tile.ensure_alpha_animates_to_1();
 
                         return Some(RemovedTile {
                             tile: move_.tile,

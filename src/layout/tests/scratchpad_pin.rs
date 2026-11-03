@@ -506,3 +506,23 @@ fn starting_an_overlay_drag_survives_layout_refresh() {
         layout.verify_invariants();
     }
 }
+
+#[test]
+fn hiding_or_pinning_a_dragged_tile_clears_drag_transparency() {
+    for pin in [false, true] {
+        let mut layout = Layout::default();
+        Op::AddOutput(1).apply(&mut layout);
+        add_window(&mut layout, 1);
+        let output = output(&layout, 1);
+        assert!(layout.interactive_move_begin(1, &output, (0., 0.).into()));
+        assert!(layout.interactive_move_update(&1, (0., 1000.).into(), output, (0., 0.).into()));
+        if pin {
+            layout.toggle_window_pinned(None);
+            assert!(layout.is_window_pinned(&1));
+        } else {
+            layout.move_window_to_scratchpad(None);
+            assert!(layout.is_window_hidden(&1));
+        }
+        layout.verify_invariants();
+    }
+}
