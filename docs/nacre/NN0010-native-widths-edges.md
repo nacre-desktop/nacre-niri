@@ -83,14 +83,14 @@ The implementation passed in an isolated Ubuntu 24.04 container with 8 CPUs,
 16 GiB, and two Cargo jobs. All 5,499 checked source/resource files matched the
 tested snapshot. Every check below returned zero:
 
-- Workspace tests/doc tests: 282 passed; the one opt-in X11 proof also passed.
+- Workspace tests/doc tests: 284 passed; the one opt-in X11 proof also passed.
 - Real managed satellite (`7bf5e0dcb0d4250860b24b04a6cb3ddeada515d0`), Xwayland,
   and Xlib proof at scale 1.5: tiled/floating/config-off geometry and unchanged
   raw minimum, maximum, height, increment, and aspect hints.
 - Collection operation and edge geometry properties: 100,000 cases each;
   the width policy property also runs 100,000 cases in the normal suite.
 - Rust 1.85 all-target compatibility and the full randomized/slow workflow with
-  `RUN_SLOW_TESTS=1` and `PROPTEST_CASES=200000`: 282 passed.
+  `RUN_SLOW_TESTS=1` and `PROPTEST_CASES=200000`: 284 passed.
 - Nightly formatting, Clippy, bundled config validation, no-default/dbus/systemd/
   dinit/screencast feature checks, profiling build, and visual-test compilation.
 
