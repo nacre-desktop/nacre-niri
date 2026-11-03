@@ -157,6 +157,118 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
 }
 
 #[test]
+fn explicit_cancel_and_later_surface_commit_preserve_sampled_pose() {
+    let mut f = Fixture::new();
+    let (id, client_surface) = setup_panel(&mut f);
+    let motion_proxy = {
+        let client = f.client(id);
+        client.state.layer_motion(&client_surface).motion.clone()
+    };
+    create_plane(&motion_proxy, -100., 0.);
+    motion_proxy.animate(30, 100, 0);
+
+    let layer = f.client(id).layer(&client_surface);
+    layer.attach_new_buffer();
+    layer.set_size(100, 100);
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let root_surface = mapped_surface(&f);
+    let runtime = f
+        .state
+        .server
+        .state
+        .niri
+        .layer_motion_manager_state
+        .runtime(&root_surface)
+        .unwrap();
+    let start = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
+    let mid = start + Duration::from_millis(40);
+    f.state
+        .server
+        .state
+        .niri
+        .layer_motion_manager_state
+        .tick(&root_surface, mid);
+    let output = f.niri_output(1);
+    f.niri()
+        .output_state
+        .get_mut(&output)
+        .unwrap()
+        .frame_clock
+        .presented(mid);
+    f.niri().clock.set_unadjusted(mid);
+
+    motion_proxy.cancel(30);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+
+    let cancelled_x = runtime.lock().unwrap().current[0].1.destination.loc.x;
+    assert!(cancelled_x < -1. && cancelled_x > -100.);
+    assert!(runtime.lock().unwrap().active.is_none());
+
+    // An unrelated root-surface commit must not replace the frozen sampled
+    // pose with the old target endpoint.
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        runtime.lock().unwrap().current[0].1.destination.loc.x,
+        cancelled_x
+    );
+    let mapped = f.niri().mapped_layer_surfaces.values().next().unwrap();
+    assert_eq!(
+        mapped.motion_poses().unwrap()[0].1.destination.loc.x,
+        cancelled_x
+    );
+
+    let controller = f
+        .client(id)
+        .state
+        .motions
+        .iter()
+        .find(|controller| controller.motion == motion_proxy)
+        .unwrap();
+    assert!(controller
+        .events
+        .iter()
+        .any(|event| matches!(event, bead_layer_motion_v1::Event::Cancelled { serial: 30 })));
+    let event_x = controller.events.iter().find_map(|event| match event {
+        bead_layer_motion_v1::Event::PlaneState { plane: 7, x, .. } => Some(*x),
+        _ => None,
+    });
+    assert!(
+        event_x.is_some_and(|x| (x - cancelled_x).abs() < 1. / 256.),
+        "cancel event pose {event_x:?} differs from frozen runtime pose {cancelled_x}"
+    );
+
+    // Retargeting must sample the frozen pose even when the caller supplies a
+    // deliberately unrelated from-state.
+    motion_proxy.set_plane_from(7, 1000., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.set_plane_to(7, 50., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.animate(31, 100, 1);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let retargeted = runtime.lock().unwrap().active.clone().unwrap();
+    assert_eq!(retargeted.serial, 31);
+    assert!(
+        (retargeted.sample(retargeted.start_time())[0]
+            .1
+            .destination
+            .loc
+            .x
+            - cancelled_x)
+            .abs()
+            < 0.01
+    );
+}
+
+#[test]
 fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     let mut f = Fixture::new();
     let (id, client_surface) = setup_panel(&mut f);

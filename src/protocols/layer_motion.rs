@@ -152,10 +152,17 @@ impl LayerMotionManagerState {
 
         let Some((serial, duration, retarget)) = controller.pending_animate.take() else {
             if runtime.active.is_none() {
+                let current = runtime.current.clone();
                 runtime.current = controller
                     .committed_planes
                     .iter()
-                    .map(|plane| (plane.id, plane.to))
+                    .map(|plane| {
+                        let pose = current
+                            .iter()
+                            .find(|(id, _)| *id == plane.id)
+                            .map_or(plane.from, |(_, pose)| *pose);
+                        (plane.id, pose)
+                    })
                     .collect();
             }
             return;
