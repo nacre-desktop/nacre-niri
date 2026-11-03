@@ -353,8 +353,9 @@ impl LayerMotion {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     fn pose(x: f64, width: f64, opacity: f64) -> MotionPose {
         MotionPose {
