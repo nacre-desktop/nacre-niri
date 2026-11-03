@@ -524,5 +524,8 @@ fn hiding_or_pinning_a_dragged_tile_clears_drag_transparency() {
             assert!(layout.is_window_hidden(&1));
         }
         layout.verify_invariants();
+        layout.interactive_move_end(&1);
+        assert_eq!(layout.is_window_pinned(&1), pin);
+        layout.verify_invariants();
     }
 }

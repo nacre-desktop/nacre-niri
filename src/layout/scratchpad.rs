@@ -331,6 +331,21 @@ impl<W: LayoutElement> Layout<W> {
         }
         self.scratchpad_cycle.retain(|candidate| candidate != &id);
         let was_focused = self.focus().is_some_and(|window| window.id() == &id);
+        if let Some(moving) = self
+            .interactive_move
+            .as_ref()
+            .and_then(|state| state.moving())
+            .filter(|moving| moving.tile.window().id() == &id)
+        {
+            if !moving.is_floating {
+                self.toggle_window_floating(Some(&id));
+            }
+            if let Some(super::InteractiveMoveState::Moving(moving)) = &mut self.interactive_move {
+                moving.tile.pinned = !moving.tile.pinned;
+                moving.tile.scratchpad = false;
+            }
+            return;
+        }
         if self.is_window_pinned(&id) {
             let focused_id = self.focus().map(|window| window.id().clone());
             let output_and_active = self
