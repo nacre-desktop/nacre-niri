@@ -115,6 +115,11 @@ pub fn is_suppressed(
     overview || fullscreen || locked || inactive_output
 }
 
+/// Whether pointer motion has an unambiguous accepted displacement for edge tracking.
+pub fn pointer_motion_is_eligible(pointer_confined: bool, spatial_wrapping: bool) -> bool {
+    !pointer_confined && !spatial_wrapping
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -156,6 +161,9 @@ mod tests {
         assert!(is_suppressed(false, false, false, true));
         assert!(!is_suppressed(false, false, false, false));
         assert_eq!(select_edge(None, [0., 0.], [true; 4]), None);
+        assert!(!pointer_motion_is_eligible(true, false));
+        assert!(!pointer_motion_is_eligible(false, true));
+        assert!(pointer_motion_is_eligible(false, false));
     }
 
     #[test]
@@ -639,7 +647,7 @@ mod edge_trigger_runtime_tests {
     }
 
     #[test]
-    fn output_removal_and_config_reload_clear_pending_dwell() {
+    fn output_reposition_and_config_reload_clear_pending_dwell() {
         let mut fixture = configured_fixture();
         fixture.add_output(2, (1280, 720));
         let first_position = left_edge_position(&fixture, 1);
@@ -657,8 +665,8 @@ mod edge_trigger_runtime_tests {
             Some(second_output_name.as_str())
         );
 
-        let output = fixture.niri_output(2);
-        fixture.niri().remove_output(&output);
+        let unrelated_output = fixture.niri_output(1);
+        fixture.niri().remove_output(&unrelated_output);
         assert!(fixture.niri().edge_trigger_candidate.is_none());
         assert!(fixture.niri().edge_trigger_timer.is_none());
 

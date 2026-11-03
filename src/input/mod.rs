@@ -2518,6 +2518,9 @@ impl State {
             }
             None
         });
+        let spatial_wrapping = spatial_grab
+            .as_ref()
+            .is_some_and(|spatial_grab| spatial_grab.is_some());
         if let Some((output, horizontal)) = spatial_grab.flatten() {
             if let Some(geo) = self.niri.global_space.output_geometry(&output) {
                 let geo = geo.to_f64();
@@ -2582,7 +2585,15 @@ impl State {
         }
 
         let under = self.niri.contents_under(new_pos);
-        self.niri.update_edge_trigger(new_pos, event.delta());
+        if crate::edge_triggers::pointer_motion_is_eligible(
+            pointer_confined.is_some(),
+            spatial_wrapping,
+        ) {
+            self.niri.update_edge_trigger(new_pos, event.delta());
+        } else {
+            self.niri.clear_edge_trigger();
+            self.niri.edge_trigger_last_motion = None;
+        }
 
         // Handle confined pointer.
         if let Some((focus_surface, region)) = pointer_confined {

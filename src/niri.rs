@@ -2700,6 +2700,8 @@ impl Niri {
     /// Repositions all outputs, optionally adding a new output.
     pub fn reposition_outputs(&mut self, new_output: Option<&Output>) {
         let _span = tracy_client::span!("Niri::reposition_outputs");
+        self.clear_edge_trigger();
+        self.edge_trigger_last_motion = None;
 
         #[derive(Debug)]
         struct Data {
@@ -2999,6 +3001,9 @@ impl Niri {
     }
 
     pub fn output_resized(&mut self, output: &Output) {
+        self.clear_edge_trigger();
+        self.edge_trigger_last_motion = None;
+
         let output_size = output_size(output);
         let scale = output.current_scale();
         let transform = output.current_transform();
