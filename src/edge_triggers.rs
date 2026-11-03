@@ -111,8 +111,9 @@ pub fn is_suppressed(
     fullscreen: bool,
     locked: bool,
     inactive_output: bool,
+    pointer_grabbed: bool,
 ) -> bool {
-    overview || fullscreen || locked || inactive_output
+    overview || fullscreen || locked || inactive_output || pointer_grabbed
 }
 
 /// Whether pointer motion has an unambiguous accepted displacement for edge tracking.
@@ -155,11 +156,12 @@ mod tests {
 
     #[test]
     fn fullscreen_overview_lock_and_detached_outputs_suppress_triggers() {
-        assert!(is_suppressed(false, true, false, false));
-        assert!(is_suppressed(true, false, false, false));
-        assert!(is_suppressed(false, false, true, false));
-        assert!(is_suppressed(false, false, false, true));
-        assert!(!is_suppressed(false, false, false, false));
+        assert!(is_suppressed(false, true, false, false, false));
+        assert!(is_suppressed(true, false, false, false, false));
+        assert!(is_suppressed(false, false, true, false, false));
+        assert!(is_suppressed(false, false, false, true, false));
+        assert!(is_suppressed(false, false, false, false, true));
+        assert!(!is_suppressed(false, false, false, false, false));
         assert_eq!(select_edge(None, [0., 0.], [true; 4]), None);
         assert!(!pointer_motion_is_eligible(true, false));
         assert!(!pointer_motion_is_eligible(false, true));
@@ -222,7 +224,7 @@ mod tests {
                 prop_assert!(is_inside_edge(logical_size, [x, y], edge));
             }
             let _ = inward_delta(Edge::Left, [x, y]);
-            let _ = is_suppressed(false, false, false, !output_attached);
+            let _ = is_suppressed(false, false, false, !output_attached, false);
         }
     }
 }
@@ -268,16 +270,18 @@ impl Niri {
     fn edge_trigger_is_suppressed(&self, output: &Output) -> bool {
         let monitor = self.layout.monitor_for_output(output);
         let inactive_output = monitor.is_none();
-        let fullscreen = monitor.is_some_and(|monitor| {
-            monitor
-                .active_workspace_ref()
-                .is_active_pending_fullscreen()
-        });
+        let fullscreen = monitor
+            .is_some_and(|monitor| monitor.active_workspace_ref().is_active_pending_fullscreen());
+        let pointer_grabbed = self
+            .seat
+            .get_pointer()
+            .is_some_and(|pointer| pointer.is_grabbed());
         crate::edge_triggers::is_suppressed(
             self.layout.is_overview_open(),
             fullscreen,
             self.is_locked(),
             inactive_output,
+            pointer_grabbed,
         )
     }
 
