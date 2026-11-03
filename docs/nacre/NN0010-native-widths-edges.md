@@ -86,6 +86,8 @@ tested snapshot. Every check below returned zero:
   raw minimum, maximum, height, increment, and aspect hints.
 - Collection operation and edge geometry properties: 100,000 cases each;
   the width policy property also runs 100,000 cases in the normal suite.
+- Rust 1.85 all-target compatibility and the full randomized/slow workflow with
+  `RUN_SLOW_TESTS=1` and `PROPTEST_CASES=200000`: 282 passed.
 - Nightly formatting, Clippy, bundled config validation, no-default/dbus/systemd/
   dinit/screencast feature checks, profiling build, and visual-test compilation.
 
