@@ -4431,6 +4431,7 @@ impl Niri {
                 });
             }
 
+            mon.render_pinned(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
             if self.layout.collection_overview_is_open() {
                 self.layout
                     .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {
@@ -4487,6 +4488,7 @@ impl Niri {
                 push_popups_from_layer!(Layer::Background, ns, xray_pos, process!(geo));
             }
 
+            mon.render_pinned(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
             if self.layout.collection_overview_is_open() {
                 self.layout
                     .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {

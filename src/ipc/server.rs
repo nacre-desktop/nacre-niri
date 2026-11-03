@@ -949,6 +949,8 @@ fn make_ipc_window(
     mapped: &Mapped,
     workspace_id: Option<WorkspaceId>,
     layout: WindowLayout,
+    is_hidden: bool,
+    is_pinned: bool,
 ) -> niri_ipc::Window {
     with_toplevel_role(mapped.toplevel(), |role| niri_ipc::Window {
         id: mapped.id().get(),
@@ -958,6 +960,8 @@ fn make_ipc_window(
         workspace_id: workspace_id.map(|id| id.get()),
         is_focused: mapped.is_focused(),
         is_floating: mapped.is_floating(),
+        is_hidden,
+        is_pinned,
         is_urgent: mapped.is_urgent(),
         layout,
         focus_timestamp: mapped.get_focus_timestamp().map(Timestamp::from),
@@ -1152,6 +1156,8 @@ impl State {
         let mut focused_id = None;
         layout.with_windows(|mapped, _, ws_id, window_layout| {
             let id = mapped.id().get();
+            let is_hidden = layout.is_window_hidden(&mapped.window);
+            let is_pinned = layout.is_window_pinned(&mapped.window);
             seen.insert(id);
 
             if mapped.is_focused() {
@@ -1159,21 +1165,23 @@ impl State {
             }
 
             let Some(ipc_win) = state.windows.get(&id) else {
-                let window = make_ipc_window(mapped, ws_id, window_layout);
+                let window = make_ipc_window(mapped, ws_id, window_layout, is_hidden, is_pinned);
                 events.push(Event::WindowOpenedOrChanged { window });
                 return;
             };
 
             let workspace_id = ws_id.map(|id| id.get());
-            let mut changed =
-                ipc_win.workspace_id != workspace_id || ipc_win.is_floating != mapped.is_floating();
+            let mut changed = ipc_win.workspace_id != workspace_id
+                || ipc_win.is_floating != mapped.is_floating()
+                || ipc_win.is_hidden != is_hidden
+                || ipc_win.is_pinned != is_pinned;
 
             changed |= with_toplevel_role(mapped.toplevel(), |role| {
                 ipc_win.title != role.title || ipc_win.app_id != role.app_id
             });
 
             if changed {
-                let window = make_ipc_window(mapped, ws_id, window_layout);
+                let window = make_ipc_window(mapped, ws_id, window_layout, is_hidden, is_pinned);
                 events.push(Event::WindowOpenedOrChanged { window });
                 return;
             }

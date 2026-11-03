@@ -902,6 +902,26 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
+    /// Hide the focused window in the scratchpad.
+    MoveWindowToScratchpad {
+        /// Id of the window to hide. If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
+    /// Show or hide the most recently used scratchpad window.
+    ToggleScratchpad {},
+    /// Show a specific scratchpad window.
+    ScratchpadShowWindow {
+        /// Id of the scratchpad window to show.
+        #[cfg_attr(feature = "clap", arg())]
+        id: u64,
+    },
+    /// Toggle whether the focused window stays visible across workspace switches.
+    ToggleWindowPinned {
+        /// Id of the window to pin. If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
     /// Move the focused window to the floating layout.
     MoveWindowToFloating {
         /// Id of the window to move.
@@ -1409,6 +1429,12 @@ pub struct Window {
     ///
     /// If the window isn't floating then it is in the tiling layout.
     pub is_floating: bool,
+    /// Whether this window is hidden in the scratchpad.
+    #[serde(default)]
+    pub is_hidden: bool,
+    /// Whether this window is pinned above workspaces on its output.
+    #[serde(default)]
+    pub is_pinned: bool,
     /// Whether this window requests your attention.
     pub is_urgent: bool,
     /// Position- and size-related properties of the window.

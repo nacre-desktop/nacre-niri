@@ -1909,6 +1909,8 @@ mod tests {
             },
             nacre: Nacre {
                 overview_hover: true,
+                scratchpad: true,
+                window_pinning: true,
                 proportional_x11_widths: true,
                 edge_triggers: true,
             },
@@ -2009,6 +2011,7 @@ mod tests {
                     open_floating: Some(
                         false,
                     ),
+                    open_pinned: None,
                     open_focused: Some(
                         true,
                     ),

@@ -30,6 +30,8 @@ use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::{render_to_texture, RenderCtx, RenderTarget};
 use crate::utils::output_size;
 
+const SCRATCHPAD_COLUMN_ID: u64 = u64::MAX;
+
 #[derive(Debug, Default)]
 pub(super) struct Overview {
     labels: RefCell<HashMap<(u64, String, u64), TextureBuffer<GlesTexture>>>,
