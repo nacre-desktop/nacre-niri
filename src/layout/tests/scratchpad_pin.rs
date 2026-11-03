@@ -407,3 +407,16 @@ fn shown_scratchpad_can_return_to_an_ordinary_tiled_workspace() {
     assert!(!layout.is_window_hidden(&1));
     layout.verify_invariants();
 }
+
+#[test]
+fn pinned_overlay_can_be_resized_interactively() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    assert!(layout.interactive_resize_begin(1, ResizeEdge::BOTTOM_RIGHT));
+    assert!(layout.interactive_resize_update(&1, (100., 80.).into()));
+    layout.interactive_resize_end(&1);
+    assert!(layout.is_window_pinned(&1));
+    layout.verify_invariants();
+}

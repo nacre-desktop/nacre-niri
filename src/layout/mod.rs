@@ -5312,25 +5312,11 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn interactive_resize_begin(&mut self, window: W::Id, edges: ResizeEdge) -> bool {
-        match &mut self.monitor_set {
-            MonitorSet::Normal { monitors, .. } => {
-                for mon in monitors {
-                    for ws in &mut mon.workspaces {
-                        if ws.has_window(&window) {
-                            return ws.interactive_resize_begin(window, edges);
-                        }
-                    }
-                }
-            }
-            MonitorSet::NoOutputs { workspaces, .. } => {
-                for ws in workspaces {
-                    if ws.has_window(&window) {
-                        return ws.interactive_resize_begin(window, edges);
-                    }
-                }
+        for workspace in self.workspaces_mut() {
+            if workspace.has_window(&window) {
+                return workspace.interactive_resize_begin(window, edges);
             }
         }
-
         false
     }
 
@@ -5339,59 +5325,35 @@ impl<W: LayoutElement> Layout<W> {
         window: &W::Id,
         delta: Point<f64, Logical>,
     ) -> bool {
-        if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
-                return false;
+        if self
+            .interactive_move
+            .as_ref()
+            .and_then(|state| state.moving())
+            .is_some_and(|moving| moving.tile.window().id() == window)
+        {
+            return false;
+        }
+        for workspace in self.workspaces_mut() {
+            if workspace.has_window(window) {
+                return workspace.interactive_resize_update(window, delta);
             }
         }
-
-        match &mut self.monitor_set {
-            MonitorSet::Normal { monitors, .. } => {
-                for mon in monitors {
-                    for ws in &mut mon.workspaces {
-                        if ws.has_window(window) {
-                            return ws.interactive_resize_update(window, delta);
-                        }
-                    }
-                }
-            }
-            MonitorSet::NoOutputs { workspaces, .. } => {
-                for ws in workspaces {
-                    if ws.has_window(window) {
-                        return ws.interactive_resize_update(window, delta);
-                    }
-                }
-            }
-        }
-
         false
     }
 
     pub fn interactive_resize_end(&mut self, window: &W::Id) {
-        if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
-            if move_.tile.window().id() == window {
-                return;
-            }
+        if self
+            .interactive_move
+            .as_ref()
+            .and_then(|state| state.moving())
+            .is_some_and(|moving| moving.tile.window().id() == window)
+        {
+            return;
         }
-
-        match &mut self.monitor_set {
-            MonitorSet::Normal { monitors, .. } => {
-                for mon in monitors {
-                    for ws in &mut mon.workspaces {
-                        if ws.has_window(window) {
-                            ws.interactive_resize_end(Some(window));
-                            return;
-                        }
-                    }
-                }
-            }
-            MonitorSet::NoOutputs { workspaces, .. } => {
-                for ws in workspaces {
-                    if ws.has_window(window) {
-                        ws.interactive_resize_end(Some(window));
-                        return;
-                    }
-                }
+        for workspace in self.workspaces_mut() {
+            if workspace.has_window(window) {
+                workspace.interactive_resize_end(Some(window));
+                return;
             }
         }
     }
@@ -5623,6 +5585,29 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if self.scratchpad.has_window(window) {
+            self.scratchpad.store_unmap_snapshot_if_empty(
+                renderer,
+                xray,
+                xray_has_blocked_out_layers,
+                XrayPos::default(),
+                window,
+            );
+            return;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.has_window(window) {
+                monitor.pinned_workspace.store_unmap_snapshot_if_empty(
+                    renderer,
+                    xray,
+                    xray_has_blocked_out_layers,
+                    XrayPos::default(),
+                    window,
+                );
+                return;
+            }
+        }
+
         for collection in &mut self.collections {
             for workspace in &mut collection.workspaces {
                 if workspace.has_window(window) {
@@ -5680,33 +5665,10 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        for collection in &mut self.collections {
-            for workspace in &mut collection.workspaces {
-                if workspace.has_window(window) {
-                    workspace.clear_unmap_snapshot(window);
-                    return;
-                }
-            }
-        }
-
-        match &mut self.monitor_set {
-            MonitorSet::Normal { monitors, .. } => {
-                for mon in monitors {
-                    for ws in &mut mon.workspaces {
-                        if ws.has_window(window) {
-                            ws.clear_unmap_snapshot(window);
-                            return;
-                        }
-                    }
-                }
-            }
-            MonitorSet::NoOutputs { workspaces, .. } => {
-                for ws in workspaces {
-                    if ws.has_window(window) {
-                        ws.clear_unmap_snapshot(window);
-                        return;
-                    }
-                }
+        for workspace in self.workspaces_mut() {
+            if workspace.has_window(window) {
+                workspace.clear_unmap_snapshot(window);
+                return;
             }
         }
     }
@@ -5750,33 +5712,10 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        for collection in &mut self.collections {
-            for workspace in &mut collection.workspaces {
-                if workspace.has_window(window) {
-                    workspace.start_close_animation_for_window(renderer, window, blocker);
-                    return;
-                }
-            }
-        }
-
-        match &mut self.monitor_set {
-            MonitorSet::Normal { monitors, .. } => {
-                for mon in monitors {
-                    for ws in &mut mon.workspaces {
-                        if ws.has_window(window) {
-                            ws.start_close_animation_for_window(renderer, window, blocker);
-                            return;
-                        }
-                    }
-                }
-            }
-            MonitorSet::NoOutputs { workspaces, .. } => {
-                for ws in workspaces {
-                    if ws.has_window(window) {
-                        ws.start_close_animation_for_window(renderer, window, blocker);
-                        return;
-                    }
-                }
+        for workspace in self.workspaces_mut() {
+            if workspace.has_window(window) {
+                workspace.start_close_animation_for_window(renderer, window, blocker);
+                return;
             }
         }
     }
