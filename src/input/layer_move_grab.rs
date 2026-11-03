@@ -7,6 +7,7 @@ use smithay::input::pointer::{
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+use smithay::wayland::compositor::{get_parent, with_states, SubsurfaceCachedState};
 
 use crate::niri::State;
 
@@ -52,9 +53,27 @@ impl LayerMoveGrab {
             .output_geometry(&p.output)?
             .loc
             .to_f64();
+        // Keep the implicit grab's original surface, including nested children.
+        // Its committed offset follows the moved root; retargeting the root would
+        // manufacture a leave/enter and deliver release to the wrong surface.
+        let (focus, _) = self.start.focus.as_ref()?;
+        let mut child = focus.clone();
+        let mut offset = Point::<f64, Logical>::from((0., 0.));
+        while child != self.surface {
+            let parent = get_parent(&child)?;
+            offset += with_states(&child, |states| {
+                states
+                    .cached_state
+                    .get::<SubsurfaceCachedState>()
+                    .current()
+                    .location
+                    .to_f64()
+            });
+            child = parent;
+        }
         Some((
-            self.surface.clone(),
-            data.niri.promoted_surface_origin(p) + output_origin,
+            focus.clone(),
+            data.niri.promoted_surface_origin(p) + output_origin + offset,
         ))
     }
 }

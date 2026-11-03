@@ -36,7 +36,9 @@ new role is needed during the held grab.
 Interactive promotion validates the seat and current pointer-button serial
 against the root or one of its subsurfaces. A dedicated grab preserves the
 original hotspot, includes travel since the press, and continues delivering
-motion, relative motion and release to the client. Command promotion uses a
+motion, relative motion and release to the client. A press on a subsurface keeps
+that original child as the pointer target and follows its committed local offset.
+Command promotion uses a
 null seat and zero button serial. Stale request serials are ignored using
 wraparound comparison. Expired grabs reject without changing ownership.
 The standard close-window action targets a focused promotion through its

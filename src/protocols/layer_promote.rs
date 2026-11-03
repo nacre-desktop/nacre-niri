@@ -11,7 +11,7 @@ use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
 };
 use smithay::utils::{Logical, Point, Rectangle, Serial, Size};
-use smithay::wayland::compositor::with_states;
+use smithay::wayland::compositor::{get_parent, with_states};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, LayerSurfaceCachedState};
 
 use crate::input::layer_move_grab::LayerMoveGrab;
@@ -409,11 +409,13 @@ impl State {
         pointer.with_grab(|grab_serial, grab| {
             if grab_serial == Serial::from(serial) && !Self::is_dnd_grab(grab.as_any()) {
                 let data = grab.start_data();
-                if data
-                    .focus
-                    .as_ref()
-                    .is_some_and(|(focus, _)| self.niri.find_root_shell_surface(focus) == *surface)
-                {
+                if data.focus.as_ref().is_some_and(|(focus, _)| {
+                    let mut root = focus.clone();
+                    while let Some(parent) = get_parent(&root) {
+                        root = parent;
+                    }
+                    root == *surface
+                }) {
                     start = Some(data.clone());
                 }
             }

@@ -750,3 +750,112 @@ fn mapped_promotion_preserves_actual_pose_and_first_content_uses_saved_placement
         .unwrap();
     assert_eq!(p.body_origin, Point::from((128., 104.)));
 }
+
+#[test]
+fn interactive_promotion_keeps_the_pressed_subsurface_pointer_stream() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    let client = f.client(id);
+    let child = client
+        .state
+        .compositor
+        .as_ref()
+        .unwrap()
+        .create_surface(&client.qh, ());
+    let sub = client.state.subcompositor.as_ref().unwrap().get_subsurface(
+        &child,
+        &surface,
+        &client.qh,
+        (),
+    );
+    sub.set_position(13, 9);
+    let child_viewport =
+        client
+            .state
+            .viewporter
+            .as_ref()
+            .unwrap()
+            .get_viewport(&child, &client.qh, ());
+    child_viewport.set_destination(40, 30);
+    let buffer = client.state.spbm.as_ref().unwrap().create_u32_rgba_buffer(
+        u32::MAX,
+        0,
+        0,
+        u32::MAX,
+        &client.qh,
+        (),
+    );
+    child.attach(Some(&buffer), 0, 0);
+    child.commit();
+    commit(&mut f, id, &surface);
+    let pressed = smithay::wayland::compositor::get_children(&root)
+        .into_iter()
+        .next()
+        .unwrap();
+    let seat = f.client(id).state.seat.clone().unwrap();
+    let pointer = f.niri().seat.get_pointer().unwrap();
+    let serial = SERIAL_COUNTER.next_serial();
+    let state = f.niri_state();
+    pointer.motion(
+        state,
+        Some((pressed.clone(), Point::from((13., 9.)))),
+        &MotionEvent {
+            location: Point::from((20., 20.)),
+            serial,
+            time: 1,
+        },
+    );
+    pointer.button(
+        state,
+        &ButtonEvent {
+            serial,
+            time: 1,
+            button: 0x110,
+            state: ButtonState::Pressed,
+        },
+    );
+    pointer.frame(state);
+    f.double_roundtrip(id);
+    f.client(id).state.pointer_events.clear();
+    proxy.promote(1, Some(&seat), serial.into(), 8., 4., 40., 30.);
+    commit(&mut f, id, &surface);
+    let state = f.niri_state();
+    pointer.motion(
+        state,
+        Some((pressed, Point::from((63., 44.)))),
+        &MotionEvent {
+            location: Point::from((70., 55.)),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 2,
+        },
+    );
+    pointer.button(
+        state,
+        &ButtonEvent {
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 3,
+            button: 0x110,
+            state: ButtonState::Released,
+        },
+    );
+    pointer.frame(state);
+    f.double_roundtrip(id);
+    let events = &f.client(id).state.pointer_events;
+    use wayland_client::protocol::wl_pointer;
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            wl_pointer::Event::Enter { .. } | wl_pointer::Event::Leave { .. }
+        )),
+        "the held child focus must not change: {events:?}"
+    );
+    assert!(events.iter().any(|e| matches!(e, wl_pointer::Event::Motion { surface_x, surface_y, .. } if *surface_x == 7. && *surface_y == 11.)), "the pressed child-local hotspot stays fixed: {events:?}");
+    assert!(events.iter().any(|e| matches!(
+        e,
+        wl_pointer::Event::Button {
+            state: wayland_client::WEnum::Value(wl_pointer::ButtonState::Released),
+            ..
+        }
+    )));
+}

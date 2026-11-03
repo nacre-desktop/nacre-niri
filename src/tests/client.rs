@@ -30,6 +30,8 @@ use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_display::WlDisplay;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
+use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
+use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle};
 
@@ -102,6 +104,7 @@ pub struct State {
     pub outputs: HashMap<WlOutput, String>,
 
     pub compositor: Option<WlCompositor>,
+    pub subcompositor: Option<WlSubcompositor>,
     pub xdg_wm_base: Option<XdgWmBase>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
@@ -110,6 +113,7 @@ pub struct State {
     pub layer_promote_manager: Option<BeadLayerPromoteManagerV1>,
     pub seat: Option<WlSeat>,
     pub pointer: Option<WlPointer>,
+    pub pointer_events: Vec<wl_pointer::Event>,
     pub promotions: Vec<LayerPromotionController>,
 
     pub windows: Vec<Window>,
@@ -246,6 +250,7 @@ impl Client {
             globals: Vec::new(),
             outputs: HashMap::new(),
             compositor: None,
+            subcompositor: None,
             xdg_wm_base: None,
             layer_shell: None,
             spbm: None,
@@ -254,6 +259,7 @@ impl Client {
             layer_promote_manager: None,
             seat: None,
             pointer: None,
+            pointer_events: Vec::new(),
             promotions: Vec::new(),
             windows: Vec::new(),
             layers: Vec::new(),
@@ -624,6 +630,8 @@ impl Dispatch<WlRegistry, ()> for State {
                 if interface == WlCompositor::interface().name {
                     let version = min(version, WlCompositor::interface().version);
                     state.compositor = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlSubcompositor::interface().name {
+                    state.subcompositor = Some(registry.bind(name, 1, qh, ()));
                 } else if interface == XdgWmBase::interface().name {
                     let version = min(version, XdgWmBase::interface().version);
                     state.xdg_wm_base = Some(registry.bind(name, version, qh, ()));
@@ -975,14 +983,18 @@ impl Dispatch<WlSeat, ()> for State {
     ) {
     }
 }
+wayland_client::delegate_noop!(State: ignore WlSubcompositor);
+wayland_client::delegate_noop!(State: ignore WlSubsurface);
+
 impl Dispatch<WlPointer, ()> for State {
     fn event(
-        _: &mut Self,
+        state: &mut Self,
         _: &WlPointer,
-        _: wl_pointer::Event,
+        event: wl_pointer::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
+        state.pointer_events.push(event);
     }
 }
