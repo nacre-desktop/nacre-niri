@@ -102,6 +102,21 @@
       </description>
       <arg name="serial" type="uint"/>
     </request>
+    <request name="set_body_size">
+      <description summary="Update promoted content extent with a new root buffer">
+        Double-buffered with the root commit. Width and height must be positive,
+        at most 32768 logical units, and fit the newly committed root texture at
+        the original body origin. The body origin and pointer hotspot remain
+        unchanged. The compositor reports the new extent using the active
+        promotion serial. This request has no effect while docked or unmapped.
+        It lets a client render its natural extent on the retained root after
+        promotion, including content previously clipped by layer arrangement.
+        No layer role recreation, resize handshake or second content surface
+        is required. Clients retain their configured layer extent for docking.
+      </description>
+      <arg name="width" type="fixed"/>
+      <arg name="height" type="fixed"/>
+    </request>
     <event name="configure">
       <description summary="Committed state or compositor movement notification">
         Rectangle coordinates describe the global visible body. Output is the

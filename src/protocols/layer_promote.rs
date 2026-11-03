@@ -68,6 +68,7 @@ struct Controller {
     resource: BeadLayerPromoteV1,
     pending: Option<Pending>,
     last_serial: Option<u32>,
+    pending_body_size: Option<Size<f64, Logical>>,
 }
 #[derive(Default)]
 pub struct LayerPromoteManagerState {
@@ -94,6 +95,7 @@ impl LayerPromoteManagerState {
         }
         if let Some(c) = self.controllers.get_mut(surface) {
             c.pending = None;
+            c.pending_body_size = None;
         }
     }
     pub fn destroy_surface(&mut self, surface: &WlSurface) {
@@ -466,134 +468,160 @@ impl State {
                 .remove_surface(surface);
             return;
         }
-        let pending = self
+        let (pending, body_size) = self
             .niri
             .layer_promote_manager_state
             .controllers
             .get_mut(surface)
-            .and_then(|c| c.pending.take());
-        let Some(pending) = pending else {
+            .map(|c| (c.pending.take(), c.pending_body_size.take()))
+            .unwrap_or_default();
+        if pending.is_none() && body_size.is_none() {
             return;
-        };
-        match pending {
-            Pending::Promote {
-                serial,
-                seat,
-                button_serial,
-                body,
-            } => {
-                if self.niri.is_locked() {
-                    self.niri.layer_promote_manager_state.reject(
-                        surface,
-                        serial,
-                        "session is locked",
-                    );
-                    return;
-                }
-                let Some((output, layer)) = self.promotion_layer(surface) else {
-                    self.niri.layer_promote_manager_state.reject(
-                        surface,
-                        serial,
-                        "surface has no output",
-                    );
-                    return;
-                };
-                let valid = with_states(surface, crate::utils::surface_geo).is_some_and(|geo| {
-                    body.loc.x >= 0.
-                        && body.loc.y >= 0.
-                        && body.loc.x + body.size.w <= geo.size.w as f64
-                        && body.loc.y + body.size.h <= geo.size.h as f64
-                });
-                if !valid {
-                    self.niri.layer_promote_manager_state.reject(
-                        surface,
-                        serial,
-                        "body is outside the current surface",
-                    );
-                    return;
-                }
-                if seat
-                    .as_ref()
-                    .is_some_and(|s| self.promotion_grab(surface, s, button_serial).is_none())
-                {
-                    self.niri.layer_promote_manager_state.reject(
-                        surface,
-                        serial,
-                        "pointer grab is no longer valid",
-                    );
-                    return;
-                }
-                let Some(workspace) = self
-                    .niri
-                    .layout
-                    .monitor_for_output(&output)
-                    .map(|mon| mon.active_workspace_ref().id().get())
-                else {
-                    self.niri.layer_promote_manager_state.reject(
-                        surface,
-                        serial,
-                        "output has no visible workspace",
-                    );
-                    return;
-                };
-                let output_origin = self
-                    .niri
-                    .global_space
-                    .output_geometry(&output)
-                    .unwrap()
-                    .loc
-                    .to_f64();
-                let origin = output_origin
-                    + layer_map_for_output(&output)
-                        .layer_geometry(&layer)
+        }
+        if let Some(pending) = pending {
+            match pending {
+                Pending::Promote {
+                    serial,
+                    seat,
+                    button_serial,
+                    body,
+                } => {
+                    if self.niri.is_locked() {
+                        self.niri.layer_promote_manager_state.reject(
+                            surface,
+                            serial,
+                            "session is locked",
+                        );
+                        return;
+                    }
+                    let Some((output, layer)) = self.promotion_layer(surface) else {
+                        self.niri.layer_promote_manager_state.reject(
+                            surface,
+                            serial,
+                            "surface has no output",
+                        );
+                        return;
+                    };
+                    let valid =
+                        with_states(surface, crate::utils::surface_geo).is_some_and(|geo| {
+                            body.loc.x >= 0.
+                                && body.loc.y >= 0.
+                                && body.loc.x + body.size.w <= geo.size.w as f64
+                                && body.loc.y + body.size.h <= geo.size.h as f64
+                        });
+                    if !valid {
+                        self.niri.layer_promote_manager_state.reject(
+                            surface,
+                            serial,
+                            "body is outside the current surface",
+                        );
+                        return;
+                    }
+                    if seat
+                        .as_ref()
+                        .is_some_and(|s| self.promotion_grab(surface, s, button_serial).is_none())
+                    {
+                        self.niri.layer_promote_manager_state.reject(
+                            surface,
+                            serial,
+                            "pointer grab is no longer valid",
+                        );
+                        return;
+                    }
+                    let Some(workspace) = self
+                        .niri
+                        .layout
+                        .monitor_for_output(&output)
+                        .map(|mon| mon.active_workspace_ref().id().get())
+                    else {
+                        self.niri.layer_promote_manager_state.reject(
+                            surface,
+                            serial,
+                            "output has no visible workspace",
+                        );
+                        return;
+                    };
+                    let output_origin = self
+                        .niri
+                        .global_space
+                        .output_geometry(&output)
                         .unwrap()
                         .loc
-                        .to_f64()
-                    + body.loc
-                    + self
-                        .niri
-                        .mapped_layer_surfaces
-                        .get(&layer)
-                        .map(|m| m.bob_offset())
-                        .unwrap_or_default();
-                if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
-                    mapped.clear_promotion_return();
+                        .to_f64();
+                    let origin = output_origin
+                        + layer_map_for_output(&output)
+                            .layer_geometry(&layer)
+                            .unwrap()
+                            .loc
+                            .to_f64()
+                        + body.loc
+                        + self
+                            .niri
+                            .mapped_layer_surfaces
+                            .get(&layer)
+                            .map(|m| m.bob_offset())
+                            .unwrap_or_default();
+                    if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
+                        mapped.clear_promotion_return();
+                    }
+                    let manager = &mut self.niri.layer_promote_manager_state;
+                    if manager.is_promoted(surface) {
+                        manager.reject(surface, serial, "surface is already promoted");
+                        return;
+                    }
+                    manager.order = manager.order.wrapping_add(1);
+                    let dock_zone = layer.cached_state().exclusive_zone;
+                    let collection = self.niri.layout.collection_for_output(&output);
+                    manager.promoted.insert(
+                        surface.clone(),
+                        PromotedLayer {
+                            layer: layer.clone(),
+                            output: output.clone(),
+                            origin_output: output,
+                            local_body: body,
+                            body_origin: origin,
+                            output_origin,
+                            workspace,
+                            collection,
+                            moving: false,
+                            serial,
+                            order: manager.order,
+                            dock_zone,
+                        },
+                    );
+                    set_exclusive_zone(surface, ExclusiveZone::DontCare);
+                    if let Some(seat) = seat {
+                        self.begin_layer_move(surface, &seat, button_serial);
+                    }
+                    self.niri.layer_shell_on_demand_focus = Some(layer);
+                    self.niri.layer_promote_manager_state.configure(surface);
+                    self.niri.queue_redraw_all();
                 }
-                let manager = &mut self.niri.layer_promote_manager_state;
-                if manager.is_promoted(surface) {
-                    manager.reject(surface, serial, "surface is already promoted");
-                    return;
-                }
-                manager.order = manager.order.wrapping_add(1);
-                let dock_zone = layer.cached_state().exclusive_zone;
-                let collection = self.niri.layout.collection_for_output(&output);
-                manager.promoted.insert(
-                    surface.clone(),
-                    PromotedLayer {
-                        layer: layer.clone(),
-                        output: output.clone(),
-                        origin_output: output,
-                        local_body: body,
-                        body_origin: origin,
-                        output_origin,
-                        workspace,
-                        collection,
-                        moving: false,
-                        serial,
-                        order: manager.order,
-                        dock_zone,
-                    },
-                );
-                set_exclusive_zone(surface, ExclusiveZone::DontCare);
-                if let Some(seat) = seat {
-                    self.begin_layer_move(surface, &seat, button_serial);
-                }
-                self.niri.layer_shell_on_demand_focus = Some(layer);
-                self.niri.layer_promote_manager_state.configure(surface);
-                self.niri.queue_redraw_all();
+                Pending::Dock(serial) => self.niri.dock_promoted_layer(surface, serial, false),
+                Pending::Cancel(serial) => self.niri.dock_promoted_layer(surface, serial, true),
             }
-            Pending::Dock(serial) => self.niri.dock_promoted_layer(surface, serial, false),
-            Pending::Cancel(serial) => self.niri.dock_promoted_layer(surface, serial, true),
+        }
+        if let Some(size) = body_size {
+            let manager = &mut self.niri.layer_promote_manager_state;
+            let Some(p) = manager.promoted.get_mut(surface) else {
+                return;
+            };
+            let fits = with_states(surface, crate::utils::surface_geo).is_some_and(|geo| {
+                p.local_body.loc.x + size.w <= geo.size.w as f64
+                    && p.local_body.loc.y + size.h <= geo.size.h as f64
+            });
+            if !fits {
+                let serial = p.serial;
+                manager.reject(
+                    surface,
+                    serial,
+                    "body size is outside the committed root texture",
+                );
+                return;
+            }
+            p.local_body.size = size;
+            manager.configure(surface);
+            self.niri.queue_redraw_all();
         }
     }
 }
@@ -640,6 +668,7 @@ impl Dispatch<BeadLayerPromoteManagerV1, ()> for State {
                     resource: controller,
                     pending: None,
                     last_serial: None,
+                    pending_body_size: None,
                 },
             );
         }
@@ -662,6 +691,27 @@ impl Dispatch<BeadLayerPromoteV1, PromotionData> for State {
             .get(&data.0)
             .is_some_and(|controller| &controller.resource == resource)
         {
+            return;
+        }
+        if let bead_layer_promote_v1::Request::SetBodySize { width, height } = request {
+            if !width.is_finite()
+                || !height.is_finite()
+                || width <= 0.
+                || height <= 0.
+                || width > 32768.
+                || height > 32768.
+            {
+                resource.post_error(0u32, "invalid body size");
+                return;
+            }
+            if let Some(controller) = state
+                .niri
+                .layer_promote_manager_state
+                .controllers
+                .get_mut(&data.0)
+            {
+                controller.pending_body_size = Some(Size::from((width, height)));
+            }
             return;
         }
         if let bead_layer_promote_v1::Request::Move {

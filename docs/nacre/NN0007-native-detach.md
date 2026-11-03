@@ -23,6 +23,14 @@ client-rendered edges outside that geometry. Native presentation has no layer
 opacity, bob, blur or shadow policy. Capture blocking remains respected.
 Ordinary client popups retain their popup policy.
 
+After promotion the client can render its natural extent on the same root,
+even when layer arrangement had clipped the docked buffer. `set_body_size`
+stages new logical body dimensions with that content commit. The body origin,
+pointer hotspot and promotion serial stay unchanged; the new dimensions must
+fit the newly committed texture. The client retains the layer's configured
+dimensions so docking restores its original clip. No configure roundtrip or
+new role is needed during the held grab.
+
 ## Input, outputs and lifetime
 
 Interactive promotion validates the seat and current pointer-button serial
@@ -31,6 +39,8 @@ original hotspot, includes travel since the press, and continues delivering
 motion, relative motion and release to the client. Command promotion uses a
 null seat and zero button serial. Stale request serials are ignored using
 wraparound comparison. Expired grabs reject without changing ownership.
+The standard close-window action targets a focused promotion through its
+existing layer-shell close event, preserving the layout window below it.
 
 The compositor owns position while promoted. Crossing an output transfers the
 same layer tree between output maps and sends preferred scale/transform updates.

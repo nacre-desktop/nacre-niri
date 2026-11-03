@@ -558,3 +558,96 @@ fn surviving_output_origin_changes_keep_the_same_promoted_surface_visible() {
         .surface
         .is_some_and(|(s, _)| s == root));
 }
+
+#[test]
+fn promoted_natural_extent_is_commit_atomic_without_layer_resize_handshake() {
+    use smithay::utils::Size;
+    use smithay::wayland::compositor::with_states;
+    let mut f =
+        Fixture::with_config(Config::parse_mem("output \"headless-1\" { scale 1.5; }").unwrap());
+    f.add_output(1, (900, 600));
+    let (id, surface, root, proxy) = panel(&mut f);
+    proxy.promote(1, None, 0, 8., 4., 40., 68.);
+    commit(&mut f, id, &surface);
+    let origin = f.niri().layer_promote_manager_state.promoted[&root].body_origin;
+    proxy.set_body_size(40., 90.);
+    f.client(id).layer(&surface).set_size(96, 94);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root]
+            .local_body
+            .size,
+        Size::from((40., 68.))
+    );
+    commit(&mut f, id, &surface);
+    let p = &f.niri().layer_promote_manager_state.promoted[&root];
+    assert_eq!(p.local_body.size, Size::from((40., 90.)));
+    assert_eq!(p.body_origin, origin);
+    assert_eq!(p.serial, 1);
+    assert_eq!(p.layer.wl_surface(), &root);
+    assert_eq!(
+        with_states(&root, crate::utils::surface_geo)
+            .unwrap()
+            .size
+            .h,
+        94
+    );
+    assert_eq!(
+        f.client(id)
+            .layer(&surface)
+            .configures_received
+            .last()
+            .unwrap()
+            .1
+            .size
+            .1,
+        72
+    );
+    // The extra 22 logical pixels are real content/input, beyond the retained
+    // layer-shell configure, on the original root at the original placement.
+    assert!(f
+        .niri()
+        .contents_under(Point::from((20., 89.)))
+        .surface
+        .is_some_and(|(s, _)| s == root));
+    proxy.set_body_size(40., 100.); // does not fit the newly committed texture
+    commit(&mut f, id, &surface);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root]
+            .local_body
+            .size
+            .h,
+        90.
+    );
+    proxy.dock(2);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    // A late frame's body update has no effect after docking.
+    proxy.set_body_size(40., 90.);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+}
+
+#[test]
+fn close_window_targets_the_focused_promotion_instead_of_the_window_below() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    let window = f.client(id).create_window();
+    let window_surface = window.surface.clone();
+    window.commit();
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&window_surface);
+    window.attach_new_buffer();
+    window.set_size(100, 100);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    assert_eq!(f.niri().keyboard_focus.surface(), Some(&root));
+    f.niri_state()
+        .do_action(niri_config::Action::CloseWindow, false);
+    f.double_roundtrip(id);
+    assert!(f.client(id).layer(&surface).close_requested);
+    assert!(!f.client(id).window(&window_surface).close_requested);
+}
