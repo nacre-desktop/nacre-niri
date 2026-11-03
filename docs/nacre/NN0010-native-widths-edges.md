@@ -80,7 +80,7 @@ The implementation passed in an isolated Ubuntu 24.04 container with 8 CPUs,
 16 GiB, and two Cargo jobs. All 5,499 checked source/resource files matched the
 tested snapshot. Every check below returned zero:
 
-- Workspace tests/doc tests: 279 passed; the one opt-in X11 proof also passed.
+- Workspace tests/doc tests: 282 passed; the one opt-in X11 proof also passed.
 - Real managed satellite (`7bf5e0dcb0d4250860b24b04a6cb3ddeada515d0`), Xwayland,
   and Xlib proof at scale 1.5: tiled/floating/config-off geometry and unchanged
   raw minimum, maximum, height, increment, and aspect hints.
