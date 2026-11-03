@@ -203,6 +203,19 @@ impl IpcServer {
             position,
         });
     }
+
+    pub fn disconnect_edge_trigger_clients(&self) {
+        let mut streams = self.event_streams.borrow_mut();
+        let mut idx = 0;
+        while idx < streams.len() {
+            if streams[idx].edge_triggers {
+                let stream = streams.swap_remove(idx);
+                let _ = stream.disconnect.send_blocking(());
+            } else {
+                idx += 1;
+            }
+        }
+    }
 }
 
 fn stream_event_allowed(event: &Event, include_collections: bool) -> bool {
@@ -334,6 +347,63 @@ mod tests {
         assert_eq!(edge, niri_ipc::Edge::Left);
         assert_eq!(position, [0.0, 20.0]);
         assert!(edge_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn disabling_edge_stream_disconnects_only_opted_in_clients() {
+        let (regular_tx, _regular_rx) = async_channel::bounded(4);
+        let (hover_tx, _hover_rx) = async_channel::bounded(4);
+        let (collections_tx, _collections_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(4);
+        let (regular_disconnect, regular_disconnect_rx) = async_channel::bounded(1);
+        let (hover_disconnect, hover_disconnect_rx) = async_channel::bounded(1);
+        let (collections_disconnect, collections_disconnect_rx) = async_channel::bounded(1);
+        let (edge_disconnect, edge_disconnect_rx) = async_channel::bounded(1);
+        let server = IpcServer {
+            socket_path: None,
+            event_streams: Rc::new(RefCell::new(vec![
+                EventStreamSender {
+                    overview_hover: false,
+                    edge_triggers: false,
+                    events: regular_tx,
+                    disconnect: regular_disconnect,
+                    include_collections: false,
+                },
+                EventStreamSender {
+                    overview_hover: true,
+                    edge_triggers: false,
+                    events: hover_tx,
+                    disconnect: hover_disconnect,
+                    include_collections: false,
+                },
+                EventStreamSender {
+                    overview_hover: false,
+                    edge_triggers: false,
+                    events: collections_tx,
+                    disconnect: collections_disconnect,
+                    include_collections: true,
+                },
+                EventStreamSender {
+                    overview_hover: false,
+                    edge_triggers: true,
+                    events: edge_tx,
+                    disconnect: edge_disconnect,
+                    include_collections: false,
+                },
+            ])),
+            event_stream_state: Rc::new(RefCell::new(EventStreamState::default())),
+            overview_hover: Rc::new(Cell::new(None)),
+        };
+
+        server.disconnect_edge_trigger_clients();
+
+        assert_eq!(server.event_streams.borrow().len(), 3);
+        assert!(edge_disconnect_rx.try_recv().is_ok());
+        assert!(regular_disconnect_rx.try_recv().is_err());
+        assert!(hover_disconnect_rx.try_recv().is_err());
+        assert!(collections_disconnect_rx.try_recv().is_err());
+        assert!(edge_rx.try_recv().is_err());
+        assert!(server.has_overview_hover_clients());
     }
 }
 
