@@ -225,7 +225,7 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
         .next()
         .unwrap()
         .1
-        .id()
+        .window
         .clone();
     fixture
         .niri()
@@ -291,7 +291,7 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
             .next()
             .unwrap()
             .1
-            .id()
+            .window
             .clone();
         fixture
             .niri()

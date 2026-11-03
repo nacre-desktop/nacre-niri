@@ -1999,11 +1999,14 @@ impl<W: LayoutElement> Monitor<W> {
                 if let Some(elem) = elem {
                     let elem = MonitorInnerRenderElement::from(elem);
                     let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
-                    push(RelocateRenderElement::from_element(
-                        elem,
-                        Point::default(),
-                        Relocate::Relative,
-                    ));
+                    push(
+                        RelocateRenderElement::from_element(
+                            elem,
+                            Point::default(),
+                            Relocate::Relative,
+                        )
+                        .into(),
+                    );
                 }
             },
         );
