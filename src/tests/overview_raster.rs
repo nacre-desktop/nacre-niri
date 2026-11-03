@@ -218,7 +218,15 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
             }
         }
     }
-    let scratchpad_window = fixture.niri().layout.windows().next().unwrap().1.id().clone();
+    let scratchpad_window = fixture
+        .niri()
+        .layout
+        .windows()
+        .next()
+        .unwrap()
+        .1
+        .id()
+        .clone();
     fixture
         .niri()
         .layout
@@ -276,8 +284,19 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
         let mut fixture = fixture(collections);
         let client = fixture.add_client();
         create_window(&mut fixture, client, 0);
-        let window = fixture.niri().layout.windows().next().unwrap().1.id().clone();
-        fixture.niri().layout.move_window_to_scratchpad(Some(&window));
+        let window = fixture
+            .niri()
+            .layout
+            .windows()
+            .next()
+            .unwrap()
+            .1
+            .id()
+            .clone();
+        fixture
+            .niri()
+            .layout
+            .move_window_to_scratchpad(Some(&window));
         fixture.niri_complete_animations();
         let mut output = RasterOutput::new(&mut fixture, 1);
         fixture.niri().layout.open_overview();
@@ -285,15 +304,31 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
         for millis in [0, 137, 500, 1000] {
             set_time(fixture.niri(), millis);
             fixture.niri().advance_animations();
-            output.compare(&mut fixture, 1, &format!("scratchpad {collections} {millis}ms"));
+            output.compare(
+                &mut fixture,
+                1,
+                &format!("scratchpad {collections} {millis}ms"),
+            );
         }
         let (preparations, builds) = fixture.niri().layout.collection_overview_cache_counts();
-        assert!(builds > 0, "scratchpad preview did not use the shared texture cache");
+        assert!(
+            builds > 0,
+            "scratchpad preview did not use the shared texture cache"
+        );
         output.compare(&mut fixture, 1, "steady scratchpad cache");
         let (steady_preparations, steady_builds) =
             fixture.niri().layout.collection_overview_cache_counts();
-        assert_eq!(steady_builds, builds, "steady scratchpad frame rebuilt its texture");
-        assert_eq!(steady_preparations, preparations, "steady scratchpad frame re-prepared its workspace");
-        assert!(output.saw_partial_damage, "scratchpad preview never caused partial damage");
+        assert_eq!(
+            steady_builds, builds,
+            "steady scratchpad frame rebuilt its texture"
+        );
+        assert_eq!(
+            steady_preparations, preparations,
+            "steady scratchpad frame re-prepared its workspace"
+        );
+        assert!(
+            output.saw_partial_damage,
+            "scratchpad preview never caused partial damage"
+        );
     }
 }

@@ -3485,9 +3485,12 @@ impl<W: LayoutElement> Layout<W> {
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
             let overview = &self.collection_overview;
             overview.retain_sources(
-                self.collections.iter().flat_map(|collection| {
-                    collection.workspaces.iter().map(|workspace| workspace.id())
-                }).chain(std::iter::once(self.scratchpad.id())),
+                self.collections
+                    .iter()
+                    .flat_map(|collection| {
+                        collection.workspaces.iter().map(|workspace| workspace.id())
+                    })
+                    .chain(std::iter::once(self.scratchpad.id())),
                 self.monitors().map(|monitor| monitor.output().clone()),
             );
             for collection in &mut self.collections {

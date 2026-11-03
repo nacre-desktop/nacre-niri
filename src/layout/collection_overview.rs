@@ -173,7 +173,11 @@ impl<W: LayoutElement> Layout<W> {
             SCRATCHPAD_COLUMN_ID,
             "Scratchpad",
             scale,
-            (preview.geometry.loc.x, (preview.geometry.loc.y - 32.).max(0.)).into(),
+            (
+                preview.geometry.loc.x,
+                (preview.geometry.loc.y - 32.).max(0.),
+            )
+                .into(),
             preview.geometry.size.w,
         ) {
             push(label.into());
@@ -201,16 +205,25 @@ impl<W: LayoutElement> Layout<W> {
                 }
             };
             let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
-            preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut render);
-            preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut render);
+            preview
+                .workspace
+                .render_floating(ctx.r(), xray_pos, false, &mut render);
+            preview
+                .workspace
+                .render_scrolling(ctx.r(), xray_pos, false, &mut render);
             let background = preview.workspace.render_background();
-            let background = RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
-            let background = RelocateRenderElement::from_element(background, location, Relocate::Relative);
+            let background =
+                RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
+            let background =
+                RelocateRenderElement::from_element(background, location, Relocate::Relative);
             if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
                 push(CollectionOverviewRenderElement::Background(background));
             }
         }
-        let alpha = self.overview_progress.as_ref().map_or(1., |p| p.value().clamp(0., 1.)) as f32;
+        let alpha = self
+            .overview_progress
+            .as_ref()
+            .map_or(1., |p| p.value().clamp(0., 1.)) as f32;
         preview.workspace.render_shadow(ctx.renderer, &mut |elem| {
             let elem = elem.with_alpha(alpha);
             let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
@@ -267,7 +280,11 @@ impl<W: LayoutElement> Layout<W> {
             self.collections
                 .iter()
                 .map(|c| c.id)
-                .chain(self.scratchpad.has_windows().then_some(SCRATCHPAD_COLUMN_ID))
+                .chain(
+                    self.scratchpad
+                        .has_windows()
+                        .then_some(SCRATCHPAD_COLUMN_ID),
+                )
                 .filter(|id| {
                     *id == active || !self.monitors().any(|m| m.collection_id == Some(*id))
                 }),
@@ -301,14 +318,12 @@ impl<W: LayoutElement> Layout<W> {
                 self.collection_workspaces(column.id).collect()
             };
             key.push(workspaces.len() as u64);
-            key.push(
-                if column.id == SCRATCHPAD_COLUMN_ID {
-                    self.scratchpad.id().get()
-                } else {
-                    self.collection_active_workspace(column.id)
-                        .map_or(0, WorkspaceId::get)
-                },
-            );
+            key.push(if column.id == SCRATCHPAD_COLUMN_ID {
+                self.scratchpad.id().get()
+            } else {
+                self.collection_active_workspace(column.id)
+                    .map_or(0, WorkspaceId::get)
+            });
             for workspace in workspaces {
                 key.extend([
                     workspace.id().get(),
@@ -654,7 +669,10 @@ impl<W: LayoutElement> Layout<W> {
                 push(label.into());
             }
         }
-        if let Some(column) = columns.iter().find(|column| column.id == SCRATCHPAD_COLUMN_ID) {
+        if let Some(column) = columns
+            .iter()
+            .find(|column| column.id == SCRATCHPAD_COLUMN_ID)
+        {
             if let Some(label) = self.collection_overview.label(
                 ctx.renderer,
                 SCRATCHPAD_COLUMN_ID,
