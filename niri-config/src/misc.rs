@@ -182,7 +182,12 @@ pub struct NacrePart {
 
 impl MergeWith<NacrePart> for Nacre {
     fn merge_with(&mut self, part: &NacrePart) {
-        merge!((self, part), overview_hover, proportional_x11_widths, edge_triggers);
+        merge!(
+            (self, part),
+            overview_hover,
+            proportional_x11_widths,
+            edge_triggers
+        );
     }
 }
 

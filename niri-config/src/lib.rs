@@ -703,15 +703,27 @@ mod tests {
     #[test]
     fn nacre_proportional_x11_widths_defaults_on_and_can_be_disabled() {
         assert!(do_parse("").nacre.proportional_x11_widths);
-        assert!(do_parse("nacre { proportional-x11-widths; }").nacre.proportional_x11_widths);
-        assert!(!do_parse("nacre { proportional-x11-widths false; }").nacre.proportional_x11_widths);
+        assert!(
+            do_parse("nacre { proportional-x11-widths; }")
+                .nacre
+                .proportional_x11_widths
+        );
+        assert!(
+            !do_parse("nacre { proportional-x11-widths false; }")
+                .nacre
+                .proportional_x11_widths
+        );
     }
 
     #[test]
     fn nacre_edge_triggers_default_on_and_can_be_disabled() {
         assert!(do_parse("").nacre.edge_triggers);
         assert!(do_parse("nacre { edge-triggers; }").nacre.edge_triggers);
-        assert!(!do_parse("nacre { edge-triggers false; }").nacre.edge_triggers);
+        assert!(
+            !do_parse("nacre { edge-triggers false; }")
+                .nacre
+                .edge_triggers
+        );
     }
 
     #[test]
@@ -742,17 +754,23 @@ mod tests {
         assert_eq!(left.dwell_time_ms, Some(250));
         assert_eq!(left.pressure.map(|v| v.0), Some(12.0));
         assert_eq!(left.velocity.map(|v| v.0), Some(600.0));
-        assert!(matches!(left.action.as_ref(), Some(EdgeTriggerAction::Event)));
+        assert!(matches!(
+            left.action.as_ref(),
+            Some(EdgeTriggerAction::Event)
+        ));
         assert!(matches!(
             config.edge_triggers.right.as_ref().unwrap().action.as_ref(),
             Some(EdgeTriggerAction::Spawn(_))
         ));
-        let output = config.outputs.find(&OutputName {
-            connector: "DP-1".into(),
-            make: None,
-            model: None,
-            serial: None,
-        }).unwrap();
+        let output = config
+            .outputs
+            .find(&OutputName {
+                connector: "DP-1".into(),
+                make: None,
+                model: None,
+                serial: None,
+            })
+            .unwrap();
         let overrides = output.edge_triggers.as_ref().unwrap();
         assert!(overrides.left.as_ref().unwrap().off);
         assert!(matches!(

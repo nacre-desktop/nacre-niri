@@ -28,6 +28,7 @@ use super::{
     RemovedTile, SizeFrac,
 };
 use crate::animation::Clock;
+use crate::niri::is_xwayland_satellite_surface;
 use crate::niri_render_elements;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
@@ -40,7 +41,6 @@ use crate::utils::{
     ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size, send_scale_transform,
     ResizeEdge,
 };
-use crate::niri::is_xwayland_satellite_surface;
 use crate::window::{effective_x11_min_size, ResolvedWindowRules};
 
 #[derive(Debug)]

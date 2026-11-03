@@ -48,7 +48,10 @@ fn configured_x11_opening_width(
 #[test]
 fn proportional_x11_widths_apply_only_to_managed_adjustable_tiled_clients() {
     let managed = configured_x11_opening_width(true, true, 1000, 1100);
-    assert!(managed > 0 && managed < 1000, "managed X11 width: {managed}");
+    assert!(
+        managed > 0 && managed < 1000,
+        "managed X11 width: {managed}"
+    );
 
     let wayland = configured_x11_opening_width(false, true, 1000, 1100);
     assert_eq!(wayland, 1000, "Wayland min width remains effective");
@@ -87,7 +90,10 @@ fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
         .1
         .size
         .0;
-    assert!(opening_width > 0 && opening_width < 1000, "opening width: {opening_width}");
+    assert!(
+        opening_width > 0 && opening_width < 1000,
+        "opening width: {opening_width}"
+    );
 
     let window = fixture.client(id).window(&surface);
     window.attach_new_buffer();

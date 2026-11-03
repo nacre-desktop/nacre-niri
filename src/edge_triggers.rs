@@ -3,8 +3,8 @@
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
-use niri_ipc::Edge;
 use niri_config::OutputName;
+use niri_ipc::Edge;
 use smithay::output::Output;
 use smithay::reexports::calloop::RegistrationToken;
 use smithay::utils::{Logical, Point};
@@ -12,11 +12,7 @@ use smithay::utils::{Logical, Point};
 use crate::niri::Niri;
 
 /// Returns the nearest configured edge when the logical pointer is in its one-pixel edge band.
-pub fn select_edge(
-    size: Option<[f64; 2]>,
-    position: [f64; 2],
-    enabled: [bool; 4],
-) -> Option<Edge> {
+pub fn select_edge(size: Option<[f64; 2]>, position: [f64; 2], enabled: [bool; 4]) -> Option<Edge> {
     let [width, height] = size?;
     if !width.is_finite()
         || !height.is_finite()
@@ -96,7 +92,12 @@ pub fn dwell_elapsed(elapsed: Duration, dwell: Duration) -> bool {
 }
 
 /// Conditions that suppress an edge action globally or on an output without an active monitor.
-pub fn is_suppressed(overview: bool, fullscreen: bool, locked: bool, inactive_output: bool) -> bool {
+pub fn is_suppressed(
+    overview: bool,
+    fullscreen: bool,
+    locked: bool,
+    inactive_output: bool,
+) -> bool {
     overview || fullscreen || locked || inactive_output
 }
 
@@ -110,8 +111,14 @@ mod tests {
 
     #[test]
     fn dwell_gate_waits_and_pressure_velocity_gates_are_combined() {
-        assert!(!dwell_elapsed(Duration::from_millis(349), Duration::from_millis(350)));
-        assert!(dwell_elapsed(Duration::from_millis(350), Duration::from_millis(350)));
+        assert!(!dwell_elapsed(
+            Duration::from_millis(349),
+            Duration::from_millis(350)
+        ));
+        assert!(dwell_elapsed(
+            Duration::from_millis(350),
+            Duration::from_millis(350)
+        ));
         assert!(!gates_satisfied(20., 30., 700., 600.));
         assert!(!gates_satisfied(30., 30., 599., 600.));
         assert!(gates_satisfied(30., 30., 600., 600.));
@@ -131,7 +138,11 @@ mod tests {
     fn scaled_output_edges_use_logical_coordinates() {
         // 2880x1800 physical at 1.5 scale is 1920x1200 logical.
         assert_eq!(
-            select_edge(Some([1920., 1200.]), [1919., 600.], [false, true, false, false]),
+            select_edge(
+                Some([1920., 1200.]),
+                [1919., 600.],
+                [false, true, false, false]
+            ),
             Some(Edge::Right)
         );
         assert!(is_inside_edge([1920., 1200.], [1919., 600.], Edge::Right));
@@ -183,7 +194,6 @@ mod tests {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub(crate) struct EdgeTriggerCandidate {
     pub(crate) generation: u64,
@@ -225,8 +235,11 @@ impl Niri {
     fn edge_trigger_is_suppressed(&self, output: &Output) -> bool {
         let monitor = self.layout.monitor_for_output(output);
         let inactive_output = monitor.is_none();
-        let fullscreen = monitor
-            .is_some_and(|monitor| monitor.active_workspace_ref().is_active_pending_fullscreen());
+        let fullscreen = monitor.is_some_and(|monitor| {
+            monitor
+                .active_workspace_ref()
+                .is_active_pending_fullscreen()
+        });
         crate::edge_triggers::is_suppressed(
             self.layout.is_overview_open(),
             fullscreen,
@@ -273,11 +286,9 @@ impl Niri {
             edges.top.as_ref().is_some_and(|trigger| !trigger.off),
             edges.bottom.as_ref().is_some_and(|trigger| !trigger.off),
         ];
-        let Some(edge) = crate::edge_triggers::select_edge(
-            Some([size.w, size.h]),
-            [local.x, local.y],
-            enabled,
-        ) else {
+        let Some(edge) =
+            crate::edge_triggers::select_edge(Some([size.w, size.h]), [local.x, local.y], enabled)
+        else {
             self.clear_edge_trigger();
             return;
         };
@@ -292,9 +303,10 @@ impl Niri {
             return;
         };
 
-        let same_candidate = self.edge_trigger_candidate.as_ref().is_some_and(|candidate| {
-            candidate.output == output_name && candidate.edge == edge
-        });
+        let same_candidate = self
+            .edge_trigger_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.output == output_name && candidate.edge == edge);
         if !same_candidate {
             self.clear_edge_trigger();
             self.edge_trigger_generation = self.edge_trigger_generation.wrapping_add(1);
@@ -318,24 +330,18 @@ impl Niri {
                 armed: false,
                 fired: false,
                 armed_at: None,
-                dwell_time: Duration::from_millis(u64::from(
-                    trigger.dwell_time_ms.unwrap_or(250),
-                )),
+                dwell_time: Duration::from_millis(u64::from(trigger.dwell_time_ms.unwrap_or(250))),
             });
         }
 
         let Some(candidate) = self.edge_trigger_candidate.as_mut() else {
             return;
         };
-        let inward_delta = crate::edge_triggers::inward_delta(
-            edge,
-            [raw_delta.x, raw_delta.y],
-        );
+        let inward_delta = crate::edge_triggers::inward_delta(edge, [raw_delta.x, raw_delta.y]);
         candidate.pressure += inward_delta;
         if candidate.velocity_required > 0. {
             if let Some(elapsed) = elapsed {
-                candidate.velocity_passed |= inward_delta / elapsed
-                    >= candidate.velocity_required;
+                candidate.velocity_passed |= inward_delta / elapsed >= candidate.velocity_required;
             }
         }
         if !candidate.armed
@@ -440,11 +446,7 @@ impl Niri {
         match candidate.action {
             niri_config::EdgeTriggerAction::Event => {
                 if let Some(server) = self.ipc_server.as_ref() {
-                    server.edge_triggered(
-                        candidate.output,
-                        candidate.edge,
-                        [local.x, local.y],
-                    );
+                    server.edge_triggered(candidate.output, candidate.edge, [local.x, local.y]);
                 }
             }
             niri_config::EdgeTriggerAction::Spawn(command) => {
@@ -458,7 +460,6 @@ impl Niri {
             candidate.fired = true;
         }
     }
-
 }
 
 #[cfg(test)]
@@ -570,9 +571,7 @@ mod edge_trigger_runtime_tests {
         let position = left_edge_position(&fixture, 1);
         enter_left_edge(fixture.niri(), position);
         assert!(fixture.niri().edge_trigger_candidate.is_some());
-        fixture
-            .niri_state()
-            .reload_config(Ok(Config::default()));
+        fixture.niri_state().reload_config(Ok(Config::default()));
         assert!(fixture.niri().edge_trigger_candidate.is_none());
         assert!(fixture.niri().edge_trigger_timer.is_none());
     }

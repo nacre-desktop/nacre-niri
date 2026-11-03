@@ -9,11 +9,11 @@ use calloop::channel::Sender;
 use calloop::generic::Generic;
 use calloop::{Interest, Mode, PostAction, RegistrationToken};
 use smithay::reexports::rustix::io::{fcntl_setfd, FdFlags};
+use smithay::wayland::socket::ListeningSocketSource;
 
 use crate::niri::{NewClient, State};
 use crate::utils::expand_home;
 use crate::utils::xwayland::X11Connection;
-use smithay::wayland::socket::ListeningSocketSource;
 
 pub struct Satellite {
     x11: X11Connection,

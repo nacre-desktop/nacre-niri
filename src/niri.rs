@@ -6429,12 +6429,9 @@ impl Niri {
                     WindowRef::Unmapped(unmapped),
                     self.is_at_startup,
                 );
-                new_rules.proportional_x11_widths = self
-                    .config
-                    .borrow()
-                    .nacre
-                    .proportional_x11_widths
-                    && is_xwayland_satellite_surface(unmapped.toplevel().wl_surface());
+                new_rules.proportional_x11_widths =
+                    self.config.borrow().nacre.proportional_x11_widths
+                        && is_xwayland_satellite_surface(unmapped.toplevel().wl_surface());
                 if let InitialConfigureState::Configured { rules, .. } = &mut unmapped.state {
                     *rules = new_rules;
                 }
@@ -6591,13 +6588,11 @@ pub struct ClientState {
 }
 
 pub fn is_xwayland_satellite_surface(surface: &WlSurface) -> bool {
-    surface
-        .client()
-        .is_some_and(|client| {
-            client
-                .get_data::<ClientState>()
-                .is_some_and(|data| data.is_xwayland_satellite)
-        })
+    surface.client().is_some_and(|client| {
+        client
+            .get_data::<ClientState>()
+            .is_some_and(|data| data.is_xwayland_satellite)
+    })
 }
 
 impl ClientData for ClientState {
