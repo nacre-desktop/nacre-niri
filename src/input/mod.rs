@@ -56,6 +56,7 @@ use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
+pub mod layer_move_grab;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;

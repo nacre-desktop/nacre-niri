@@ -14,7 +14,7 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
 use smithay::wayland::compositor::{remove_pre_commit_hook, HookId};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
-use super::motion::MotionPose;
+use super::motion::{LayerMotion, MotionCurve, MotionPose, OpacityMode};
 use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
@@ -65,6 +65,7 @@ pub struct MappedLayer {
 
     /// Optional protocol-driven atlas animation shared with its controller.
     motion: Option<Arc<Mutex<LayerMotionRuntime>>>,
+    promotion_motion: Option<LayerMotion>,
 }
 
 niri_render_elements! {
@@ -192,6 +193,7 @@ impl MappedLayer {
             blur_config: config.blur,
             clock,
             motion: None,
+            promotion_motion: None,
         }
     }
 
@@ -229,6 +231,13 @@ impl MappedLayer {
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
+        if self
+            .promotion_motion
+            .as_ref()
+            .is_some_and(|motion| !motion.is_complete(self.clock.now_unadjusted()))
+        {
+            return true;
+        }
         self.rules.baba_is_float
             || self
                 .motion
@@ -342,27 +351,91 @@ impl MappedLayer {
     }
 
     pub fn bob_offset(&self) -> Point<f64, Logical> {
+        let offset = self
+            .promotion_motion
+            .as_ref()
+            .map(|motion| motion.sample(self.clock.now_unadjusted()).destination.loc)
+            .unwrap_or_default();
         if !self.rules.baba_is_float {
-            return Point::from((0., 0.));
+            return offset;
         }
 
         let y = baba_is_float_offset(self.clock.now(), self.view_size.h);
         let y = round_logical_in_physical(self.scale, y);
-        Point::from((0., y))
+        offset + Point::from((0., y))
+    }
+
+    /// Return the retained surface to its dock using the layer-motion sampler.
+    /// Input and rendering both consume bob_offset(), including at scale 1.5.
+    pub fn start_promotion_return(
+        &mut self,
+        serial: u32,
+        from: Point<f64, Logical>,
+        start: std::time::Duration,
+    ) {
+        let pose = |at| MotionPose {
+            destination: Rectangle::new(at, Size::from((1., 1.))),
+            clip: Rectangle::from_size(Size::from((1., 1.))),
+            opacity: 1.,
+        };
+        self.promotion_motion = LayerMotion::new(
+            serial,
+            pose(from),
+            pose(Point::from((0., 0.))),
+            start,
+            std::time::Duration::from_millis(180),
+            MotionCurve::EaseOutCubic,
+            OpacityMode::Linear,
+        );
+    }
+
+    pub fn clear_promotion_return(&mut self) {
+        self.promotion_motion = None;
     }
 
     pub fn render_normal<R: NiriRenderer>(
         &self,
-        mut ctx: RenderCtx<R>,
+        ctx: RenderCtx<R>,
         ns: Option<usize>,
         location: Point<f64, Logical>,
         xray_pos: XrayPos,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
-        let scale = Scale::from(self.scale);
-        let alpha = self.rules.opacity.unwrap_or(1.).clamp(0., 1.);
+        self.render_with_policy(ctx, ns, location, xray_pos, false, push);
+    }
 
-        let bob_offset = self.bob_offset();
+    /// Promotion uses the same surface tree and motion planes, with compositor
+    /// policy that supplies no layer opacity, bob, blur, or shadow decoration.
+    pub fn render_promoted<R: NiriRenderer>(
+        &self,
+        ctx: RenderCtx<R>,
+        location: Point<f64, Logical>,
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) {
+        self.render_with_policy(ctx, None, location, XrayPos::default(), true, push);
+    }
+
+    fn render_with_policy<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        ns: Option<usize>,
+        location: Point<f64, Logical>,
+        xray_pos: XrayPos,
+        promoted: bool,
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) {
+        let scale = Scale::from(self.scale);
+        let alpha = if promoted {
+            1.
+        } else {
+            self.rules.opacity.unwrap_or(1.).clamp(0., 1.)
+        };
+
+        let bob_offset = if promoted {
+            Point::from((0., 0.))
+        } else {
+            self.bob_offset()
+        };
         let location = location + bob_offset;
         let xray_pos = xray_pos.offset(bob_offset);
 
@@ -407,6 +480,9 @@ impl MappedLayer {
             );
         }
 
+        if promoted {
+            return;
+        }
         let location = location.to_physical_precise_round(scale).to_logical(scale);
         self.shadow
             .render(ctx.renderer, location, &mut |elem| push(elem.into()));

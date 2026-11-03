@@ -11,6 +11,7 @@ mod floating;
 mod fullscreen;
 mod layer_motion;
 mod layer_motion_render;
+mod layer_promote;
 mod layer_shell;
 mod overview_benchmark;
 mod overview_geometry;

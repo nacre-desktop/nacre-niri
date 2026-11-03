@@ -54,9 +54,35 @@ pub mod bead_layer_motion {
     }
 }
 
+pub mod bead_layer_promote {
+    pub mod v1 {
+        pub mod client {
+            #![allow(dead_code, non_camel_case_types, unused_unsafe, unused_variables)]
+            #![allow(non_upper_case_globals, non_snake_case, unused_imports)]
+            #![allow(missing_docs, clippy::all)]
+
+            use wayland_client;
+            use wayland_client::protocol::*;
+
+            pub mod __interfaces {
+                use wayland_client::protocol::__interfaces::*;
+                wayland_scanner::generate_interfaces!("resources/bead-layer-promote-v1.xml");
+            }
+            use self::__interfaces::*;
+
+            wayland_scanner::generate_client_code!("resources/bead-layer-promote-v1.xml");
+        }
+    }
+}
+
 use bead_layer_motion::v1::client::{bead_layer_motion_manager_v1, bead_layer_motion_v1};
 use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
 use bead_layer_motion_v1::BeadLayerMotionV1;
+use bead_layer_promote::v1::client::{bead_layer_promote_manager_v1, bead_layer_promote_v1};
+use bead_layer_promote_manager_v1::BeadLayerPromoteManagerV1;
+use bead_layer_promote_v1::BeadLayerPromoteV1;
+use wayland_client::protocol::wl_pointer::{self, WlPointer};
+use wayland_client::protocol::wl_seat::{self, WlSeat};
 
 use crate::utils::id::IdCounter;
 
@@ -81,10 +107,20 @@ pub struct State {
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
     pub viewporter: Option<WpViewporter>,
     pub layer_motion_manager: Option<BeadLayerMotionManagerV1>,
+    pub layer_promote_manager: Option<BeadLayerPromoteManagerV1>,
+    pub seat: Option<WlSeat>,
+    pub pointer: Option<WlPointer>,
+    pub promotions: Vec<LayerPromotionController>,
 
     pub windows: Vec<Window>,
     pub layers: Vec<LayerSurface>,
     pub motions: Vec<LayerMotionController>,
+}
+
+pub struct LayerPromotionController {
+    pub surface: WlSurface,
+    pub promotion: BeadLayerPromoteV1,
+    pub events: Vec<bead_layer_promote_v1::Event>,
 }
 
 pub struct LayerMotionController {
@@ -215,6 +251,10 @@ impl Client {
             spbm: None,
             viewporter: None,
             layer_motion_manager: None,
+            layer_promote_manager: None,
+            seat: None,
+            pointer: None,
+            promotions: Vec::new(),
             windows: Vec::new(),
             layers: Vec::new(),
             motions: Vec::new(),
@@ -280,6 +320,25 @@ impl Client {
 }
 
 impl State {
+    pub fn layer_promotion(&mut self, surface: &WlSurface) -> &mut LayerPromotionController {
+        if !self.promotions.iter().any(|p| p.surface == *surface) {
+            let promotion =
+                self.layer_promote_manager
+                    .as_ref()
+                    .unwrap()
+                    .get_promotion(surface, &self.qh, ());
+            self.promotions.push(LayerPromotionController {
+                surface: surface.clone(),
+                promotion,
+                events: Vec::new(),
+            });
+        }
+        self.promotions
+            .iter_mut()
+            .find(|p| p.surface == *surface)
+            .unwrap()
+    }
+
     pub fn layer_motion(&mut self, surface: &WlSurface) -> &mut LayerMotionController {
         if !self.motions.iter().any(|motion| motion.surface == *surface) {
             let manager = self.layer_motion_manager.as_ref().unwrap();
@@ -577,6 +636,12 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == WpViewporter::interface().name {
                     let version = min(version, WpViewporter::interface().version);
                     state.viewporter = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlSeat::interface().name {
+                    let seat: WlSeat = registry.bind(name, min(version, 9), qh, ());
+                    state.pointer = Some(seat.get_pointer(qh, ()));
+                    state.seat = Some(seat);
+                } else if interface == BeadLayerPromoteManagerV1::interface().name {
+                    state.layer_promote_manager = Some(registry.bind(name, 1, qh, ()));
                 } else if interface == BeadLayerMotionManagerV1::interface().name {
                     let version = min(version, BeadLayerMotionManagerV1::interface().version);
                     state.layer_motion_manager = Some(registry.bind(name, version, qh, ()));
@@ -866,5 +931,58 @@ impl Dispatch<WpViewport, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         unreachable!()
+    }
+}
+
+impl Dispatch<BeadLayerPromoteManagerV1, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &BeadLayerPromoteManagerV1,
+        _: bead_layer_promote_manager_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+impl Dispatch<BeadLayerPromoteV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &BeadLayerPromoteV1,
+        event: bead_layer_promote_v1::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        state
+            .promotions
+            .iter_mut()
+            .find(|p| p.promotion == *proxy)
+            .unwrap()
+            .events
+            .push(event);
+    }
+}
+impl Dispatch<WlSeat, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlSeat,
+        _: wl_seat::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+impl Dispatch<WlPointer, ()> for State {
+    fn event(
+        _: &mut Self,
+        _: &WlPointer,
+        _: wl_pointer::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
     }
 }

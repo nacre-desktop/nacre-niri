@@ -48,6 +48,9 @@ impl WlrLayerShellHandler for State {
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         let wl_surface = surface.wl_surface();
         self.niri
+            .layer_promote_manager_state
+            .destroy_surface(wl_surface);
+        self.niri
             .layer_motion_manager_state
             .remove_surface(wl_surface, self.niri.clock.now_unadjusted());
         self.niri.unmapped_layer_surfaces.remove(wl_surface);
@@ -105,6 +108,7 @@ impl State {
             return true;
         }
 
+        self.niri.promotion_before_arrange(&root_surface);
         let mut map = layer_map_for_output(&output);
 
         // Arrange the layers before sending the initial configure to respect any size the
@@ -239,6 +243,7 @@ impl State {
         }
 
         // This will call queue_redraw() inside.
+        self.layer_promotion_commit(&root_surface);
         self.niri.output_resized(&output);
 
         true

@@ -150,6 +150,7 @@ use crate::protocols::gamma_control::GammaControlManagerState;
 use crate::protocols::layer_motion::{
     LayerMotionHandler, LayerMotionManagerState, LayerMotionRuntime,
 };
+use crate::protocols::layer_promote::LayerPromoteManagerState;
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
@@ -299,6 +300,7 @@ pub struct Niri {
     pub virtual_keyboard_state: VirtualKeyboardManagerState,
     pub virtual_pointer_state: VirtualPointerManagerState,
     pub layer_motion_manager_state: LayerMotionManagerState,
+    pub layer_promote_manager_state: LayerPromoteManagerState,
     pub pointer_gestures_state: PointerGesturesState,
     pub relative_pointer_state: RelativePointerManagerState,
     pub pointer_constraints_state: PointerConstraintsState,
@@ -1124,8 +1126,13 @@ impl State {
         if let Some(surface) = &self.niri.layer_shell_on_demand_focus {
             // Still alive and has on-demand interactivity.
             let mut good = surface.alive()
-                && surface.cached_state().keyboard_interactivity
-                    == wlr_layer::KeyboardInteractivity::OnDemand;
+                && self.niri.layer_promotion_visible(surface.wl_surface())
+                && (surface.cached_state().keyboard_interactivity
+                    == wlr_layer::KeyboardInteractivity::OnDemand
+                    || self
+                        .niri
+                        .layer_promote_manager_state
+                        .is_promoted(surface.wl_surface()));
 
             if let Some(mapped) = self.niri.mapped_layer_surfaces.get(surface) {
                 // Check if it moved to the overview backdrop.
@@ -1160,6 +1167,9 @@ impl State {
             // Explicitly check for layer-shell popup grabs here, our keyboard focus will stay on
             // the root layer surface while it has grabs.
             let layer_grab = self.niri.popup_grab.as_ref().and_then(|g| {
+                if !self.niri.layer_promotion_visible(&g.root) {
+                    return None;
+                }
                 layers
                     .layer_for_surface(&g.root, WindowSurfaceType::TOPLEVEL)
                     .and_then(|l| l.can_receive_keyboard_focus().then(|| (&g.root, l.layer())))
@@ -1182,6 +1192,13 @@ impl State {
 
             let excl_focus_on_layer = |layer| {
                 layers.layers_on(layer).find_map(|surface| {
+                    if self
+                        .niri
+                        .layer_promote_manager_state
+                        .is_promoted(surface.wl_surface())
+                    {
+                        return None;
+                    }
                     if surface.cached_state().keyboard_interactivity
                         != wlr_layer::KeyboardInteractivity::Exclusive
                     {
@@ -2379,6 +2396,7 @@ impl Niri {
         let virtual_pointer_state =
             VirtualPointerManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
         let layer_motion_manager_state = LayerMotionManagerState::new::<State>(&display_handle);
+        let layer_promote_manager_state = LayerPromoteManagerState::new(&display_handle);
         let foreign_toplevel_state =
             ForeignToplevelManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
         let ext_workspace_state =
@@ -2582,6 +2600,7 @@ impl Niri {
             virtual_keyboard_state,
             virtual_pointer_state,
             layer_motion_manager_state,
+            layer_promote_manager_state,
             shm_state,
             output_manager_state,
             dmabuf_state,
@@ -2955,6 +2974,7 @@ impl Niri {
     }
 
     pub fn remove_output(&mut self, output: &Output) {
+        self.promotion_output_removed(output);
         if self
             .edge_trigger_candidate
             .as_ref()
@@ -3181,6 +3201,12 @@ impl Niri {
                 .layers_on(layer)
                 .rev()
                 .find_map(|layer| {
+                    if self
+                        .layer_promote_manager_state
+                        .is_promoted(layer.wl_surface())
+                    {
+                        return None;
+                    }
                     let mapped = self.mapped_layer_surfaces.get(layer)?;
 
                     let mut layer_pos_within_output =
@@ -3253,6 +3279,12 @@ impl Niri {
                 .layers_on(layer)
                 .rev()
                 .find_map(|layer_surface| {
+                    if self
+                        .layer_promote_manager_state
+                        .is_promoted(layer_surface.wl_surface())
+                    {
+                        return None;
+                    }
                     let mapped = self.mapped_layer_surfaces.get(layer_surface)?;
                     if mapped.place_within_backdrop() {
                         return None;
@@ -3432,6 +3464,12 @@ impl Niri {
                 .layers_on(layer)
                 .rev()
                 .find_map(|layer_surface| {
+                    if self
+                        .layer_promote_manager_state
+                        .is_promoted(layer_surface.wl_surface())
+                    {
+                        return None;
+                    }
                     let mapped = self.mapped_layer_surfaces.get(layer_surface)?;
                     if mapped.place_within_backdrop() {
                         return None;
@@ -3482,6 +3520,26 @@ impl Niri {
         let layer_toplevel_under = |layer| layer_surface_under(layer, false);
         let layer_popup_under = |layer| layer_surface_under(layer, true);
 
+        let promoted_under = || {
+            self.promoted_layers_for_output(output)
+                .into_iter()
+                .find_map(|p| {
+                    let mapped = self.mapped_layer_surfaces.get(&p.layer)?;
+                    let origin = self.promoted_surface_origin(p);
+                    let local = pos_within_output - origin;
+                    let under = mapped
+                        .surface_under_motion(local, WindowSurfaceType::ALL)
+                        .unwrap_or_else(|| {
+                            p.layer
+                                .surface_under(local, WindowSurfaceType::ALL)
+                                .map(|(s, at)| (s, at.to_f64()))
+                        });
+                    under.map(|(surface, at)| {
+                        (Some((surface, at + origin)), (None, Some(p.layer.clone())))
+                    })
+                })
+        };
+
         let mapped_hit_data = |(mapped, hit): (&Mapped, HitType)| {
             let window = &mapped.window;
             let surface_and_pos = if let HitType::Input { win_pos } = hit {
@@ -3522,6 +3580,7 @@ impl Niri {
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
             under = under
+                .or_else(promoted_under)
                 .or_else(interactive_moved_window_under)
                 .or_else(window_under)
                 .or_else(|| layer_popup_under(Layer::Top))
@@ -3538,7 +3597,8 @@ impl Niri {
 
             under = under
                 .or_else(|| layer_popup_under(Layer::Top))
-                .or_else(|| layer_toplevel_under(Layer::Top));
+                .or_else(|| layer_toplevel_under(Layer::Top))
+                .or_else(promoted_under);
 
             under = under.or_else(interactive_moved_window_under);
 
@@ -4111,6 +4171,7 @@ impl Niri {
         };
 
         self.layout.refresh(layout_is_active);
+        self.refresh_layer_promotions();
     }
 
     pub fn refresh_idle_inhibit(&mut self) {
@@ -4482,6 +4543,7 @@ impl Niri {
         // When rendering above the top layer, we put the regular monitor elements first.
         // Otherwise, we will render all layer-shell pop-ups and the top layer on top.
         if mon.render_above_top_layer() {
+            self.render_promoted_layers(ctx.r(), output, &mut |elem| push(elem.into()));
             self.layout
                 .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
 
@@ -4520,6 +4582,8 @@ impl Niri {
         } else {
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
+
+            self.render_promoted_layers(ctx.r(), output, &mut |elem| push(elem.into()));
 
             self.layout
                 .render_interactive_move_for_output(ctx.r(), output, &mut |elem| push(elem.into()));
@@ -4675,6 +4739,21 @@ impl Niri {
         false
     }
 
+    fn render_promoted_layers<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        output: &Output,
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) {
+        for p in self.promoted_layers_for_output(output) {
+            if let Some(mapped) = self.mapped_layer_surfaces.get(&p.layer) {
+                let origin = self.promoted_surface_origin(p);
+                mapped.render_popups(ctx.r(), None, origin, XrayPos::default(), push);
+                mapped.render_promoted(ctx.r(), origin, push);
+            }
+        }
+    }
+
     fn layers_in_render_order<'a>(
         &'a self,
         layer_map: &'a LayerMap,
@@ -4683,6 +4762,12 @@ impl Niri {
     ) -> impl Iterator<Item = (&'a MappedLayer, Rectangle<i32, Logical>)> {
         // LayerMap returns layers in reverse stacking order.
         layer_map.layers_on(layer).rev().filter_map(move |surface| {
+            if self
+                .layer_promote_manager_state
+                .is_promoted(surface.wl_surface())
+            {
+                return None;
+            }
             let mapped = self.mapped_layer_surfaces.get(surface)?;
 
             if for_backdrop != mapped.place_within_backdrop() {
@@ -6304,6 +6389,9 @@ impl Niri {
         if let Some(surface) = surface {
             if surface.cached_state().keyboard_interactivity
                 == wlr_layer::KeyboardInteractivity::OnDemand
+                || self
+                    .layer_promote_manager_state
+                    .is_promoted(surface.wl_surface())
             {
                 if self.layer_shell_on_demand_focus.as_ref() != Some(&surface) {
                     self.layer_shell_on_demand_focus = Some(surface);

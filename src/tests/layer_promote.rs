@@ -1,0 +1,560 @@
+//! Protocol and incremental raster proofs for single-owner promotion.
+use std::time::Duration;
+
+use niri_config::{Config, WorkspaceReference};
+use smithay::backend::allocator::Fourcc;
+use smithay::backend::input::ButtonState;
+use smithay::backend::renderer::damage::OutputDamageTracker;
+use smithay::backend::renderer::element::{Element as _, Id};
+use smithay::backend::renderer::{Bind as _, Color32F, ExportMem as _};
+use smithay::input::pointer::{ButtonEvent, MotionEvent};
+use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
+use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
+use smithay::utils::{Point, SERIAL_COUNTER};
+use wayland_client::protocol::wl_surface::WlSurface;
+
+use super::client::bead_layer_promote::v1::client::bead_layer_promote_v1::{
+    self, BeadLayerPromoteV1,
+};
+use super::client::{ClientId, LayerConfigureProps};
+use super::Fixture;
+use crate::render_helpers::{copy_framebuffer, create_texture, RenderCtx, RenderTarget};
+
+type ServerSurface = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+
+fn panel(f: &mut Fixture) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
+    let namespace = format!("promote-test-{}", f.state.clients.len());
+    let id = f.add_client();
+    let layer = f.client(id).create_layer(None, Layer::Top, &namespace);
+    let surface = layer.surface.clone();
+    layer.set_configure_props(LayerConfigureProps {
+        anchor: Some(Anchor::Left | Anchor::Top),
+        size: Some((96, 72)),
+        ..Default::default()
+    });
+    layer.commit();
+    f.double_roundtrip(id);
+    let proxy = f
+        .client(id)
+        .state
+        .layer_promotion(&surface)
+        .promotion
+        .clone();
+    let layer = f.client(id).layer(&surface);
+    let buffer = layer
+        .spbm
+        .create_u32_rgba_buffer(u32::MAX / 2, 0, 0, u32::MAX / 2, &layer.qh, ());
+    layer.surface.attach(Some(&buffer), 0, 0);
+    layer.set_size(96, 72);
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+    let root = f
+        .niri()
+        .mapped_layer_surfaces
+        .keys()
+        .find(|l| l.namespace() == namespace)
+        .unwrap()
+        .wl_surface()
+        .clone();
+    (id, surface, root, proxy)
+}
+fn commit(f: &mut Fixture, id: ClientId, surface: &WlSurface) {
+    f.client(id).layer(surface).commit();
+    f.double_roundtrip(id);
+}
+fn promote(proxy: &BeadLayerPromoteV1, serial: u32) {
+    proxy.promote(serial, None, 0, 8., 4., 40., 30.);
+}
+
+#[test]
+fn promote_dock_cancel_and_stale_requests_are_commit_atomic_and_keep_identity() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 10);
+    f.double_roundtrip(id);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    commit(&mut f, id, &surface);
+    let p = &f.niri().layer_promote_manager_state.promoted[&root];
+    assert_eq!(p.layer.wl_surface(), &root);
+    assert_eq!(p.body_origin, Point::from((8., 4.)));
+    proxy.dock(9); // stale even though delivered on a fresh root commit
+    commit(&mut f, id, &surface);
+    assert!(f.niri().layer_promote_manager_state.is_promoted(&root));
+    proxy.cancel(11);
+    f.double_roundtrip(id);
+    assert!(f.niri().layer_promote_manager_state.is_promoted(&root));
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    assert!(f
+        .niri()
+        .mapped_layer_surfaces
+        .keys()
+        .any(|l| l.wl_surface() == &root));
+    promote(&proxy, 12);
+    commit(&mut f, id, &surface);
+    proxy.dock(13);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    let events = &f.client(id).state.promotions[0].events;
+    assert!(events.iter().any(|event| matches!(
+        event,
+        bead_layer_promote_v1::Event::Configure {
+            serial: 13,
+            state: wayland_client::WEnum::Value(bead_layer_promote_v1::State::Docked),
+            ..
+        }
+    )));
+}
+
+#[test]
+fn real_button_grab_moves_immediately_and_release_preserves_content() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    let seat = f.client(id).state.seat.clone().unwrap();
+    let pointer = f.niri().seat.get_pointer().unwrap();
+    let serial = SERIAL_COUNTER.next_serial();
+    let state = f.niri_state();
+    pointer.motion(
+        state,
+        Some((root.clone(), Point::from((0., 0.)))),
+        &MotionEvent {
+            location: Point::from((20., 20.)),
+            serial,
+            time: 1,
+        },
+    );
+    pointer.button(
+        state,
+        &ButtonEvent {
+            serial,
+            time: 1,
+            button: 0x110,
+            state: ButtonState::Pressed,
+        },
+    );
+    // Travel before the client promotes must be included without losing hotspot.
+    pointer.motion(
+        state,
+        Some((root.clone(), Point::from((0., 0.)))),
+        &MotionEvent {
+            location: Point::from((30., 25.)),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 2,
+        },
+    );
+    proxy.promote(1, Some(&seat), serial.into(), 8., 4., 40., 30.);
+    commit(&mut f, id, &surface);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].body_origin,
+        Point::from((18., 9.))
+    );
+    let state = f.niri_state();
+    pointer.motion(
+        state,
+        None,
+        &MotionEvent {
+            location: Point::from((70., 55.)),
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 3,
+        },
+    );
+    pointer.frame(state);
+    assert_eq!(
+        state.niri.layer_promote_manager_state.promoted[&root].body_origin,
+        Point::from((58., 39.))
+    );
+    pointer.button(
+        state,
+        &ButtonEvent {
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 4,
+            button: 0x110,
+            state: ButtonState::Released,
+        },
+    );
+    pointer.frame(state);
+    assert!(!state.niri.layer_promote_manager_state.promoted[&root].moving);
+    assert!(state
+        .niri
+        .mapped_layer_surfaces
+        .keys()
+        .any(|l| l.wl_surface() == &root));
+    // Reusing an expired button serial cannot start a second move.
+    proxy._move(&seat, serial.into());
+    f.double_roundtrip(id);
+    assert!(!f.niri().layer_promote_manager_state.promoted[&root].moving);
+    assert!(f.client(id).state.promotions[0]
+        .events
+        .iter()
+        .any(|event| matches!(event, bead_layer_promote_v1::Event::Rejected { .. })));
+}
+
+#[test]
+fn output_migration_and_monitorless_retirement_do_not_leave_input_or_ownership() {
+    let mut f =
+        Fixture::with_config(Config::parse_mem("output \"headless-2\" { scale 1.5; }").unwrap());
+    f.add_output(1, (600, 400));
+    f.add_output(2, (900, 600));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    let second = f.niri_output(2);
+    let at = f
+        .niri()
+        .global_space
+        .output_geometry(&second)
+        .unwrap()
+        .loc
+        .to_f64()
+        + Point::from((100., 100.));
+    f.niri().move_promoted_layer(&root, at, at);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].output,
+        second
+    );
+    assert!(f
+        .niri()
+        .contents_under(at)
+        .surface
+        .is_some_and(|(s, _)| s == root));
+    let first = f.niri_output(1);
+    f.niri().remove_output(&second);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].output,
+        first
+    );
+    f.niri().remove_output(&first);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    // Requests with no monitor remain harmless and never regain ownership.
+    proxy.dock(2);
+    f.double_roundtrip(id);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+}
+
+#[test]
+fn hidden_collection_and_unmap_remove_both_visual_and_input_ownership() {
+    let mut config = Config::default();
+    config.layout.collections.enabled = true;
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    let output = f.niri_output(1);
+    assert_eq!(f.niri().promoted_layers_for_output(&output).len(), 1);
+    let collection = f.niri().layout.create_collection(None);
+    f.niri()
+        .layout
+        .focus_collection(&WorkspaceReference::Id(collection));
+    f.niri_complete_animations();
+    assert!(f.niri().promoted_layers_for_output(&output).is_empty());
+    assert!(f
+        .niri()
+        .contents_under(Point::from((12., 12.)))
+        .surface
+        .is_none());
+    f.client(id).layer(&surface).surface.attach(None, 0, 0);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+}
+
+#[test]
+fn invalid_body_is_rejected_without_changing_the_docked_surface() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    proxy.promote(1, None, 0, 80., 60., 40., 30.);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    assert!(f.client(id).state.promotions[0]
+        .events
+        .iter()
+        .any(|event| matches!(
+            event,
+            bead_layer_promote_v1::Event::Rejected { serial: 1, .. }
+        )));
+}
+
+#[test]
+fn egl_handoff_and_move_incremental_damage_match_full_raster_at_fractional_scale() {
+    let mut f =
+        Fixture::with_config(Config::parse_mem("output \"headless-1\" { scale 1.5; }").unwrap());
+    f.niri_state().backend.headless().add_renderer().unwrap();
+    f.add_output(1, (600, 450));
+    let (id, surface, root, proxy) = panel(&mut f);
+    let output = f.niri_output(1);
+    let (mut retained, mut full) = f
+        .niri_state()
+        .backend
+        .with_primary_renderer(|renderer| {
+            (
+                create_texture(renderer, (600, 450).into(), Fourcc::Abgr8888).unwrap(),
+                create_texture(renderer, (600, 450).into(), Fourcc::Abgr8888).unwrap(),
+            )
+        })
+        .unwrap();
+    let mut damage = OutputDamageTracker::from_output(&output);
+    let mut baseline = None;
+    let mut background = None;
+    let root_id = Id::from_wayland_resource(&root);
+    let mut saw_partial = false;
+    for step in 0..4 {
+        match step {
+            1 => {
+                promote(&proxy, 1);
+                commit(&mut f, id, &surface);
+            }
+            2 => f.niri().move_promoted_layer(
+                &root,
+                Point::from((188.25, 104.5)),
+                Point::from((200., 120.)),
+            ),
+            3 => {
+                proxy.dock(2);
+                commit(&mut f, id, &surface);
+                let terminal = f
+                    .niri()
+                    .output_state
+                    .get(&output)
+                    .unwrap()
+                    .frame_clock
+                    .next_presentation_time()
+                    + Duration::from_secs(1);
+                f.niri().clock.set_unadjusted(terminal);
+            }
+            _ => {}
+        }
+        f.niri().update_render_elements(Some(&output));
+        let state = f.niri_state();
+        let niri = &state.niri;
+        state
+            .backend
+            .with_primary_renderer(|renderer| {
+                let mut elements = niri.render_to_vec(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        xray: None,
+                    },
+                    &output,
+                    false,
+                );
+                if step == 0 {
+                    // Capture the clean desktop at identical coordinates. Workspace
+                    // and outside-workspace colors differ, so another location is
+                    // not a valid reference for the old dock pixels.
+                    let index = elements.iter().position(|e| e.id() == &root_id).unwrap();
+                    let root_element = elements.remove(index);
+                    let mut target = renderer.bind(&mut full).unwrap();
+                    OutputDamageTracker::from_output(&output)
+                        .render_output(renderer, &mut target, 0, &elements, Color32F::TRANSPARENT)
+                        .unwrap();
+                    let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+                    background = Some(renderer.map_texture(&mapping).unwrap().to_vec());
+                    elements.insert(index, root_element);
+                }
+                let mut target = renderer.bind(&mut retained).unwrap();
+                {
+                    let result = damage
+                        .render_output(
+                            renderer,
+                            &mut target,
+                            usize::from(step > 0),
+                            &elements,
+                            Color32F::TRANSPARENT,
+                        )
+                        .unwrap();
+                    saw_partial |= result.damage.is_some_and(|rects| {
+                        let area: i64 = rects
+                            .iter()
+                            .map(|r| i64::from(r.size.w) * i64::from(r.size.h))
+                            .sum();
+                        area > 0 && area < 600 * 450
+                    });
+                }
+                let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+                let actual = renderer.map_texture(&mapping).unwrap().to_vec();
+                drop(target);
+                let mut target = renderer.bind(&mut full).unwrap();
+                OutputDamageTracker::from_output(&output)
+                    .render_output(renderer, &mut target, 0, &elements, Color32F::TRANSPARENT)
+                    .unwrap();
+                let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+                let expected = renderer.map_texture(&mapping).unwrap().to_vec();
+                drop(target);
+                assert!(
+                    actual == expected,
+                    "step {step}: stale pixels after incremental repaint"
+                );
+                for capture in [RenderTarget::ScreenCapture, RenderTarget::Screencast] {
+                    let capture_elements = niri.render_to_vec(
+                        RenderCtx {
+                            renderer,
+                            target: capture,
+                            xray: None,
+                        },
+                        &output,
+                        false,
+                    );
+                    let mut capture_target = renderer.bind(&mut full).unwrap();
+                    OutputDamageTracker::from_output(&output)
+                        .render_output(
+                            renderer,
+                            &mut capture_target,
+                            0,
+                            &capture_elements,
+                            Color32F::TRANSPARENT,
+                        )
+                        .unwrap();
+                    let mapping =
+                        copy_framebuffer(renderer, &capture_target, Fourcc::Abgr8888).unwrap();
+                    let captured = renderer.map_texture(&mapping).unwrap();
+                    assert!(
+                        captured == expected.as_slice(),
+                        "step {step}: capture and output ownership differ for {capture:?}"
+                    );
+                }
+                if step == 0 {
+                    baseline = Some(actual.clone());
+                }
+                if step == 1 {
+                    assert!(
+                        &actual == baseline.as_ref().unwrap(),
+                        "handoff frame must preserve every pixel, including alpha"
+                    );
+                }
+                if step == 3 {
+                    assert!(
+                        &actual == baseline.as_ref().unwrap(),
+                        "docked terminal frame must return to the original pixels"
+                    );
+                }
+                if step == 2 {
+                    let old = (20 * 600 + 20) * 4;
+                    assert_eq!(
+                        &actual[old..old + 4],
+                        &background.as_ref().unwrap()[old..old + 4],
+                        "old layer location must contain only background"
+                    );
+                }
+            })
+            .unwrap();
+    }
+    assert!(
+        saw_partial,
+        "test must exercise partial damage, not only full repaints"
+    );
+}
+
+#[test]
+fn another_client_cannot_promote_using_someone_elses_pointer_grab() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (_, _, first_root, _) = panel(&mut f);
+    let (id, surface, root, proxy) = panel(&mut f);
+    let seat = f.client(id).state.seat.clone().unwrap();
+    let pointer = f.niri().seat.get_pointer().unwrap();
+    let serial = SERIAL_COUNTER.next_serial();
+    let state = f.niri_state();
+    pointer.motion(
+        state,
+        Some((first_root, Point::from((0., 0.)))),
+        &MotionEvent {
+            location: Point::from((20., 20.)),
+            serial,
+            time: 1,
+        },
+    );
+    pointer.button(
+        state,
+        &ButtonEvent {
+            serial,
+            time: 1,
+            button: 0x110,
+            state: ButtonState::Pressed,
+        },
+    );
+    proxy.promote(1, Some(&seat), serial.into(), 8., 4., 40., 30.);
+    commit(&mut f, id, &surface);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    assert!(f.client(id).state.promotions[0]
+        .events
+        .iter()
+        .any(|event| matches!(
+            event,
+            bead_layer_promote_v1::Event::Rejected { serial: 1, .. }
+        )));
+}
+
+#[test]
+fn promotion_suspends_exclusive_space_and_controller_destruction_restores_it() {
+    use smithay::desktop::layer_map_for_output;
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    f.client(id)
+        .layer(&surface)
+        .set_configure_props(LayerConfigureProps {
+            anchor: Some(Anchor::Top),
+            exclusive_zone: Some(55),
+            ..Default::default()
+        });
+    commit(&mut f, id, &surface);
+    let output = f.niri_output(1);
+    assert_eq!(layer_map_for_output(&output).non_exclusive_zone().loc.y, 55);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    assert_eq!(layer_map_for_output(&output).non_exclusive_zone().loc.y, 0);
+    assert!(f.niri().layer_promote_manager_state.is_promoted(&root));
+    proxy.destroy();
+    f.double_roundtrip(id);
+    assert!(!f.niri().layer_promote_manager_state.is_promoted(&root));
+    assert_eq!(layer_map_for_output(&output).non_exclusive_zone().loc.y, 55);
+    assert!(f
+        .niri()
+        .mapped_layer_surfaces
+        .keys()
+        .any(|layer| layer.wl_surface() == &root));
+}
+
+#[test]
+fn surviving_output_origin_changes_keep_the_same_promoted_surface_visible() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    f.add_output(2, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    let first = f.niri_output(1);
+    let second = f.niri_output(2);
+    f.niri().remove_output(&first);
+    f.niri().refresh_layout();
+    let new_origin = f
+        .niri()
+        .global_space
+        .output_geometry(&second)
+        .unwrap()
+        .loc
+        .to_f64();
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].body_origin,
+        new_origin + Point::from((16., 16.))
+    );
+    let body = f.niri().layer_promote_manager_state.promoted[&root].body_origin;
+    // Exercise a geometry change even if automatic output placement retained
+    // the surviving connector's previous position on this configuration.
+    f.niri().global_space.map_output(&second, (-80, 20));
+    f.niri().refresh_layout();
+    let shifted_body = body + Point::from((-80., 20.)) - new_origin;
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].body_origin,
+        shifted_body
+    );
+    assert!(f
+        .niri()
+        .contents_under(shifted_body + Point::from((1., 1.)))
+        .surface
+        .is_some_and(|(s, _)| s == root));
+}
