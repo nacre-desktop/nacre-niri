@@ -1336,34 +1336,6 @@ impl<W: LayoutElement> Layout<W> {
         if self.scratchpad_active.as_ref() == Some(window) {
             self.scratchpad_active = None;
         }
-        if self.scratchpad.has_window(window) {
-            let removed = self.scratchpad.remove_tile(window, transaction);
-            self.scratchpad_cycle.retain(|id| id != window);
-            return Some(removed);
-        }
-        let removed_pinned = self
-            .monitors_mut()
-            .find(|mon| mon.pinned_workspace.has_window(window))
-            .map(|monitor| {
-                let was_active = monitor.pinned_is_active
-                    && monitor
-                        .pinned_workspace
-                        .active_window()
-                        .is_some_and(|active| active.id() == window);
-                let removed = monitor
-                    .pinned_workspace
-                    .remove_tile(window, transaction.clone());
-                if was_active {
-                    monitor.pinned_is_active = monitor.pinned_workspace.has_windows();
-                }
-                removed
-            });
-        if let Some(removed) = removed_pinned {
-            if self.scratchpad_active.as_ref() == Some(window) {
-                self.scratchpad_active = None;
-            }
-            return Some(removed);
-        }
         if let Some(state) = &self.interactive_move {
             match state {
                 InteractiveMoveState::Starting { window_id, .. } => {
@@ -1397,6 +1369,35 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
             }
+        }
+
+        if self.scratchpad.has_window(window) {
+            let removed = self.scratchpad.remove_tile(window, transaction);
+            self.scratchpad_cycle.retain(|id| id != window);
+            return Some(removed);
+        }
+        let removed_pinned = self
+            .monitors_mut()
+            .find(|mon| mon.pinned_workspace.has_window(window))
+            .map(|monitor| {
+                let was_active = monitor.pinned_is_active
+                    && monitor
+                        .pinned_workspace
+                        .active_window()
+                        .is_some_and(|active| active.id() == window);
+                let removed = monitor
+                    .pinned_workspace
+                    .remove_tile(window, transaction.clone());
+                if was_active {
+                    monitor.pinned_is_active = monitor.pinned_workspace.has_windows();
+                }
+                removed
+            });
+        if let Some(removed) = removed_pinned {
+            if self.scratchpad_active.as_ref() == Some(window) {
+                self.scratchpad_active = None;
+            }
+            return Some(removed);
         }
 
         for c in &mut self.collections {
