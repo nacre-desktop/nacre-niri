@@ -1441,7 +1441,7 @@ impl State {
 
         self.niri.clear_edge_trigger();
         self.niri.edge_trigger_last_motion = None;
-        if !config.nacre.edge_triggers {
+        if !crate::edge_triggers::event_source_available(&config) {
             if let Some(server) = &self.niri.ipc_server {
                 server.disconnect_edge_trigger_clients();
             }

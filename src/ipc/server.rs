@@ -253,6 +253,11 @@ fn event_stream_snapshot(state: &EventStreamState, include_collections: bool) ->
         .collect()
 }
 
+fn edge_trigger_stream_unavailable_error(config: &niri_config::Config) -> Option<&'static str> {
+    (!crate::edge_triggers::event_source_available(config))
+        .then_some("Nacre edge trigger events are unavailable")
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
@@ -260,8 +265,20 @@ mod tests {
 
     use niri_ipc::state::EventStreamState;
     use niri_ipc::Event;
+    use niri_config::Config;
 
-    use super::{event_stream_snapshot, EventStreamSender, IpcServer};
+    use super::{
+        edge_trigger_stream_unavailable_error, event_stream_snapshot, EventStreamSender, IpcServer,
+    };
+
+    #[test]
+    fn edge_stream_requests_are_rejected_without_event_actions() {
+        let config = Config::default();
+        assert_eq!(
+            edge_trigger_stream_unavailable_error(&config),
+            Some("Nacre edge trigger events are unavailable")
+        );
+    }
 
     #[test]
     fn default_event_stream_snapshot_keeps_collection_events_out() {
@@ -609,7 +626,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                         && !config.xwayland_satellite.off
                         && state.niri.satellite.is_some(),
                     overview_hover: config.nacre.overview_hover,
-                    edge_triggers: config.nacre.edge_triggers,
+                    edge_triggers: crate::edge_triggers::event_source_available(&config),
                 });
             });
             let capabilities = rx
@@ -846,11 +863,14 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
         Request::NacreEdgeTriggerStream => {
             let (tx, rx) = async_channel::bounded(1);
             ctx.event_loop.insert_idle(move |state| {
-                let enabled = state.niri.config.borrow().nacre.edge_triggers;
-                let _ = tx.send_blocking(enabled);
+                let config = state.niri.config.borrow();
+                let error = edge_trigger_stream_unavailable_error(&config);
+                let _ = tx.send_blocking(error);
             });
-            if !rx.recv().await.unwrap_or(false) {
-                return Err(String::from("Nacre edge triggers are disabled"));
+            if let Some(error) = rx.recv().await.unwrap_or(Some(
+                "Nacre edge trigger events are unavailable",
+            )) {
+                return Err(String::from(error));
             }
             Response::Handled
         }

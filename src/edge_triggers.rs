@@ -10,6 +10,42 @@ use smithay::utils::{Logical, Point};
 
 use crate::niri::Niri;
 
+/// Whether the native edge event source can emit any configured IPC events.
+///
+/// Edges without an explicit spawn action default to IPC events, matching the
+/// runtime action selection below. Output edge definitions count independently
+/// of global definitions because they can add event actions or override them.
+pub(crate) fn event_source_available(config: &niri_config::Config) -> bool {
+    config.nacre.edge_triggers
+        && (has_event_action(
+            &config.edge_triggers.left,
+            &config.edge_triggers.right,
+            &config.edge_triggers.top,
+            &config.edge_triggers.bottom,
+        ) || config.outputs.0.iter().any(|output| {
+            output.edge_triggers.as_ref().is_some_and(|edges| {
+                has_event_action(&edges.left, &edges.right, &edges.top, &edges.bottom)
+            })
+        }))
+}
+
+fn has_event_action(
+    left: &Option<niri_config::EdgeTrigger>,
+    right: &Option<niri_config::EdgeTrigger>,
+    top: &Option<niri_config::EdgeTrigger>,
+    bottom: &Option<niri_config::EdgeTrigger>,
+) -> bool {
+    [left, right, top, bottom].into_iter().any(|trigger| {
+        trigger.as_ref().is_some_and(|trigger| {
+            !trigger.off
+                && trigger
+                    .action
+                    .as_ref()
+                    .is_none_or(|action| action.spawn.is_none() && action.spawn_sh.is_none())
+        })
+    })
+}
+
 #[derive(Debug, Clone)]
 enum EdgeAction {
     Event,
@@ -130,9 +166,60 @@ pub fn pointer_motion_is_eligible(pointer_confined: bool, spatial_wrapping: bool
 mod tests {
     use std::time::Duration;
 
+    use niri_config::{Config, EdgeTrigger, EdgeTriggerAction, EdgeTriggersPart, Output};
     use proptest::prelude::*;
 
     use super::*;
+
+    fn event_trigger() -> EdgeTrigger {
+        EdgeTrigger {
+            off: false,
+            action: Some(EdgeTriggerAction {
+                event: true,
+                spawn: None,
+                spawn_sh: None,
+            }),
+            dwell_time_ms: None,
+            pressure: None,
+            velocity: None,
+        }
+    }
+
+    #[test]
+    fn event_source_requires_an_enabled_event_action() {
+        let mut config = Config::default();
+        assert!(!event_source_available(&config));
+
+        config.edge_triggers.left = Some(event_trigger());
+        config.nacre.edge_triggers = false;
+        assert!(!event_source_available(&config));
+        config.nacre.edge_triggers = true;
+        config.edge_triggers.left.as_mut().unwrap().off = true;
+        assert!(!event_source_available(&config));
+
+        config.edge_triggers.left = Some(EdgeTrigger {
+            action: Some(EdgeTriggerAction {
+                event: false,
+                spawn: Some(vec![String::from("panel-command")]),
+                spawn_sh: None,
+            }),
+            ..event_trigger()
+        });
+        assert!(!event_source_available(&config));
+
+        config.edge_triggers.left = Some(event_trigger());
+        assert!(event_source_available(&config));
+
+        let mut output = Output {
+            name: String::from("DP-1"),
+            edge_triggers: Some(EdgeTriggersPart::default()),
+            ..Output::default()
+        };
+        output.edge_triggers.as_mut().unwrap().right = Some(event_trigger());
+        config.edge_triggers.left = None;
+        config.outputs.0.push(output);
+        assert!(event_source_available(&config));
+    }
 
     #[test]
     fn dwell_gate_waits_and_pressure_velocity_gates_are_combined() {
