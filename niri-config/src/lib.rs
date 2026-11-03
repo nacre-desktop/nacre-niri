@@ -754,29 +754,30 @@ mod tests {
         assert_eq!(left.dwell_time_ms, Some(250));
         assert_eq!(left.pressure.map(|v| v.0), Some(12.0));
         assert_eq!(left.velocity.map(|v| v.0), Some(600.0));
-        assert!(matches!(
-            left.action.as_ref(),
-            Some(EdgeTriggerAction::Event)
-        ));
-        assert!(matches!(
-            config.edge_triggers.right.as_ref().unwrap().action.as_ref(),
-            Some(EdgeTriggerAction::Spawn(_))
-        ));
-        let output = config
-            .outputs
-            .find(&OutputName {
-                connector: "DP-1".into(),
-                make: None,
-                model: None,
-                serial: None,
-            })
-            .unwrap();
+        assert!(left.action.as_ref().unwrap().event);
+        assert_eq!(
+            config
+                .edge_triggers
+                .right
+                .as_ref()
+                .unwrap()
+                .action
+                .as_ref()
+                .unwrap()
+                .spawn
+                .as_ref()
+                .unwrap(),
+            &vec!["nacre-panel".to_owned(), "right".to_owned()]
+        );
+        let output = config.outputs.find(&OutputName {
+            connector: "DP-1".into(),
+            make: None,
+            model: None,
+            serial: None,
+        }).unwrap();
         let overrides = output.edge_triggers.as_ref().unwrap();
         assert!(overrides.left.as_ref().unwrap().off);
-        assert!(matches!(
-            overrides.bottom.as_ref().unwrap().action.as_ref(),
-            Some(EdgeTriggerAction::Event)
-        ));
+        assert!(overrides.bottom.as_ref().unwrap().action.as_ref().unwrap().event);
     }
 
     #[test]

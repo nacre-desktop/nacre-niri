@@ -11,6 +11,13 @@ use smithay::utils::{Logical, Point};
 
 use crate::niri::Niri;
 
+#[derive(Debug, Clone)]
+enum EdgeAction {
+    Event,
+    Spawn(Vec<String>),
+    SpawnSh(String),
+}
+
 /// Returns the nearest configured edge when the logical pointer is in its one-pixel edge band.
 pub fn select_edge(size: Option<[f64; 2]>, position: [f64; 2], enabled: [bool; 4]) -> Option<Edge> {
     let [width, height] = size?;
@@ -200,7 +207,7 @@ pub(crate) struct EdgeTriggerCandidate {
     pub(crate) output: String,
     pub(crate) edge: niri_ipc::Edge,
     pub(crate) output_size: [f64; 2],
-    pub(crate) action: niri_config::EdgeTriggerAction,
+    action: EdgeAction,
     pub(crate) pressure: f64,
     pub(crate) pressure_required: f64,
     pub(crate) velocity_required: f64,
@@ -313,10 +320,15 @@ impl Niri {
             let generation = self.edge_trigger_generation;
             let pressure_required = trigger.pressure.map_or(0., |pressure| pressure.0);
             let velocity_required = trigger.velocity.map_or(0., |velocity| velocity.0);
-            let action = trigger
-                .action
-                .clone()
-                .unwrap_or(niri_config::EdgeTriggerAction::Event);
+            let action = trigger.action.as_ref().map_or(EdgeAction::Event, |action| {
+                if let Some(command) = &action.spawn {
+                    EdgeAction::Spawn(command.clone())
+                } else if let Some(command) = &action.spawn_sh {
+                    EdgeAction::SpawnSh(command.clone())
+                } else {
+                    EdgeAction::Event
+                }
+            });
             self.edge_trigger_candidate = Some(EdgeTriggerCandidate {
                 generation,
                 output: output_name,
@@ -444,15 +456,15 @@ impl Niri {
         }
 
         match candidate.action {
-            niri_config::EdgeTriggerAction::Event => {
+            EdgeAction::Event => {
                 if let Some(server) = self.ipc_server.as_ref() {
                     server.edge_triggered(candidate.output, candidate.edge, [local.x, local.y]);
                 }
             }
-            niri_config::EdgeTriggerAction::Spawn(command) => {
+            EdgeAction::Spawn(command) => {
                 crate::utils::spawning::spawn(command, None);
             }
-            niri_config::EdgeTriggerAction::SpawnSh(command) => {
+            EdgeAction::SpawnSh(command) => {
                 crate::utils::spawning::spawn_sh(command, None);
             }
         }
@@ -476,7 +488,11 @@ mod edge_trigger_runtime_tests {
         let mut config = Config::default();
         config.edge_triggers.left = Some(EdgeTrigger {
             off: false,
-            action: Some(EdgeTriggerAction::Event),
+            action: Some(EdgeTriggerAction {
+                event: true,
+                spawn: None,
+                spawn_sh: None,
+            }),
             dwell_time_ms: Some(350),
             pressure: None,
             velocity: None,

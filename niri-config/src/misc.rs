@@ -192,14 +192,17 @@ impl MergeWith<NacrePart> for Nacre {
 }
 
 /// Action performed when the pointer dwells on a configured output edge.
-#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
-pub enum EdgeTriggerAction {
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+pub struct EdgeTriggerAction {
     /// Emit an `EdgeTriggered` event on the dedicated IPC stream.
-    Event,
+    #[knuffel(child)]
+    pub event: bool,
     /// Spawn a command.
-    Spawn(#[knuffel(arguments)] Vec<String>),
+    #[knuffel(child, unwrap(arguments))]
+    pub spawn: Option<Vec<String>>,
     /// Spawn a shell command.
-    SpawnSh(#[knuffel(argument)] String),
+    #[knuffel(child, unwrap(argument))]
+    pub spawn_sh: Option<String>,
 }
 
 /// Behavior configured for one screen edge.
