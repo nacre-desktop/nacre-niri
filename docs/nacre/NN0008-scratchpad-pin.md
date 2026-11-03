@@ -19,10 +19,12 @@ these actions or properties.
 - `move-window-to-scratchpad` hides the focused window; IPC accepts an optional
   window ID. Hidden windows remain alive and can be closed through normal IPC.
 - `toggle-scratchpad` shows the most recent scratchpad window as a centered
-  floating window on the focused output. Repeated use cycles the saved windows.
+  floating overlay on the focused output. Repeated use visits older saved windows
+  and then hides the overlay; the next press starts again with the most recent.
 - `scratchpad-show-window ID` selects a specific saved window.
 
-A dedicated hidden collection reuses ordinary workspace/window lifecycle code.
+A dedicated detached workspace reuses the workspace storage and no-output
+lifecycle established by collections; it does not implement another tile layout.
 Hidden windows are excluded from ordinary workspace views and the recent-window
 switcher. The overview provides a scratchpad section. Window IPC exposes
 `is_hidden`; it remains false for ordinary detached collection windows.
@@ -41,7 +43,9 @@ N0114 emits Super+H (hide), Super+Shift+H (scratchpad), and Super+P (pin) only i
 `config/nacre-niri.kdl`, the N0111 overlay. Stock niri configuration retains its
 existing behavior. Super+Alt+H retains its existing force-close meaning; hiding a
 window is not a substitute for that action. Capability-specific unsupported
-metadata is removed only where equivalent behavior is supplied.
+metadata is removed only where equivalent behavior is supplied. Native pin rules
+for the audio mixer, share picker and picture-in-picture windows also stay in the
+fork overlay; its audit is `nacre-niri-unsupported.json`.
 
 ## Validation
 

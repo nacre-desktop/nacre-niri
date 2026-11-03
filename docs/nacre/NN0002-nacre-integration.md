@@ -70,6 +70,12 @@ is not removed merely because a similar-looking rule exists.
 | Redock of Nacre Pearl/panel UI | STAYS IN NACRE | The state artifacts are test/experiment evidence; the runtime behavior is Nacre panel restoration and motion, unrelated to compositor workspace collection output identity. |
 | Remaining `unsupported.json` items | Later N-units only when a small native implementation has an end-user value | Most are absent niri concepts or Nacre command mappings. They remain Nacre-owned metadata until separately designed and tested. |
 
+NN0008 adds native scratchpad/hide and pinned floating windows behind independent
+default-on flags; see [scratchpad and pin](NN0008-scratchpad-pin.md). N0114 emits
+the supported shortcuts only in the fork overlay and keeps separate native
+unsupported metadata. The inventory below records the original NN0002 audit;
+stock-niri limitations remain unchanged.
+
 The `unsupported.json` inventory (32 records), exhaustively grouped:
 
 | Count | IDs / source touchpoints | Current disposition |
