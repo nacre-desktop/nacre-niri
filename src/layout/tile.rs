@@ -62,6 +62,11 @@ pub struct Tile<W: LayoutElement> {
     /// Whether the tile should float upon unfullscreening.
     pub(super) restore_to_floating: bool,
 
+    /// Whether this tile is a visible scratchpad overlay.
+    pub(super) scratchpad: bool,
+    /// Whether this tile is pinned above its output's workspaces.
+    pub(super) pinned: bool,
+
     /// The size that the window should assume when going floating.
     ///
     /// This is generally the last size the window had when it was floating. It can be unknown if
@@ -196,6 +201,8 @@ impl<W: LayoutElement> Tile<W> {
             sizing_mode,
             fullscreen_backdrop: SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.]),
             restore_to_floating: false,
+            scratchpad: false,
+            pinned: false,
             floating_window_size: None,
             floating_pos: None,
             floating_preset_width_idx: None,

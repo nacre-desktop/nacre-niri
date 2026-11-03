@@ -25,6 +25,8 @@ use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::RenderCtx;
 use crate::utils::output_size;
 
+const SCRATCHPAD_COLUMN_ID: u64 = u64::MAX;
+
 #[derive(Debug, Default)]
 pub(super) struct Overview {
     labels: RefCell<HashMap<(String, u64), TextureBuffer<GlesTexture>>>,
@@ -43,9 +45,113 @@ struct Preview<'a, W: LayoutElement> {
     workspace: &'a Workspace<W>,
     geometry: Rectangle<f64, Logical>,
     zoom: f64,
+    is_scratchpad: bool,
 }
 
 impl<W: LayoutElement> Layout<W> {
+    fn scratchpad_preview(&self, output: &Output) -> Option<Preview<'_, W>> {
+        if !self.scratchpad.has_windows() {
+            return None;
+        }
+        let size = output_size(output);
+        let width = (size.w * 0.46).min(720.).max(1.);
+        let height = (size.h * 0.32).min(300.).max(1.);
+        let geometry = Rectangle::new(
+            (size.w - width - 16., size.h - height - 16.).into(),
+            Size::from((width, height)),
+        );
+        let zoom = (width / self.scratchpad.view_size().w.max(1.))
+            .min(height / self.scratchpad.view_size().h.max(1.));
+        let rendered = Size::from((
+            self.scratchpad.view_size().w * zoom,
+            self.scratchpad.view_size().h * zoom,
+        ));
+        let geometry = Rectangle::new(
+            geometry.loc + (geometry.size.to_point() - rendered.to_point()).downscale(2.),
+            rendered,
+        );
+        Some(Preview {
+            id: SCRATCHPAD_COLUMN_ID,
+            workspace: &self.scratchpad,
+            geometry,
+            zoom,
+            is_scratchpad: true,
+        })
+    }
+
+    pub(super) fn scratchpad_overview_window_under(
+        &self,
+        output: &Output,
+        pos: Point<f64, Logical>,
+    ) -> Option<(&W, HitType)> {
+        let preview = self.scratchpad_preview(output)?;
+        if !preview.geometry.contains(pos) {
+            return None;
+        }
+        let (window, hit) = preview
+            .workspace
+            .window_under((pos - preview.geometry.loc).downscale(preview.zoom))?;
+        Some((window, hit.to_activate()))
+    }
+
+    pub fn render_scratchpad_overview<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        output: &Output,
+        focus_ring: bool,
+        push: &mut dyn FnMut(CollectionOverviewRenderElement<R>),
+    ) {
+        if self.collection_overview_is_open() {
+            return;
+        }
+        let Some(preview) = self.scratchpad_preview(output) else {
+            return;
+        };
+        let scale = output.current_scale().fractional_scale();
+        let crop = Rectangle::from_size(output_size(output)).to_physical_precise_round(scale);
+        let location = preview.geometry.loc.to_physical_precise_round(scale);
+        if let Some(label) = self.collection_overview.label(
+            ctx.renderer,
+            "Scratchpad",
+            scale,
+            (
+                preview.geometry.loc.x,
+                (preview.geometry.loc.y - 32.).max(0.),
+            )
+                .into(),
+            preview.geometry.size.w,
+        ) {
+            push(label.into());
+        }
+        let mut render = |elem| {
+            let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+            let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+            if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+                push(CollectionOverviewRenderElement::Workspace(elem));
+            }
+        };
+        preview.workspace.render_floating(
+            ctx.r(),
+            XrayPos::new(preview.geometry.loc, preview.zoom),
+            focus_ring,
+            &mut render,
+        );
+        preview.workspace.render_scrolling(
+            ctx.r(),
+            XrayPos::new(preview.geometry.loc, preview.zoom),
+            focus_ring,
+            &mut render,
+        );
+        let background = preview.workspace.render_background();
+        let background =
+            RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
+        let background =
+            RelocateRenderElement::from_element(background, location, Relocate::Relative);
+        if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
+            push(CollectionOverviewRenderElement::Background(background));
+        }
+    }
+
     pub fn collection_overview_is_enabled(&self) -> bool {
         self.options.layout.collections.enabled
     }
@@ -80,20 +186,27 @@ impl<W: LayoutElement> Layout<W> {
         let Some(active) = self.collection_for_output(output) else {
             return Vec::new();
         };
-        columns(
-            self.collections.iter().map(|c| c.id),
-            active,
-            output_size(output),
-            self.overview_zoom(),
-        )
+        let mut ids: Vec<_> = self.collections.iter().map(|c| c.id).collect();
+        if self.scratchpad.has_windows() {
+            ids.push(SCRATCHPAD_COLUMN_ID);
+        }
+        columns(ids, active, output_size(output), self.overview_zoom())
     }
 
     fn collection_previews(&self, output: &Output) -> Vec<Preview<'_, W>> {
         let size = output_size(output);
         let mut previews = Vec::new();
         for column in self.collection_columns(output) {
-            let workspaces: Vec<_> = self.collection_workspaces(column.id).collect();
-            let active = self.collection_active_workspace(column.id);
+            let workspaces: Vec<_> = if column.id == SCRATCHPAD_COLUMN_ID {
+                vec![&self.scratchpad]
+            } else {
+                self.collection_workspaces(column.id).collect()
+            };
+            let active = if column.id == SCRATCHPAD_COLUMN_ID {
+                Some(self.scratchpad.id())
+            } else {
+                self.collection_active_workspace(column.id)
+            };
             let active_idx = workspaces
                 .iter()
                 .position(|ws| Some(ws.id()) == active)
@@ -125,6 +238,7 @@ impl<W: LayoutElement> Layout<W> {
                     workspace: ws,
                     geometry,
                     zoom,
+                    is_scratchpad: column.id == SCRATCHPAD_COLUMN_ID,
                 });
             }
         }
@@ -197,6 +311,7 @@ impl<W: LayoutElement> Layout<W> {
         let previews = self.collection_previews(&moving.output);
         let Some(preview) = previews
             .iter()
+            .filter(|p| !p.is_scratchpad)
             .filter(|p| pos.x >= p.geometry.loc.x && pos.x < p.geometry.loc.x + p.geometry.size.w)
             .min_by(|a, b| {
                 let distance =
@@ -346,6 +461,21 @@ impl<W: LayoutElement> Layout<W> {
             if let Some(label) = self.collection_overview.label(
                 ctx.renderer,
                 &text,
+                scale,
+                (column.bounds.loc.x, 24.).into(),
+                column.bounds.size.w,
+            ) {
+                push(label.into());
+            }
+        }
+        if let Some(column) = self
+            .collection_columns(output)
+            .into_iter()
+            .find(|column| column.id == SCRATCHPAD_COLUMN_ID)
+        {
+            if let Some(label) = self.collection_overview.label(
+                ctx.renderer,
+                "Scratchpad",
                 scale,
                 (column.bounds.loc.x, 24.).into(),
                 column.bounds.size.w,

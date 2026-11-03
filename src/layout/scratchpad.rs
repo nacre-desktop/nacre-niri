@@ -1,0 +1,382 @@
+use super::workspace::WorkspaceAddWindowTarget;
+use super::{ActivateWindow, Layout, LayoutElement, SizingMode};
+use crate::utils::transaction::Transaction;
+
+impl<W: LayoutElement> Layout<W> {
+    fn restore_removed_to_active_workspace(
+        &mut self,
+        removed: super::RemovedTile<W>,
+        is_floating: bool,
+    ) {
+        if let Some(workspace) = self.active_workspace_mut() {
+            workspace.add_tile(
+                removed.tile,
+                WorkspaceAddWindowTarget::Auto,
+                ActivateWindow::No,
+                removed.width,
+                removed.is_full_width,
+                is_floating,
+            );
+            return;
+        }
+        if let super::MonitorSet::NoOutputs { workspaces } = &mut self.monitor_set {
+            if workspaces.is_empty() {
+                workspaces.push(super::Workspace::new_no_outputs(
+                    self.clock.clone(),
+                    self.options.clone(),
+                ));
+            }
+            workspaces[0].add_tile(
+                removed.tile,
+                WorkspaceAddWindowTarget::Auto,
+                ActivateWindow::No,
+                removed.width,
+                removed.is_full_width,
+                is_floating,
+            );
+        }
+    }
+
+    pub(super) fn disable_scratchpad(&mut self) {
+        let hidden: Vec<_> = self
+            .scratchpad
+            .windows()
+            .map(|window| window.id().clone())
+            .collect();
+        for id in hidden {
+            let mut removed = self.scratchpad.remove_tile(&id, Transaction::new());
+            removed.tile.scratchpad = false;
+            let floating = removed.is_floating;
+            self.restore_removed_to_active_workspace(removed, floating);
+        }
+        for monitor in self.monitors_mut() {
+            let visible: Vec<_> = monitor
+                .pinned_workspace
+                .tiles()
+                .filter(|tile| tile.scratchpad)
+                .map(|tile| tile.window().id().clone())
+                .collect();
+            for id in visible {
+                let removed = monitor
+                    .pinned_workspace
+                    .remove_tile(&id, Transaction::new());
+                let mut tile = removed.tile;
+                tile.scratchpad = false;
+                tile.pinned = false;
+                monitor.active_workspace().add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                    true,
+                );
+            }
+        }
+        for workspace in self.workspaces_mut() {
+            for tile in workspace.tiles_mut() {
+                if tile.scratchpad {
+                    tile.scratchpad = false;
+                }
+            }
+        }
+        self.scratchpad_active = None;
+        self.scratchpad_cycle.clear();
+    }
+
+    pub(super) fn disable_window_pinning(&mut self) {
+        for monitor in self.monitors_mut() {
+            let pinned: Vec<_> = monitor
+                .pinned_workspace
+                .tiles()
+                .filter(|tile| tile.pinned)
+                .map(|tile| tile.window().id().clone())
+                .collect();
+            for id in pinned {
+                let removed = monitor
+                    .pinned_workspace
+                    .remove_tile(&id, Transaction::new());
+                let mut tile = removed.tile;
+                tile.pinned = false;
+                tile.scratchpad = false;
+                monitor.active_workspace().add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                    true,
+                );
+            }
+            monitor.pinned_is_active = false;
+        }
+        for workspace in self.workspaces_mut() {
+            for tile in workspace.tiles_mut() {
+                tile.pinned = false;
+            }
+        }
+    }
+
+    /// Move a window into the hidden scratchpad. `None` means the focused window.
+    pub fn move_window_to_scratchpad(&mut self, id: Option<&W::Id>) {
+        if !self.options.nacre.scratchpad {
+            return;
+        }
+        let id = id.cloned().or_else(|| {
+            self.focus().map(|window| window.id().clone()).or_else(|| {
+                self.active_workspace()?
+                    .active_window()
+                    .map(|window| window.id().clone())
+            })
+        });
+        let Some(id) = id else {
+            return;
+        };
+        let Some(mut removed) = self.remove_window(&id, Transaction::new()) else {
+            return;
+        };
+        removed.tile.scratchpad = false;
+        removed.tile.pinned = false;
+        self.scratchpad.add_tile(
+            removed.tile,
+            WorkspaceAddWindowTarget::Auto,
+            ActivateWindow::No,
+            removed.width,
+            removed.is_full_width,
+            removed.is_floating,
+        );
+        self.scratchpad.refresh(false, false);
+        if !self.scratchpad_cycle.contains(&id) {
+            self.scratchpad_cycle.push(id.clone());
+        }
+        if self.scratchpad_active.as_ref() == Some(&id) {
+            self.scratchpad_active = None;
+        }
+    }
+
+    /// Show a hidden scratchpad window as a centered floating window on the focused output.
+    pub fn scratchpad_show_window(&mut self, id: &W::Id) {
+        if !self.options.nacre.scratchpad
+            || self.active_monitor().is_none()
+            || !self.scratchpad.has_window(id)
+        {
+            return;
+        }
+        if self
+            .scratchpad_active
+            .as_ref()
+            .is_some_and(|active| active != id)
+        {
+            let active = self.scratchpad_active.clone().unwrap();
+            self.move_window_to_scratchpad(Some(&active));
+        }
+        let mut removed = self.scratchpad.remove_tile(id, Transaction::new());
+        let Some(monitor) = self.active_monitor() else {
+            self.scratchpad.add_tile(
+                removed.tile,
+                WorkspaceAddWindowTarget::Auto,
+                ActivateWindow::No,
+                removed.width,
+                removed.is_full_width,
+                removed.is_floating,
+            );
+            return;
+        };
+        removed.tile.scratchpad = true;
+        monitor.pinned_workspace.add_tile(
+            removed.tile,
+            WorkspaceAddWindowTarget::Auto,
+            ActivateWindow::Yes,
+            removed.width,
+            removed.is_full_width,
+            true,
+        );
+        monitor.pinned_workspace.center_window(Some(id));
+        monitor.pinned_is_active = true;
+        self.scratchpad_active = Some(id.clone());
+    }
+
+    /// Cycle through scratchpad windows, hiding the current one when it is the last remaining.
+    pub fn toggle_scratchpad(&mut self) {
+        if !self.options.nacre.scratchpad {
+            return;
+        }
+        let live: Vec<_> = self
+            .windows()
+            .map(|(_, window)| window.id().clone())
+            .collect();
+        self.scratchpad_cycle.retain(|id| live.contains(id));
+        let visible = self.scratchpad_active.clone();
+        let Some(next) = self.next_scratchpad_id(visible.as_ref()) else {
+            if let Some(visible) = visible {
+                self.move_window_to_scratchpad(Some(&visible));
+            }
+            return;
+        };
+        if let Some(visible) = visible {
+            self.move_window_to_scratchpad(Some(&visible));
+        }
+        self.scratchpad_show_window(&next);
+    }
+
+    fn next_scratchpad_id(&self, after: Option<&W::Id>) -> Option<W::Id> {
+        if self.scratchpad_cycle.is_empty() {
+            return self
+                .scratchpad
+                .windows()
+                .last()
+                .map(|window| window.id().clone());
+        }
+        let end = after
+            .and_then(|id| {
+                self.scratchpad_cycle
+                    .iter()
+                    .position(|candidate| candidate == id)
+            })
+            .unwrap_or(self.scratchpad_cycle.len());
+        self.scratchpad_cycle[..end]
+            .iter()
+            .rev()
+            .find(|id| self.scratchpad.has_window(id))
+            .cloned()
+    }
+
+    pub fn is_window_hidden(&self, id: &W::Id) -> bool {
+        self.scratchpad.has_window(id)
+    }
+
+    pub fn scratchpad_windows(&self) -> impl Iterator<Item = &W> + '_ {
+        self.scratchpad.windows()
+    }
+
+    pub fn toggle_window_pinned(&mut self, id: Option<&W::Id>) {
+        if !self.options.nacre.window_pinning {
+            return;
+        }
+        let Some(id) = id.cloned().or_else(|| {
+            self.focus().map(|window| window.id().clone()).or_else(|| {
+                self.active_workspace()?
+                    .active_window()
+                    .map(|window| window.id().clone())
+            })
+        }) else {
+            return;
+        };
+        if self.is_window_hidden(&id) {
+            return;
+        }
+        if self.scratchpad_active.as_ref() == Some(&id) {
+            self.scratchpad_active = None;
+        }
+        let was_focused = self.focus().is_some_and(|window| window.id() == &id);
+        if self.is_window_pinned(&id) {
+            let focused_id = self.focus().map(|window| window.id().clone());
+            let output_and_active = self
+                .monitors()
+                .find(|monitor| monitor.pinned_workspace.has_window(&id))
+                .map(|monitor| (monitor.output.clone(), monitor.pinned_is_active));
+            if output_and_active.is_none() {
+                for workspace in self.workspaces_mut() {
+                    if workspace.has_window(&id) {
+                        if let Some(tile) =
+                            workspace.tiles_mut().find(|tile| tile.window().id() == &id)
+                        {
+                            tile.pinned = false;
+                        }
+                        return;
+                    }
+                }
+                return;
+            }
+            let Some(mut removed) = self.remove_window(&id, Transaction::new()) else {
+                return;
+            };
+            removed.tile.pinned = false;
+            removed.tile.scratchpad = false;
+            let (output, was_overlay_focused) = output_and_active.unwrap();
+            if let Some(monitor) = self.monitors_mut().find(|monitor| monitor.output == output) {
+                monitor.active_workspace().add_tile(
+                    removed.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    if was_focused {
+                        ActivateWindow::Yes
+                    } else {
+                        ActivateWindow::No
+                    },
+                    removed.width,
+                    removed.is_full_width,
+                    true,
+                );
+                monitor.pinned_is_active = was_overlay_focused && focused_id.as_ref() != Some(&id);
+            }
+            return;
+        }
+
+        let output = self
+            .monitors()
+            .find(|monitor| monitor.has_window(&id))
+            .map(|monitor| monitor.output.clone());
+        let Some(output) = output else { return };
+        let overlay_was_focused = self
+            .monitors()
+            .find(|monitor| monitor.output == output)
+            .is_some_and(|monitor| monitor.pinned_is_active);
+        if let Some(workspace) = self
+            .monitors_mut()
+            .find(|monitor| monitor.output == output)
+            .and_then(|monitor| {
+                monitor
+                    .workspaces
+                    .iter_mut()
+                    .find(|workspace| workspace.has_window(&id))
+            })
+        {
+            let mode = workspace
+                .tiles()
+                .find(|tile| tile.window().id() == &id)
+                .map(|tile| tile.window().pending_sizing_mode());
+            if mode.is_some_and(|mode| mode.is_fullscreen()) {
+                workspace.set_fullscreen(&id, false);
+            } else if mode.is_some_and(|mode| mode.is_maximized()) {
+                workspace.set_maximized(&id, false);
+            }
+            if !workspace.is_floating(&id) {
+                workspace.toggle_window_floating(Some(&id));
+            }
+        }
+        let Some(mut removed) = self.remove_window(&id, Transaction::new()) else {
+            return;
+        };
+        removed.tile.pinned = true;
+        removed.tile.scratchpad = false;
+        if let Some(monitor) = self.monitors_mut().find(|monitor| monitor.output == output) {
+            monitor.pinned_workspace.add_tile(
+                removed.tile,
+                WorkspaceAddWindowTarget::Auto,
+                if was_focused {
+                    ActivateWindow::Yes
+                } else {
+                    ActivateWindow::No
+                },
+                removed.width,
+                removed.is_full_width,
+                true,
+            );
+            monitor.pinned_workspace.center_window(Some(&id));
+            monitor.pinned_is_active = was_focused || overlay_was_focused;
+        }
+    }
+
+    pub fn is_window_pinned(&self, id: &W::Id) -> bool {
+        self.monitors().any(|monitor| {
+            monitor
+                .pinned_workspace
+                .tiles()
+                .any(|tile| tile.window().id() == id && tile.pinned)
+        }) || self.workspaces().any(|(_, _, workspace)| {
+            workspace
+                .tiles()
+                .any(|tile| tile.window().id() == id && tile.pinned)
+        })
+    }
+}

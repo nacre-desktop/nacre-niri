@@ -84,6 +84,7 @@ pub mod focus_ring;
 pub mod insert_hint_element;
 pub mod monitor;
 pub mod opening_window;
+mod scratchpad;
 pub mod scrolling;
 pub mod shadow;
 pub mod tab_indicator;
@@ -341,6 +342,12 @@ pub struct Layout<W: LayoutElement> {
     monitor_set: MonitorSet<W>,
     /// Collection identity registry, retained independently of connected outputs.
     collections: Vec<collections::Collection<W>>,
+    /// Windows kept out of normal workspaces while hidden in the scratchpad.
+    scratchpad: Workspace<W>,
+    /// Most recently shown scratchpad window, when one is visible.
+    scratchpad_active: Option<W::Id>,
+    /// Scratchpad insertion order, retained while windows are shown as overlays.
+    scratchpad_cycle: Vec<W::Id>,
     /// Collection to restore when a borrowed output collection returns home.
     collection_returns: HashMap<String, u64>,
     /// Configured workspaces awaiting their first matching output at startup.
@@ -708,6 +715,9 @@ impl<W: LayoutElement> Layout<W> {
         let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces: vec![] },
             collections: vec![],
+            scratchpad: Workspace::new_no_outputs(clock.clone(), Rc::new(options.clone())),
+            scratchpad_active: None,
+            scratchpad_cycle: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
@@ -746,6 +756,9 @@ impl<W: LayoutElement> Layout<W> {
         let mut layout = Self {
             monitor_set: MonitorSet::NoOutputs { workspaces },
             collections: vec![],
+            scratchpad: Workspace::new_no_outputs(clock.clone(), opts.clone()),
+            scratchpad_active: None,
+            scratchpad_cycle: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
@@ -976,6 +989,126 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<&Output> {
         let scrolling_height = height.map(SizeChange::from);
         let id = window.id().clone();
+        let open_pinned =
+            self.options.nacre.window_pinning && window.rules().open_pinned == Some(true);
+
+        if open_pinned {
+            let scratchpad_parent = match target {
+                AddWindowTarget::NextTo(next) => self.scratchpad.has_window(next),
+                _ => false,
+            };
+            let monitor_idx = match &self.monitor_set {
+                MonitorSet::Normal {
+                    monitors,
+                    active_monitor_idx,
+                    ..
+                } => match target {
+                    AddWindowTarget::Auto => Some(*active_monitor_idx),
+                    AddWindowTarget::Output(output) => {
+                        monitors.iter().position(|mon| mon.output == *output)
+                    }
+                    AddWindowTarget::Workspace(workspace) => monitors
+                        .iter()
+                        .position(|mon| mon.workspaces.iter().any(|ws| ws.id() == workspace)),
+                    AddWindowTarget::NextTo(next) => monitors
+                        .iter()
+                        .position(|mon| mon.has_window(next))
+                        .or_else(|| scratchpad_parent.then_some(*active_monitor_idx)),
+                },
+                MonitorSet::NoOutputs { .. } => None,
+            };
+            if let Some(idx) = monitor_idx {
+                let MonitorSet::Normal {
+                    monitors,
+                    active_monitor_idx,
+                    ..
+                } = &mut self.monitor_set
+                else {
+                    unreachable!("monitor index only exists when outputs are connected")
+                };
+                let monitor = &mut monitors[idx];
+                let activate_pinned = activate.map_smart(|| monitor.active_window().is_none());
+                let width = monitor
+                    .pinned_workspace
+                    .resolve_scrolling_width(&window, width);
+                let mut tile = monitor.pinned_workspace.make_tile(window);
+                tile.pinned = true;
+                monitor.pinned_workspace.add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    if activate_pinned {
+                        ActivateWindow::Yes
+                    } else {
+                        ActivateWindow::No
+                    },
+                    width,
+                    is_full_width,
+                    true,
+                );
+                monitor.pinned_is_active |= activate_pinned;
+                if activate_pinned {
+                    *active_monitor_idx = idx;
+                }
+                return Some(&monitor.output);
+            }
+        }
+
+        if let AddWindowTarget::NextTo(next) = target {
+            if self.scratchpad.has_window(next) {
+                let width = self.scratchpad.resolve_scrolling_width(&window, width);
+                let tile = self.scratchpad.make_tile(window);
+                self.scratchpad.add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::NextTo(next),
+                    ActivateWindow::No,
+                    width,
+                    is_full_width,
+                    is_floating,
+                );
+                self.scratchpad.refresh(false, false);
+                return None;
+            }
+            if let Some(mon_idx) = self
+                .monitors()
+                .enumerate()
+                .find(|(_, monitor)| monitor.pinned_workspace.has_window(next))
+                .map(|(idx, _)| idx)
+            {
+                let MonitorSet::Normal {
+                    monitors,
+                    active_monitor_idx,
+                    ..
+                } = &mut self.monitor_set
+                else {
+                    unreachable!("monitor index only exists when outputs are connected")
+                };
+                let monitor = &mut monitors[mon_idx];
+                let activate_pinned = activate.map_smart(|| monitor.active_window().is_none());
+                let width = monitor
+                    .pinned_workspace
+                    .resolve_scrolling_width(&window, width);
+                let mut tile = monitor.pinned_workspace.make_tile(window);
+                tile.pinned = true;
+                monitor.pinned_workspace.add_tile(
+                    tile,
+                    WorkspaceAddWindowTarget::NextTo(next),
+                    if activate_pinned {
+                        ActivateWindow::Yes
+                    } else {
+                        ActivateWindow::No
+                    },
+                    width,
+                    is_full_width,
+                    true,
+                );
+                monitor.pinned_is_active |= activate_pinned;
+                if activate_pinned {
+                    *active_monitor_idx = mon_idx;
+                }
+                monitor.pinned_workspace.refresh(false, false);
+                return Some(&monitor.output);
+            }
+        }
 
         let hidden_target = self.collections.iter().enumerate().find_map(|(ci, c)| {
             c.workspaces
@@ -994,14 +1127,15 @@ impl<W: LayoutElement> Layout<W> {
         if let Some((ci, wi, target)) = hidden_target {
             let ws = &mut self.collections[ci].workspaces[wi];
             let width = ws.resolve_scrolling_width(&window, width);
-            let tile = ws.make_tile(window);
+            let mut tile = ws.make_tile(window);
+            tile.pinned = open_pinned;
             ws.add_tile(
                 tile,
                 target,
                 ActivateWindow::No,
                 width,
                 is_full_width,
-                is_floating,
+                is_floating || open_pinned,
             );
             if !is_floating {
                 if let Some(height) = scrolling_height {
@@ -1171,14 +1305,15 @@ impl<W: LayoutElement> Layout<W> {
 
                 let scrolling_width = ws.resolve_scrolling_width(&window, width);
 
-                let tile = ws.make_tile(window);
+                let mut tile = ws.make_tile(window);
+                tile.pinned = open_pinned;
                 ws.add_tile(
                     tile,
                     target,
                     activate,
                     scrolling_width,
                     is_full_width,
-                    is_floating,
+                    is_floating || open_pinned,
                 );
 
                 // Set the default height for scrolling windows.
@@ -1198,6 +1333,33 @@ impl<W: LayoutElement> Layout<W> {
         window: &W::Id,
         transaction: Transaction,
     ) -> Option<RemovedTile<W>> {
+        if self.scratchpad.has_window(window) {
+            let removed = self.scratchpad.remove_tile(window, transaction);
+            self.scratchpad_cycle.retain(|id| id != window);
+            return Some(removed);
+        }
+        let removed_pinned = self
+            .monitors_mut()
+            .find(|mon| mon.pinned_workspace.has_window(window))
+            .map(|monitor| {
+                if monitor.pinned_is_active
+                    && monitor
+                        .pinned_workspace
+                        .active_window()
+                        .is_some_and(|active| active.id() == window)
+                {
+                    monitor.pinned_is_active = false;
+                }
+                monitor
+                    .pinned_workspace
+                    .remove_tile(window, transaction.clone())
+            });
+        if let Some(removed) = removed_pinned {
+            if self.scratchpad_active.as_ref() == Some(window) {
+                self.scratchpad_active = None;
+            }
+            return Some(removed);
+        }
         if let Some(state) = &self.interactive_move {
             match state {
                 InteractiveMoveState::Starting { window_id, .. } => {
@@ -1297,6 +1459,14 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn descendants_added(&mut self, id: &W::Id) -> bool {
+        if self.scratchpad.descendants_added(id) {
+            return true;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.descendants_added(id) {
+                return true;
+            }
+        }
         for ws in self.workspaces_mut() {
             if ws.descendants_added(id) {
                 return true;
@@ -1319,6 +1489,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if self.scratchpad.has_window(window) {
+            self.scratchpad.update_window(window, serial);
+            return;
+        }
+
         for c in &mut self.collections {
             if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.has_window(window)) {
                 ws.update_window(window, serial);
@@ -1329,6 +1504,10 @@ impl<W: LayoutElement> Layout<W> {
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
+                    if mon.pinned_workspace.has_window(window) {
+                        mon.pinned_workspace.update_window(window, serial);
+                        return;
+                    }
                     for ws in &mut mon.workspaces {
                         if ws.has_window(window) {
                             ws.update_window(window, serial);
@@ -1487,6 +1666,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn find_window_and_output(&self, wl_surface: &WlSurface) -> Option<(&W, Option<&Output>)> {
+        if let Some(window) = self.scratchpad.find_wl_surface(wl_surface) {
+            return Some((window, None));
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().is_wl_surface(wl_surface) {
                 return Some((move_.tile.window(), Some(&move_.output)));
@@ -1503,6 +1685,9 @@ impl<W: LayoutElement> Layout<W> {
         match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
+                    if let Some(window) = mon.pinned_workspace.find_wl_surface(wl_surface) {
+                        return Some((window, Some(&mon.output)));
+                    }
                     for ws in &mon.workspaces {
                         if let Some(window) = ws.find_wl_surface(wl_surface) {
                             return Some((window, Some(&mon.output)));
@@ -1526,6 +1711,9 @@ impl<W: LayoutElement> Layout<W> {
         &mut self,
         wl_surface: &WlSurface,
     ) -> Option<(&mut W, Option<&Output>)> {
+        if let Some(window) = self.scratchpad.find_wl_surface_mut(wl_surface) {
+            return Some((window, None));
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if move_.tile.window().is_wl_surface(wl_surface) {
                 return Some((move_.tile.window_mut(), Some(&move_.output)));
@@ -1542,6 +1730,9 @@ impl<W: LayoutElement> Layout<W> {
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
+                    if let Some(window) = mon.pinned_workspace.find_wl_surface_mut(wl_surface) {
+                        return Some((window, Some(&mon.output)));
+                    }
                     for ws in &mut mon.workspaces {
                         if let Some(window) = ws.find_wl_surface_mut(wl_surface) {
                             return Some((window, Some(&mon.output)));
@@ -1650,6 +1841,26 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window(&mut self, window: &W::Id) {
+        if self.is_window_hidden(window) {
+            self.scratchpad_show_window(window);
+            if self.overview_open {
+                self.close_overview();
+            }
+            return;
+        }
+        if let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &mut self.monitor_set
+        {
+            for (monitor_idx, monitor) in monitors.iter_mut().enumerate() {
+                if monitor.activate_pinned_window(window) {
+                    *active_monitor_idx = monitor_idx;
+                    return;
+                }
+            }
+        }
         if let Some(id) = self
             .collections
             .iter()
@@ -1694,6 +1905,19 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn activate_window_without_raising(&mut self, window: &W::Id) {
+        if let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &mut self.monitor_set
+        {
+            for (monitor_idx, monitor) in monitors.iter_mut().enumerate() {
+                if monitor.activate_pinned_window(window) {
+                    *active_monitor_idx = monitor_idx;
+                    return;
+                }
+            }
+        }
         if let Some(id) = self
             .collections
             .iter()
@@ -1740,6 +1964,9 @@ impl<W: LayoutElement> Layout<W> {
     /// Select a window without moving the overview camera. Hidden collections are not present in
     /// the monitor workspaces searched here, so hovering them never changes keyboard selection.
     pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+        if self.is_window_hidden(window) {
+            return false;
+        }
         if !self.options.nacre.overview_hover {
             return false;
         }
@@ -1755,6 +1982,12 @@ impl<W: LayoutElement> Layout<W> {
         else {
             return false;
         };
+        for (monitor_idx, mon) in monitors.iter_mut().enumerate() {
+            if mon.activate_pinned_window(window) {
+                *active_monitor_idx = monitor_idx;
+                return true;
+            }
+        }
         for (monitor_idx, mon) in monitors.iter_mut().enumerate() {
             let active_workspace = mon.active_workspace_idx();
             for (workspace_idx, ws) in mon.workspaces.iter_mut().enumerate() {
@@ -1815,7 +2048,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ {
-        let overview = self.collection_overview_is_open();
+        let overview = self.overview_open;
         let moving_output = output.clone();
         let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
@@ -1833,7 +2066,7 @@ impl<W: LayoutElement> Layout<W> {
         let mon_windows = monitors
             .iter()
             .filter(move |mon| overview || mon.output == output)
-            .flat_map(|mon| mon.workspaces.iter().flat_map(|ws| ws.windows()));
+            .flat_map(|mon| mon.windows());
         let hidden_windows = self
             .collections
             .iter()
@@ -1841,11 +2074,15 @@ impl<W: LayoutElement> Layout<W> {
             .flat_map(|ws| ws.windows())
             .filter(move |_| overview);
 
-        moving_window.chain(mon_windows).chain(hidden_windows)
+        let scratchpad = self.scratchpad.windows().filter(move |_| overview);
+        moving_window
+            .chain(mon_windows)
+            .chain(hidden_windows)
+            .chain(scratchpad)
     }
 
     pub fn windows_for_output_mut(&mut self, output: &Output) -> impl Iterator<Item = &mut W> + '_ {
-        let overview = self.collection_overview_is_open();
+        let overview = self.overview_open;
         let moving_output = output.clone();
         let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
@@ -1863,7 +2100,7 @@ impl<W: LayoutElement> Layout<W> {
         let mon_windows = monitors
             .iter_mut()
             .filter(move |mon| overview || mon.output == output)
-            .flat_map(|mon| mon.workspaces.iter_mut().flat_map(|ws| ws.windows_mut()));
+            .flat_map(|mon| mon.windows_mut());
         let hidden_windows = self
             .collections
             .iter_mut()
@@ -1871,7 +2108,11 @@ impl<W: LayoutElement> Layout<W> {
             .flat_map(|ws| ws.windows_mut())
             .filter(move |_| overview);
 
-        moving_window.chain(mon_windows).chain(hidden_windows)
+        let scratchpad = self.scratchpad.windows_mut().filter(move |_| overview);
+        moving_window
+            .chain(mon_windows)
+            .chain(hidden_windows)
+            .chain(scratchpad)
     }
 
     pub fn with_windows(
@@ -1891,6 +2132,9 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        for (tile, layout) in self.scratchpad.tiles_with_ipc_layouts() {
+            f(tile.window(), None, Some(self.scratchpad.id()), layout);
+        }
         match &self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1898,6 +2142,14 @@ impl<W: LayoutElement> Layout<W> {
                         for (tile, layout) in ws.tiles_with_ipc_layouts() {
                             f(tile.window(), Some(&mon.output), Some(ws.id()), layout);
                         }
+                    }
+                    for (tile, layout) in mon.pinned_workspace.tiles_with_ipc_layouts() {
+                        f(
+                            tile.window(),
+                            Some(&mon.output),
+                            Some(mon.active_workspace_ref().id()),
+                            layout,
+                        );
                     }
                 }
             }
@@ -1923,6 +2175,9 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        for win in self.scratchpad.windows_mut() {
+            f(win, None);
+        }
         match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
                 for mon in monitors {
@@ -1930,6 +2185,9 @@ impl<W: LayoutElement> Layout<W> {
                         for win in ws.windows_mut() {
                             f(win, Some(&mon.output));
                         }
+                    }
+                    for win in mon.pinned_workspace.windows_mut() {
+                        f(win, Some(&mon.output));
                     }
                 }
             }
@@ -2584,8 +2842,19 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         pos_within_output: Point<f64, Logical>,
     ) -> Option<(&W, HitType)> {
+        if let Some(hit) = self
+            .monitor_for_output(output)
+            .and_then(|monitor| monitor.pinned_workspace.window_under(pos_within_output))
+        {
+            return Some(hit);
+        }
         if self.collection_overview_is_open() {
             return self.collection_window_under(output, pos_within_output);
+        }
+        if self.overview_open {
+            if let Some(hit) = self.scratchpad_overview_window_under(output, pos_within_output) {
+                return Some(hit);
+            }
         }
         let mon = self.monitor_for_output(output)?;
         mon.window_under(pos_within_output)
@@ -2743,6 +3012,18 @@ impl<W: LayoutElement> Layout<W> {
         }
         let mut seen_workspace_id = HashSet::new();
         let mut seen_workspace_name = Vec::<String>::new();
+        assert!(
+            seen_workspace_id.insert(self.scratchpad.id()),
+            "workspace id must be unique"
+        );
+        assert!(self.scratchpad.current_output().is_none());
+        assert_eq!(self.scratchpad.clock, self.clock);
+        assert_eq!(self.scratchpad.base_options, self.options);
+        assert!(self
+            .scratchpad
+            .tiles()
+            .all(|tile| !tile.pinned && !tile.scratchpad));
+        self.scratchpad.verify_invariants(move_win_id.as_ref());
 
         for collection in &self.collections {
             for workspace in &collection.workspaces {
@@ -2816,6 +3097,27 @@ impl<W: LayoutElement> Layout<W> {
             );
 
             monitor.verify_invariants();
+            assert!(
+                seen_workspace_id.insert(monitor.pinned_workspace.id()),
+                "workspace id must be unique"
+            );
+            assert_eq!(
+                monitor.pinned_workspace.current_output(),
+                Some(&monitor.output)
+            );
+            assert_eq!(monitor.pinned_workspace.clock, self.clock);
+            assert_eq!(monitor.pinned_workspace.base_options, monitor.options);
+            assert!(monitor
+                .pinned_workspace
+                .tiles()
+                .all(|tile| tile.pinned || tile.scratchpad));
+            assert!(monitor.pinned_workspace.tiles().all(|tile| {
+                !tile.window().pending_sizing_mode().is_normal()
+                    || monitor.pinned_workspace.is_floating(tile.window().id())
+            }));
+            monitor
+                .pinned_workspace
+                .verify_invariants(move_win_id.as_ref());
 
             if self.options.layout.collections.enabled {
                 assert!(monitor.collection_id.is_some());
@@ -2891,6 +3193,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn advance_animations(&mut self) {
+        self.scratchpad.advance_animations();
         for c in &mut self.collections {
             for ws in &mut c.workspaces {
                 ws.advance_animations();
@@ -3090,6 +3393,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
+        if self.overview_open && !self.collection_overview_is_open() {
+            self.scratchpad.update_render_elements(false);
+        }
         if self.collection_overview_is_open() {
             // All stacks can appear on this output, with more vertical previews visible at the
             // smaller collection zoom than the monitor's usual culling rectangle permits.
@@ -3148,6 +3454,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn update_shaders(&mut self) {
         self.collection_overview.clear();
+        self.scratchpad.update_shaders();
         for c in &mut self.collections {
             for ws in &mut c.workspaces {
                 ws.update_shaders();
@@ -3294,6 +3601,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     fn update_options(&mut self, options: Options) {
+        if self.options.nacre.scratchpad && !options.nacre.scratchpad {
+            self.disable_scratchpad();
+        }
+        if self.options.nacre.window_pinning && !options.nacre.window_pinning {
+            self.disable_window_pinning();
+        }
         self.transition_collections(options.layout.collections.enabled);
         let options = Rc::new(options);
 
@@ -3325,6 +3638,7 @@ impl<W: LayoutElement> Layout<W> {
                 ws.update_config(options.clone());
             }
         }
+        self.scratchpad.update_config(options.clone());
         self.options = options;
         self.configure_collections();
     }
@@ -3519,6 +3833,15 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if window.is_some_and(|id| {
+            self.is_window_hidden(id)
+                || self
+                    .monitors()
+                    .any(|mon| mon.pinned_workspace.has_window(id))
+        }) {
+            return;
+        }
+
         let workspace = if let Some(window) = window {
             Some(
                 self.workspaces_mut()
@@ -3543,6 +3866,15 @@ impl<W: LayoutElement> Layout<W> {
                 }
                 return;
             }
+        }
+
+        if window.is_some_and(|id| {
+            self.is_window_hidden(id)
+                || self
+                    .monitors()
+                    .any(|mon| mon.pinned_workspace.has_window(id))
+        }) {
+            return;
         }
 
         let workspace = if let Some(window) = window {
@@ -3897,6 +4229,17 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if self.scratchpad.has_window(id) {
+            self.scratchpad.set_fullscreen(id, is_fullscreen);
+            return;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.has_window(id) {
+                monitor.pinned_workspace.set_fullscreen(id, is_fullscreen);
+                return;
+            }
+        }
+
         for ws in self.workspaces_mut() {
             if ws.has_window(id) {
                 ws.set_fullscreen(id, is_fullscreen);
@@ -3908,6 +4251,17 @@ impl<W: LayoutElement> Layout<W> {
     pub fn toggle_fullscreen(&mut self, id: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
+                return;
+            }
+        }
+
+        if self.scratchpad.has_window(id) {
+            self.scratchpad.toggle_fullscreen(id);
+            return;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.has_window(id) {
+                monitor.pinned_workspace.toggle_fullscreen(id);
                 return;
             }
         }
@@ -3947,6 +4301,17 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
+        if self.scratchpad.has_window(id) {
+            self.scratchpad.set_maximized(id, maximize);
+            return;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.has_window(id) {
+                monitor.pinned_workspace.set_maximized(id, maximize);
+                return;
+            }
+        }
+
         for ws in self.workspaces_mut() {
             if ws.has_window(id) {
                 ws.set_maximized(id, maximize);
@@ -3958,6 +4323,17 @@ impl<W: LayoutElement> Layout<W> {
     pub fn toggle_maximized(&mut self, id: &W::Id) {
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
+                return;
+            }
+        }
+
+        if self.scratchpad.has_window(id) {
+            self.scratchpad.toggle_maximized(id);
+            return;
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.pinned_workspace.has_window(id) {
+                monitor.pinned_workspace.toggle_maximized(id);
                 return;
             }
         }
@@ -4353,6 +4729,10 @@ impl<W: LayoutElement> Layout<W> {
                     is_floating,
                 } = self.remove_window(window, Transaction::new()).unwrap();
 
+                // An interactive move drops the tile into an ordinary workspace, so it no longer
+                // belongs to either output overlay.
+                tile.pinned = false;
+                tile.scratchpad = false;
                 tile.stop_move_animations();
                 tile.interactive_move_offset = Point::from((0., 0.));
                 tile.window().output_enter(&output);
@@ -5287,6 +5667,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn refresh(&mut self, is_active: bool) {
         let _span = tracy_client::span!("Layout::refresh");
+        self.scratchpad.refresh(false, false);
 
         for c in &mut self.collections {
             for ws in &mut c.workspaces {
@@ -5343,6 +5724,9 @@ impl<W: LayoutElement> Layout<W> {
                     } else if !self.overview_open {
                         mon.dnd_scroll_gesture_end();
                     }
+
+                    mon.pinned_workspace
+                        .refresh(is_active, is_active && mon.pinned_is_active);
 
                     for (ws_idx, ws) in mon.workspaces.iter_mut().enumerate() {
                         let is_focused = is_active && ws_idx == mon.active_workspace_idx;
@@ -5409,9 +5793,11 @@ impl<W: LayoutElement> Layout<W> {
     pub fn workspaces_mut(&mut self) -> impl Iterator<Item = &mut Workspace<W>> + '_ {
         let (iter_normal, iter_no_outputs) = match &mut self.monitor_set {
             MonitorSet::Normal { monitors, .. } => {
-                let it = monitors
-                    .iter_mut()
-                    .flat_map(|mon| mon.workspaces.iter_mut());
+                let it = monitors.iter_mut().flat_map(|mon| {
+                    mon.workspaces
+                        .iter_mut()
+                        .chain(std::iter::once(&mut mon.pinned_workspace))
+                });
 
                 (Some(it), None)
             }
@@ -5424,11 +5810,14 @@ impl<W: LayoutElement> Layout<W> {
 
         let iter_normal = iter_normal.into_iter().flatten();
         let iter_no_outputs = iter_no_outputs.into_iter().flatten();
-        iter_normal.chain(iter_no_outputs).chain(
-            self.collections
-                .iter_mut()
-                .flat_map(|c| c.workspaces.iter_mut()),
-        )
+        iter_normal
+            .chain(iter_no_outputs)
+            .chain(
+                self.collections
+                    .iter_mut()
+                    .flat_map(|c| c.workspaces.iter_mut()),
+            )
+            .chain(std::iter::once(&mut self.scratchpad))
     }
 
     pub fn windows(&self) -> impl Iterator<Item = (Option<&Monitor<W>>, &W)> {
@@ -5443,7 +5832,15 @@ impl<W: LayoutElement> Layout<W> {
             .workspaces()
             .flat_map(|(mon, _, ws)| ws.windows().map(move |win| (mon, win)));
 
-        moving_window.chain(rest)
+        let pinned = self.monitors().flat_map(|mon| {
+            mon.pinned_workspace
+                .windows()
+                .map(move |window| (Some(mon), window))
+        });
+        moving_window
+            .chain(rest)
+            .chain(pinned)
+            .chain(self.scratchpad.windows().map(|window| (None, window)))
     }
 
     pub fn has_window(&self, window: &W::Id) -> bool {
