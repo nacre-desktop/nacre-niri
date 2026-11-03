@@ -532,6 +532,7 @@ enum Op {
     ToggleScratchpad,
     ScratchpadShowWindow(#[proptest(strategy = "1..=5usize")] usize),
     ToggleWindowPinned(#[proptest(strategy = "proptest::option::of(1..=5usize)")] Option<usize>),
+    QueryWindowPresentation(#[proptest(strategy = "1..=5usize")] usize),
     FullscreenWindow(#[proptest(strategy = "1..=5usize")] usize),
     SetFullscreenWindow {
         #[proptest(strategy = "1..=5usize")]
@@ -1165,6 +1166,12 @@ impl Op {
             Op::ToggleWindowPinned(id) => {
                 let id = id.filter(|id| layout.has_window(id));
                 layout.toggle_window_pinned(id.as_ref());
+            }
+            Op::QueryWindowPresentation(id) => {
+                if layout.has_window(&id) {
+                    let _ = layout.popup_target_rect(&id);
+                    let _ = layout.should_trigger_focus_follows_mouse_on(&id);
+                }
             }
             Op::FullscreenWindow(id) => {
                 if !layout.has_window(&id) {

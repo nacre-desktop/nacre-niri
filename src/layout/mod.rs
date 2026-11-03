@@ -1774,8 +1774,16 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        self.workspaces()
-            .find_map(|(_, _, ws)| ws.popup_target_rect(window))
+        self.scratchpad
+            .popup_target_rect(window)
+            .or_else(|| {
+                self.monitors()
+                    .find_map(|monitor| monitor.pinned_workspace.popup_target_rect(window))
+            })
+            .or_else(|| {
+                self.workspaces()
+                    .find_map(|(_, _, ws)| ws.popup_target_rect(window))
+            })
             .unwrap()
     }
 
@@ -1809,6 +1817,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn should_trigger_focus_follows_mouse_on(&self, window: &W::Id) -> bool {
+        if self.is_window_hidden(window) {
+            return false;
+        }
+        if self.is_window_in_overlay(window) {
+            return true;
+        }
         // During an animation, it's easy to trigger focus-follows-mouse on the previous workspace,
         // especially when clicking to switch workspace on a bar of some kind. This cancels the
         // workspace switch, which is annoying and not intended.
@@ -1825,15 +1839,14 @@ impl<W: LayoutElement> Layout<W> {
             return true;
         };
 
-        let (mon, ws_idx) = monitors
-            .iter()
-            .find_map(|mon| {
-                mon.workspaces
-                    .iter()
-                    .position(|ws| ws.has_window(window))
-                    .map(|ws_idx| (mon, ws_idx))
-            })
-            .unwrap();
+        let Some((mon, ws_idx)) = monitors.iter().find_map(|mon| {
+            mon.workspaces
+                .iter()
+                .position(|ws| ws.has_window(window))
+                .map(|ws_idx| (mon, ws_idx))
+        }) else {
+            return false;
+        };
 
         // During a gesture, focus-follows-mouse does not cause any unintended workspace switches.
         if let Some(WorkspaceSwitch::Gesture(_)) = mon.workspace_switch {

@@ -420,3 +420,22 @@ fn pinned_overlay_can_be_resized_interactively() {
     assert!(layout.is_window_pinned(&1));
     layout.verify_invariants();
 }
+
+#[test]
+fn popup_bounds_and_pointer_focus_handle_overlay_and_hidden_windows() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    add_window(&mut layout, 2);
+    layout.move_window_to_scratchpad(Some(&2));
+    add_window(&mut layout, 3);
+    layout.create_collection(Some("hidden-parent".into()));
+    let _ = layout.popup_target_rect(&1);
+    let _ = layout.popup_target_rect(&2);
+    let _ = layout.popup_target_rect(&3);
+    assert!(layout.should_trigger_focus_follows_mouse_on(&1));
+    assert!(!layout.should_trigger_focus_follows_mouse_on(&2));
+    assert!(!layout.should_trigger_focus_follows_mouse_on(&3));
+    layout.verify_invariants();
+}
