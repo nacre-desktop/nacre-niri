@@ -40,7 +40,15 @@ fn create_window(fixture: &mut Fixture, client: super::client::ClientId, w: u16,
     };
     fixture.roundtrip(client);
     let window = fixture.client(client).window(&surface);
-    window.attach_new_buffer();
+    let buffer = window.spbm.create_u32_rgba_buffer(
+        u32::MAX / 4,
+        u32::MAX / 2,
+        u32::MAX,
+        u32::MAX,
+        &window.qh,
+        (),
+    );
+    window.surface.attach(Some(&buffer), 0, 0);
     window.set_size(w, h);
     window.ack_last_and_commit();
     fixture.double_roundtrip(client);
@@ -161,7 +169,7 @@ fn benchmark_overview_frame_assembly() {
     let client = fixture.add_client();
     for idx in 0..8 {
         create_window(&mut fixture, client, 900 + idx * 10, 650 + idx * 5);
-        if idx % 2 == 1 {
+        if idx % 2 == 1 && idx < 7 {
             fixture.niri().layout.switch_workspace_down();
         }
     }
@@ -169,7 +177,7 @@ fn benchmark_overview_frame_assembly() {
     fixture.niri().layout.focus_output(&output2);
     for idx in 0..8 {
         create_window(&mut fixture, client, 1000 + idx * 10, 700 + idx * 5);
-        if idx % 2 == 1 {
+        if idx % 2 == 1 && idx < 7 {
             fixture.niri().layout.switch_workspace_down();
         }
     }
@@ -189,6 +197,7 @@ fn benchmark_overview_frame_assembly() {
         .niri()
         .layout
         .focus_collection(&niri_config::WorkspaceReference::Id(output1_collection));
+    fixture.niri_complete_animations();
     set_time(fixture.niri(), Duration::ZERO);
     fixture.niri().layout.open_overview();
     measure_opening_sweep(&mut fixture);

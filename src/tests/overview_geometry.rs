@@ -51,7 +51,15 @@ fn create_window(
     };
     fixture.roundtrip(client);
     let window = fixture.client(client).window(&surface);
-    window.attach_new_buffer();
+    let buffer = window.spbm.create_u32_rgba_buffer(
+        u32::MAX / 4,
+        u32::MAX / 2,
+        u32::MAX,
+        u32::MAX,
+        &window.qh,
+        (),
+    );
+    window.surface.attach(Some(&buffer), 0, 0);
     window.set_size(w, h);
     window.ack_last_and_commit();
     fixture.double_roundtrip(client);
@@ -227,6 +235,8 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         .layout
         .focus_collection(&niri_config::WorkspaceReference::Id(output1_collection));
     fixture.niri().layout.focus_output(&output1);
+    fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
     let mut shown_content_ids = [Vec::new(), Vec::new()];
     for output_idx in [1, 2] {
         let (elements, _) = output_elements(&mut fixture, output_idx);
@@ -242,6 +252,8 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
     for millis in [0, 250, 500, 750, 1000] {
         set_time(fixture.niri(), Duration::from_millis(millis));
         fixture.niri().advance_animations();
+        let expected_zoom = 1. - 0.5 * millis as f64 / 1000.;
+        assert!((fixture.niri().layout.overview_zoom() - expected_zoom).abs() < 1e-9);
         for output_idx in [1, 2] {
             let (elements, scale) = output_elements(&mut fixture, output_idx);
             assert_eq!(scale, if output_idx == 1 { 1.5 } else { 1.0 });
@@ -385,7 +397,11 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
     }
     let before_commit = fixture.niri().layout.collection_overview_cache_counts();
     let hidden_window = fixture.client(client).window(&hidden_surface);
-    hidden_window.attach_new_buffer();
+    let buffer =
+        hidden_window
+            .spbm
+            .create_u32_rgba_buffer(u32::MAX, 0, 0, u32::MAX, &hidden_window.qh, ());
+    hidden_window.surface.attach(Some(&buffer), 0, 0);
     hidden_window.commit();
     fixture.double_roundtrip(client);
     for output_idx in [1, 2] {
@@ -447,6 +463,8 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
         .niri()
         .layout
         .focus_collection(&niri_config::WorkspaceReference::Id(shown));
+    fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
     fixture.niri().layout.open_overview();
 
     for millis in [0, 250, 500, 750, 1000] {
