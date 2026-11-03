@@ -688,6 +688,7 @@ impl VirtualPointerHandler for State {
     }
 }
 delegate_virtual_pointer!(State);
+crate::delegate_layer_motion!(State);
 
 impl DrmLeaseHandler for State {
     fn drm_lease_state(&mut self, node: DrmNode) -> &mut DrmLeaseState {

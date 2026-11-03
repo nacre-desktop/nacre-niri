@@ -147,6 +147,9 @@ use crate::niri_render_elements;
 use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
+use crate::protocols::layer_motion::{
+    LayerMotionHandler, LayerMotionManagerState, LayerMotionRuntime,
+};
 use crate::protocols::mutter_x11_interop::MutterX11InteropManagerState;
 use crate::protocols::output_management::OutputManagementManagerState;
 use crate::protocols::screencopy::{Screencopy, ScreencopyBuffer, ScreencopyManagerState};
@@ -295,6 +298,7 @@ pub struct Niri {
     pub keyboard_shortcuts_inhibit_state: KeyboardShortcutsInhibitState,
     pub virtual_keyboard_state: VirtualKeyboardManagerState,
     pub virtual_pointer_state: VirtualPointerManagerState,
+    pub layer_motion_manager_state: LayerMotionManagerState,
     pub pointer_gestures_state: PointerGesturesState,
     pub relative_pointer_state: RelativePointerManagerState,
     pub pointer_constraints_state: PointerConstraintsState,
@@ -2238,6 +2242,32 @@ impl State {
     }
 }
 
+impl LayerMotionHandler for State {
+    fn layer_motion_manager_state(&mut self) -> &mut LayerMotionManagerState {
+        &mut self.niri.layer_motion_manager_state
+    }
+
+    fn layer_motion_now(&self) -> Duration {
+        self.niri.clock.now_unadjusted()
+    }
+
+    fn layer_motion_attach(
+        &mut self,
+        surface: &WlSurface,
+    ) -> Option<Arc<Mutex<LayerMotionRuntime>>> {
+        let layer = self.niri.layout.outputs().find_map(|output| {
+            layer_map_for_output(output)
+                .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                .cloned()
+        })?;
+        let runtime = Arc::new(Mutex::new(LayerMotionRuntime::default()));
+        if let Some(mapped) = self.niri.mapped_layer_surfaces.get_mut(&layer) {
+            mapped.set_motion_runtime(runtime.clone());
+        }
+        Some(runtime)
+    }
+}
+
 impl Niri {
     pub fn new(
         config: Rc<RefCell<Config>>,
@@ -2348,6 +2378,7 @@ impl Niri {
             VirtualKeyboardManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
         let virtual_pointer_state =
             VirtualPointerManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
+        let layer_motion_manager_state = LayerMotionManagerState::new::<State>(&display_handle);
         let foreign_toplevel_state =
             ForeignToplevelManagerState::new::<State, _>(&display_handle, client_is_unrestricted);
         let ext_workspace_state =
@@ -2550,6 +2581,7 @@ impl Niri {
             keyboard_shortcuts_inhibit_state,
             virtual_keyboard_state,
             virtual_pointer_state,
+            layer_motion_manager_state,
             shm_state,
             output_manager_state,
             dmabuf_state,
@@ -3160,7 +3192,24 @@ impl Niri {
                     } else {
                         WindowSurfaceType::TOPLEVEL
                     } | WindowSurfaceType::SUBSURFACE;
-                    layer.surface_under(pos_within_output - layer_pos_within_output, surface_type)
+                    let pos_within_layer = pos_within_output - layer_pos_within_output;
+                    let is_under = if popup {
+                        layer
+                            .surface_under(pos_within_layer, surface_type)
+                            .is_some()
+                    } else {
+                        match mapped.surface_under_motion(pos_within_layer, surface_type) {
+                            Some(under) => under.is_some(),
+                            None => layer
+                                .surface_under(pos_within_layer, surface_type)
+                                .is_some(),
+                        }
+                    };
+                    if is_under {
+                        Some(())
+                    } else {
+                        None
+                    }
                 })
                 .is_some()
         };
@@ -3407,14 +3456,25 @@ impl Niri {
                         WindowSurfaceType::TOPLEVEL
                     } | WindowSurfaceType::SUBSURFACE;
 
-                    layer_surface
-                        .surface_under(pos_within_output - layer_pos_within_output, surface_type)
-                        .map(|(surface, pos_within_layer)| {
-                            (
-                                (surface, pos_within_layer.to_f64() + layer_pos_within_output),
-                                layer_surface,
-                            )
-                        })
+                    let pos_within_layer = pos_within_output - layer_pos_within_output;
+                    let normal_under = || {
+                        layer_surface
+                            .surface_under(pos_within_layer, surface_type)
+                            .map(|(surface, pos)| (surface.clone(), pos.to_f64()))
+                    };
+                    let under = if popup {
+                        normal_under()
+                    } else {
+                        mapped
+                            .surface_under_motion(pos_within_layer, surface_type)
+                            .unwrap_or_else(normal_under)
+                    };
+                    under.map(|(surface, pos_within_layer)| {
+                        (
+                            (surface, pos_within_layer + layer_pos_within_output),
+                            layer_surface,
+                        )
+                    })
                 })
                 .map(|(s, l)| (Some(s), (None, Some(l.clone()))))
         };
@@ -4685,6 +4745,15 @@ impl Niri {
         // Freeze the clock at the target time.
         self.clock.set_unadjusted(target_presentation_time);
 
+        let layer_surfaces = layer_map_for_output(output)
+            .layers()
+            .map(|layer| layer.wl_surface().clone())
+            .collect::<Vec<_>>();
+        for surface in layer_surfaces {
+            self.layer_motion_manager_state
+                .tick(&surface, target_presentation_time);
+        }
+
         self.update_render_elements(Some(output));
 
         let mut res = RenderResult::Skipped;
@@ -4941,6 +5010,19 @@ impl Niri {
         for layer in layer_map_for_output(output).layers() {
             let surface = layer.wl_surface();
             let is_background = layer.layer() == Layer::Background;
+            let motion_ids = self
+                .layer_motion_manager_state
+                .runtime(surface)
+                .map(|runtime| {
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .planes
+                        .iter()
+                        .map(|plane| plane.render_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
 
             with_surfaces_surface_tree(surface, |surface, states| {
                 let primary_scanout_output = states
@@ -4948,6 +5030,14 @@ impl Niri {
                     .get_or_insert_threadsafe(Mutex::<PrimaryScanoutOutput>::default);
                 let mut primary_scanout_output = primary_scanout_output.lock().unwrap();
                 let mut id = Id::from_wayland_resource(surface);
+
+                if surface == layer.wl_surface() {
+                    if let Some(plane_id) = motion_ids.iter().find(|plane_id| {
+                        render_element_states.element_was_presented((*plane_id).clone())
+                    }) {
+                        id = plane_id.clone();
+                    }
+                }
 
                 // Background layers may be invisible normally but visible through an xray
                 // background effect. Try to find it and use the xray element's id in this case.
@@ -5044,12 +5134,34 @@ impl Niri {
         }
 
         for surface in layer_map_for_output(output).layers() {
+            let root_surface = surface.wl_surface().clone();
+            let motion_ids = self
+                .layer_motion_manager_state
+                .runtime(&root_surface)
+                .map(|runtime| {
+                    runtime
+                        .lock()
+                        .unwrap()
+                        .planes
+                        .iter()
+                        .map(|plane| plane.render_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
             surface.send_dmabuf_feedback(
                 output,
                 |_, _| Some(output.clone()),
                 |surface, _| {
+                    let mut id = Id::from_wayland_resource(surface);
+                    if surface == &root_surface {
+                        if let Some(plane_id) = motion_ids.iter().find(|plane_id| {
+                            render_element_states.element_was_presented((*plane_id).clone())
+                        }) {
+                            id = plane_id.clone();
+                        }
+                    }
                     select_dmabuf_feedback(
-                        surface,
+                        id,
                         render_element_states,
                         &feedback.render,
                         &feedback.scanout,
