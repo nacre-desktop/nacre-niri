@@ -587,6 +587,8 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 capabilities.proportional_x11_widths
             );
             println!("Overview hover: {}", capabilities.overview_hover);
+            println!("Scratchpad: {}", capabilities.scratchpad);
+            println!("Window pinning: {}", capabilities.window_pinning);
         }
         Msg::Casts => {
             let Response::Casts(mut casts) = response else {
@@ -750,6 +752,9 @@ fn print_window(window: &Window) {
         "  Is floating: {}",
         if window.is_floating { "yes" } else { "no" }
     );
+
+    println!("  Is hidden: {}", if window.is_hidden { "yes" } else { "no" });
+    println!("  Is pinned: {}", if window.is_pinned { "yes" } else { "no" });
 
     if let Some(pid) = window.pid {
         println!("  PID: {pid}");

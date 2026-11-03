@@ -148,7 +148,9 @@ impl CompositorHandler for State {
                     // The GTK about dialog sets min/max size after the initial configure but
                     // before mapping, so we need to compute open_floating at the last possible
                     // moment, that is here.
-                    let is_floating = rules.compute_open_floating(toplevel);
+                    let is_pinned = self.niri.config.borrow().nacre.window_pinning
+                        && rules.open_pinned == Some(true);
+                    let is_floating = is_pinned || rules.compute_open_floating(toplevel);
 
                     // Figure out if we should activate the window.
                     let activate = rules.open_focused.map(|focus| {
@@ -221,6 +223,9 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
+                    if is_pinned {
+                        self.niri.layout.toggle_window_pinned(Some(&window));
+                    }
 
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also

@@ -593,6 +593,9 @@ impl WindowMru {
             let on_current_workspace = on_current_output && mon.active_workspace_idx() == ws_idx;
 
             for mapped in ws.windows() {
+                if niri.layout.is_window_hidden(&mapped.window) {
+                    continue;
+                }
                 let mut thumbnail = Thumbnail::from_mapped(mapped, niri.clock.clone(), config);
                 thumbnail.on_current_output = on_current_output;
                 thumbnail.on_current_workspace = on_current_workspace;

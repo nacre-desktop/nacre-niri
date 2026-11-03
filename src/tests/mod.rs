@@ -4,6 +4,7 @@ mod client;
 mod collections;
 mod fixture;
 mod server;
+mod scratchpad_pin;
 
 mod animations;
 mod floating;
