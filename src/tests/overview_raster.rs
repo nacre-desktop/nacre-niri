@@ -1,5 +1,6 @@
 //! Raster coverage for final-coordinate overview clipping; `egl_` follows the Nix filter.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use niri_config::animations::{Curve, EasingParams, Kind};
@@ -8,16 +9,13 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::gles::GlesTexture;
 use smithay::backend::renderer::{Bind as _, Color32F, ExportMem as _};
-use smithay::utils::{Scale, Transform};
 
 use super::client::ClientId;
 use super::Fixture;
 use crate::layout::MonitorRenderElement;
 use crate::niri::{Niri, OutputRenderElements};
 use crate::render_helpers::border::BorderRenderElement;
-use crate::render_helpers::{
-    copy_framebuffer, create_texture, render_to_vec as render_pixels, RenderCtx, RenderTarget,
-};
+use crate::render_helpers::{copy_framebuffer, create_texture, RenderCtx, RenderTarget};
 
 fn fixture(collections: bool) -> Fixture {
     let mut config = Config::parse_mem(
@@ -94,6 +92,7 @@ fn set_time(niri: &mut Niri, millis: u64) {
 
 struct RasterOutput {
     texture: GlesTexture,
+    full_texture: GlesTexture,
     damage: OutputDamageTracker,
     initialized: bool,
     saw_clip: bool,
@@ -103,7 +102,7 @@ struct RasterOutput {
 impl RasterOutput {
     fn new(fixture: &mut Fixture, index: u8) -> Self {
         let output = fixture.niri_output(index);
-        let texture = fixture
+        let (texture, full_texture) = fixture
             .niri_state()
             .backend
             .with_primary_renderer(|renderer| {
@@ -111,16 +110,16 @@ impl RasterOutput {
                     BorderRenderElement::has_shader(renderer),
                     "border shader unavailable"
                 );
-                create_texture(
-                    renderer,
-                    output.current_mode().unwrap().size,
-                    Fourcc::Abgr8888,
+                let size = output.current_mode().unwrap().size;
+                (
+                    create_texture(renderer, size, Fourcc::Abgr8888).unwrap(),
+                    create_texture(renderer, size, Fourcc::Abgr8888).unwrap(),
                 )
-                .unwrap()
             })
             .unwrap();
         Self {
             texture,
+            full_texture,
             damage: OutputDamageTracker::from_output(&output),
             initialized: false,
             saw_clip: false,
@@ -172,15 +171,23 @@ impl RasterOutput {
                 let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
                 let actual = renderer.map_texture(&mapping).unwrap().to_vec();
                 drop(target);
-                let expected = render_pixels(
-                    renderer,
-                    size,
-                    Scale::from(output.current_scale().fractional_scale()),
-                    Transform::Normal,
-                    Fourcc::Abgr8888,
-                    elements.iter().rev(),
-                )
-                .unwrap();
+                // A fresh tracker and age zero force a full repaint. Use the same
+                // opaque culling/scissor path as the incremental renderer: drawing
+                // every element directly can round shader pixels differently even
+                // on the first full frame, before incremental damage is involved.
+                let mut full_target = renderer.bind(&mut self.full_texture).unwrap();
+                OutputDamageTracker::from_output(&output)
+                    .render_output(
+                        renderer,
+                        &mut full_target,
+                        0,
+                        &elements,
+                        Color32F::TRANSPARENT,
+                    )
+                    .unwrap();
+                let mapping = copy_framebuffer(renderer, &full_target, Fourcc::Abgr8888).unwrap();
+                let expected = renderer.map_texture(&mapping).unwrap().to_vec();
+                drop(full_target);
                 let first_mismatch = actual
                     .iter()
                     .zip(&expected)
@@ -283,75 +290,96 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
 #[test]
 fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_collections() {
     for collections in [false, true] {
-        let mut fixture = fixture(collections);
-        let client = fixture.add_client();
-        create_window(&mut fixture, client, 0);
-        let window = fixture
-            .niri()
-            .layout
-            .windows()
-            .next()
-            .unwrap()
-            .1
-            .window
-            .clone();
-        fixture
-            .niri()
-            .layout
-            .move_window_to_scratchpad(Some(&window));
-        fixture.niri_complete_animations();
-        set_time(fixture.niri(), 0);
-        let mut output = RasterOutput::new(&mut fixture, 1);
-        fixture.niri().layout.open_overview();
+        for output_index in [1, 2] {
+            let mut fixture = fixture(collections);
+            fixture.niri_focus_output(output_index);
+            let client = fixture.add_client();
+            for column in 0..4 {
+                create_window(&mut fixture, client, column);
+            }
+            let window = fixture.niri().layout.focus().unwrap().window.clone();
+            fixture
+                .niri()
+                .layout
+                .move_window_to_scratchpad(Some(&window));
+            let workspace = fixture.niri().layout.active_workspace().unwrap();
+            assert_eq!(workspace.windows().count(), 3);
+            assert_eq!(workspace.scrolling().columns().count(), 3);
+            assert!(workspace
+                .windows()
+                .all(|window| !workspace.is_floating(&window.window)));
+            fixture.niri_complete_animations();
+            // Opening must start at zero, rather than the fixture's completed-animation time.
+            set_time(fixture.niri(), 0);
+            let mut output = RasterOutput::new(&mut fixture, output_index);
+            fixture.niri().layout.open_overview();
 
-        for millis in [0, 137, 500, 1000] {
-            set_time(fixture.niri(), millis);
-            fixture.niri().advance_animations();
+            for millis in [0, 137, 500, 1000] {
+                set_time(fixture.niri(), millis);
+                fixture.niri().advance_animations();
+                output.compare(
+                    &mut fixture,
+                    output_index,
+                    &format!("scratchpad {collections} {output_index} {millis}ms"),
+                );
+            }
+            fixture.niri_complete_animations();
+            assert!(fixture.niri().layout.is_overview_open());
+            let existing_ids: HashSet<_> = fixture
+                .niri()
+                .layout
+                .windows()
+                .map(|(_, mapped)| mapped.id())
+                .collect();
+            create_window(&mut fixture, client, 4);
+            let added = fixture
+                .niri()
+                .layout
+                .windows()
+                .find(|(_, mapped)| !existing_ids.contains(&mapped.id()))
+                .unwrap()
+                .1
+                .window
+                .clone();
+            fixture
+                .niri()
+                .layout
+                .move_window_to_scratchpad(Some(&added));
+            assert!(fixture.niri().layout.is_window_hidden(&added));
+            assert!(fixture.niri().layout.is_overview_open());
+            assert_eq!(
+                fixture
+                    .niri()
+                    .layout
+                    .active_workspace()
+                    .unwrap()
+                    .windows()
+                    .count(),
+                3
+            );
             output.compare(
                 &mut fixture,
-                1,
-                &format!("scratchpad {collections} {millis}ms"),
+                output_index,
+                &format!("scratchpad content change {collections} {output_index}"),
             );
+            let (preparations, builds) = fixture.niri().layout.collection_overview_cache_counts();
+            assert!(
+                builds > 0,
+                "scratchpad preview did not use the shared texture cache"
+            );
+            output.compare(&mut fixture, output_index, "steady scratchpad cache");
+            let (steady_preparations, steady_builds) =
+                fixture.niri().layout.collection_overview_cache_counts();
+            assert_eq!(
+                steady_builds, builds,
+                "steady scratchpad frame rebuilt its texture"
+            );
+            assert_eq!(
+                steady_preparations, preparations,
+                "steady scratchpad frame re-prepared its workspace"
+            );
+            assert!(output.saw_partial_damage,
+                "scratchpad preview never caused partial damage for collections={collections}, output={output_index}");
         }
-        fixture.niri_complete_animations();
-        create_window(&mut fixture, client, 1);
-        let added = fixture
-            .niri()
-            .layout
-            .windows()
-            .next()
-            .unwrap()
-            .1
-            .window
-            .clone();
-        fixture
-            .niri()
-            .layout
-            .move_window_to_scratchpad(Some(&added));
-        output.compare(
-            &mut fixture,
-            1,
-            &format!("scratchpad content change {collections}"),
-        );
-        let (preparations, builds) = fixture.niri().layout.collection_overview_cache_counts();
-        assert!(
-            builds > 0,
-            "scratchpad preview did not use the shared texture cache"
-        );
-        output.compare(&mut fixture, 1, "steady scratchpad cache");
-        let (steady_preparations, steady_builds) =
-            fixture.niri().layout.collection_overview_cache_counts();
-        assert_eq!(
-            steady_builds, builds,
-            "steady scratchpad frame rebuilt its texture"
-        );
-        assert_eq!(
-            steady_preparations, preparations,
-            "steady scratchpad frame re-prepared its workspace"
-        );
-        assert!(
-            output.saw_partial_damage,
-            "scratchpad preview never caused partial damage"
-        );
     }
 }
