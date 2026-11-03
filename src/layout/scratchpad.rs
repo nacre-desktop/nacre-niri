@@ -1,5 +1,5 @@
 use super::workspace::WorkspaceAddWindowTarget;
-use super::{ActivateWindow, Layout, LayoutElement, SizingMode};
+use super::{ActivateWindow, Layout, LayoutElement};
 use crate::utils::transaction::Transaction;
 
 impl<W: LayoutElement> Layout<W> {
@@ -73,6 +73,9 @@ impl<W: LayoutElement> Layout<W> {
                 );
             }
         }
+        for monitor in self.monitors_mut() {
+            monitor.pinned_is_active &= monitor.pinned_workspace.has_windows();
+        }
         for workspace in self.workspaces_mut() {
             for tile in workspace.tiles_mut() {
                 if tile.scratchpad {
@@ -108,7 +111,7 @@ impl<W: LayoutElement> Layout<W> {
                     true,
                 );
             }
-            monitor.pinned_is_active = false;
+            monitor.pinned_is_active &= monitor.pinned_workspace.has_windows();
         }
         for workspace in self.workspaces_mut() {
             for tile in workspace.tiles_mut() {
@@ -183,13 +186,12 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         removed.tile.scratchpad = true;
-        monitor.pinned_workspace.add_tile(
+        monitor.pinned_workspace.add_overlay_tile(
             removed.tile,
             WorkspaceAddWindowTarget::Auto,
             ActivateWindow::Yes,
             removed.width,
             removed.is_full_width,
-            true,
         );
         monitor.pinned_workspace.center_window(Some(id));
         monitor.pinned_is_active = true;
@@ -239,6 +241,11 @@ impl<W: LayoutElement> Layout<W> {
             .rev()
             .find(|id| self.scratchpad.has_window(id))
             .cloned()
+    }
+
+    pub(super) fn is_window_in_overlay(&self, id: &W::Id) -> bool {
+        self.monitors()
+            .any(|monitor| monitor.pinned_workspace.has_window(id))
     }
 
     pub fn is_window_hidden(&self, id: &W::Id) -> bool {
@@ -350,7 +357,7 @@ impl<W: LayoutElement> Layout<W> {
         removed.tile.pinned = true;
         removed.tile.scratchpad = false;
         if let Some(monitor) = self.monitors_mut().find(|monitor| monitor.output == output) {
-            monitor.pinned_workspace.add_tile(
+            monitor.pinned_workspace.add_overlay_tile(
                 removed.tile,
                 WorkspaceAddWindowTarget::Auto,
                 if was_focused {
@@ -360,7 +367,6 @@ impl<W: LayoutElement> Layout<W> {
                 },
                 removed.width,
                 removed.is_full_width,
-                true,
             );
             monitor.pinned_workspace.center_window(Some(&id));
             monitor.pinned_is_active = was_focused || overlay_was_focused;

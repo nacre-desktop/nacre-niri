@@ -223,10 +223,6 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
-                    if is_pinned {
-                        self.niri.layout.toggle_window_pinned(Some(&window));
-                    }
-
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also
                     // maximized from the is_pending_maximized variable. Tell the layout about it

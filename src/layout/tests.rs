@@ -4127,6 +4127,13 @@ proptest! {
             Op::AddWindow { params: TestWindowParams::new(id) }.apply(&mut layout);
             layout.verify_invariants();
         }
+        layout.toggle_window_pinned(Some(&1));
+        layout.move_window_to_scratchpad(Some(&2));
+        // Every case starts with a pin, a hidden scratchpad window, a detached
+        // populated collection and a normal window, rather than mostly empty state.
+        layout.create_collection(Some("property-desk".into()));
+        Op::AddWindow { params: TestWindowParams::new(4) }.apply(&mut layout);
+        layout.verify_invariants();
         check_ops_on_layout(&mut layout, ops);
     }
 }

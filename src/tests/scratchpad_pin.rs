@@ -39,13 +39,21 @@ fn snapshot(f: &mut Fixture) -> niri_ipc::Window {
 fn hide_show_ipc_mru_and_unmap() {
     let (mut f, client, surface) = window(Config::default());
     let id = snapshot(&mut f).id;
-    let events = f.niri().ipc_server.as_ref().unwrap().subscribe_standard_events();
-    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    let events = f
+        .niri()
+        .ipc_server
+        .as_ref()
+        .unwrap()
+        .subscribe_standard_events();
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
     f.double_roundtrip(client);
     assert!(snapshot(&mut f).is_hidden);
-    assert!(std::iter::from_fn(|| events.try_recv().ok()).any(|event| matches!(event,
-        niri_ipc::Event::WindowOpenedOrChanged { window } if window.id == id && window.is_hidden
-    )));
+    assert!(
+        std::iter::from_fn(|| events.try_recv().ok()).any(|event| matches!(event,
+            niri_ipc::Event::WindowOpenedOrChanged { window } if window.id == id && window.is_hidden
+        ))
+    );
     assert!(crate::ui::mru::WindowMru::new(f.niri()).is_empty());
     f.add_output(2, (1024, 768));
     f.niri_focus_output(2);
@@ -56,17 +64,30 @@ fn hide_show_ipc_mru_and_unmap() {
     assert!(shown.is_floating);
     assert_eq!(shown.id, id);
     let output = f.niri_output(2);
-    assert!(f.niri().layout.windows_for_output(&output).any(|w| w.id().get() == id));
-    f.niri_state().do_action(Action::MoveWindowToScratchpadById(id), false);
+    assert!(f
+        .niri()
+        .layout
+        .windows_for_output(&output)
+        .any(|w| w.id().get() == id));
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpadById(id), false);
     assert!(snapshot(&mut f).is_hidden);
-    f.niri_state().do_action(Action::ScratchpadShowWindow(id), false);
+    f.niri_state()
+        .do_action(Action::ScratchpadShowWindow(id), false);
     assert!(!snapshot(&mut f).is_hidden);
-    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
     f.client(client).window(&surface).attach_null();
     f.client(client).window(&surface).commit();
     f.double_roundtrip(client);
     f.niri_state().ipc_refresh_layout();
-    assert!(f.niri().ipc_server.as_ref().unwrap().window_snapshot().is_empty());
+    assert!(f
+        .niri()
+        .ipc_server
+        .as_ref()
+        .unwrap()
+        .window_snapshot()
+        .is_empty());
     f.niri_state().do_action(Action::ToggleScratchpad, false);
 }
 
@@ -85,12 +106,22 @@ fn pin_action_ipc_survives_workspace_and_collection_switches() {
     f.niri_state().do_action(Action::FocusWorkspaceDown, false);
     f.niri_complete_animations();
     assert!(snapshot(&mut f).is_pinned);
-    assert!(f.niri().layout.windows_for_output(&output).any(|w| w.id().get() == pinned.id));
-    f.niri_state().do_action(Action::CreateCollection(Some("other".into())), false);
+    assert!(f
+        .niri()
+        .layout
+        .windows_for_output(&output)
+        .any(|w| w.id().get() == pinned.id));
+    f.niri_state()
+        .do_action(Action::CreateCollection(Some("other".into())), false);
     f.niri_complete_animations();
     assert!(snapshot(&mut f).is_pinned);
-    assert!(f.niri().layout.windows_for_output(&output).any(|w| w.id().get() == pinned.id));
-    f.niri_state().do_action(Action::ToggleWindowPinnedById(pinned.id), false);
+    assert!(f
+        .niri()
+        .layout
+        .windows_for_output(&output)
+        .any(|w| w.id().get() == pinned.id));
+    f.niri_state()
+        .do_action(Action::ToggleWindowPinnedById(pinned.id), false);
     assert!(!snapshot(&mut f).is_pinned);
 }
 
@@ -100,7 +131,8 @@ fn native_flags_disable_actions_and_open_pinned_rule() {
     config.nacre.scratchpad = false;
     config.nacre.window_pinning = false;
     let (mut f, _, _) = window(config);
-    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
     f.niri_state().do_action(Action::ToggleWindowPinned, false);
     let win = snapshot(&mut f);
     assert!(!win.is_hidden);
@@ -134,13 +166,21 @@ fn pinned_window_does_not_steal_normal_window_focus() {
     window.set_size(200, 100);
     window.ack_last_and_commit();
     f.double_roundtrip(client);
-    let normal_id = f.niri().layout.windows().find(|(_, w)| w.id().get() != pinned_id)
-        .map(|(_, w)| w.id().get()).unwrap();
-    f.niri_state().do_action(Action::FocusWindow(normal_id), false);
+    let normal_id = f
+        .niri()
+        .layout
+        .windows()
+        .find(|(_, w)| w.id().get() != pinned_id)
+        .map(|(_, w)| w.id().get())
+        .unwrap();
+    f.niri_state()
+        .do_action(Action::FocusWindow(normal_id), false);
     assert_eq!(f.niri().layout.focus().unwrap().id().get(), normal_id);
-    f.niri_state().do_action(Action::FocusWindow(pinned_id), false);
+    f.niri_state()
+        .do_action(Action::FocusWindow(pinned_id), false);
     assert_eq!(f.niri().layout.focus().unwrap().id().get(), pinned_id);
-    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
     assert_eq!(f.niri().layout.focus().unwrap().id().get(), normal_id);
     f.niri_state().ipc_refresh_layout();
     let windows = f.niri().ipc_server.as_ref().unwrap().window_snapshot();
@@ -152,7 +192,8 @@ fn pinned_window_does_not_steal_normal_window_focus() {
 #[test]
 fn hidden_window_survives_all_outputs_disconnecting() {
     let (mut f, client, _) = window(Config::default());
-    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
     let id = snapshot(&mut f).id;
     let output = f.niri_output(1);
     f.niri().remove_output(&output);
@@ -161,20 +202,24 @@ fn hidden_window_survives_all_outputs_disconnecting() {
     f.niri_state().do_action(Action::ToggleScratchpad, false);
     assert!(snapshot(&mut f).is_hidden);
     f.add_output(2, (1024, 768));
-    f.niri_state().do_action(Action::ScratchpadShowWindow(id), false);
+    f.niri_state()
+        .do_action(Action::ScratchpadShowWindow(id), false);
     f.double_roundtrip(client);
     assert!(!snapshot(&mut f).is_hidden);
 }
 
 #[test]
 fn open_pinned_rule_preserves_open_focused_false() {
-    let config = Config::parse_mem(r#"
+    let config = Config::parse_mem(
+        r#"
         window-rule {
             match app-id="pinned"
             open-pinned true
             open-focused false
         }
-    "#).unwrap();
+    "#,
+    )
+    .unwrap();
     let (mut f, client, _) = window(config);
     let original = snapshot(&mut f).id;
     let surface = {
@@ -193,7 +238,10 @@ fn open_pinned_rule_preserves_open_focused_false() {
     assert_eq!(f.niri().layout.focus().unwrap().id().get(), original);
     f.niri_state().ipc_refresh_layout();
     let windows = f.niri().ipc_server.as_ref().unwrap().window_snapshot();
-    let pinned = windows.iter().find(|w| w.app_id.as_deref() == Some("pinned")).unwrap();
+    let pinned = windows
+        .iter()
+        .find(|w| w.app_id.as_deref() == Some("pinned"))
+        .unwrap();
     assert!(pinned.is_pinned);
     assert!(!pinned.is_focused);
 }
@@ -203,7 +251,8 @@ fn opening_dialogs_for_hidden_and_overlay_windows_is_safe() {
     for hidden in [false, true] {
         let (mut f, client, surface) = window(Config::default());
         if hidden {
-            f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+            f.niri_state()
+                .do_action(Action::MoveWindowToScratchpad, false);
         } else {
             f.niri_state().do_action(Action::ToggleWindowPinned, false);
         }
@@ -223,6 +272,53 @@ fn opening_dialogs_for_hidden_and_overlay_windows_is_safe() {
         f.double_roundtrip(client);
         assert_eq!(f.niri().layout.windows().count(), 2);
         f.niri_state().ipc_refresh_layout();
-        assert_eq!(f.niri().ipc_server.as_ref().unwrap().window_snapshot().len(), 2);
+        assert_eq!(
+            f.niri()
+                .ipc_server
+                .as_ref()
+                .unwrap()
+                .window_snapshot()
+                .len(),
+            2
+        );
     }
+}
+
+#[test]
+fn fullscreen_windows_show_as_floating_scratchpad_and_pinned_overlays() {
+    let (mut f, client, _) = window(Config::default());
+    f.niri_state().do_action(Action::FullscreenWindow, false);
+    f.double_roundtrip(client);
+    f.niri_state()
+        .do_action(Action::MoveWindowToScratchpad, false);
+    assert!(snapshot(&mut f).is_hidden);
+    f.niri_state().do_action(Action::ToggleScratchpad, false);
+    f.double_roundtrip(client);
+    assert!(snapshot(&mut f).is_floating);
+
+    let config =
+        Config::parse_mem("window-rule { open-pinned true; open-fullscreen true; }").unwrap();
+    let (mut f, _, _) = window(config);
+    let pinned = snapshot(&mut f);
+    assert!(pinned.is_pinned);
+    assert!(pinned.is_floating);
+}
+
+#[test]
+fn unpinning_a_detached_window_never_loses_it() {
+    let (mut f, client, _) = window(Config::default());
+    f.niri_state().do_action(Action::ToggleWindowPinned, false);
+    let id = snapshot(&mut f).id;
+    let output = f.niri_output(1);
+    f.niri().remove_output(&output);
+    f.double_roundtrip(client);
+    assert_eq!(snapshot(&mut f).id, id);
+    f.niri_state()
+        .do_action(Action::ToggleWindowPinnedById(id), false);
+    let detached = snapshot(&mut f);
+    assert_eq!(detached.id, id);
+    assert!(!detached.is_pinned);
+    f.add_output(2, (1024, 768));
+    f.double_roundtrip(client);
+    assert_eq!(snapshot(&mut f).id, id);
 }

@@ -348,13 +348,12 @@ impl<W: LayoutElement> Monitor<W> {
                 .collect();
             for id in ids {
                 let removed = ws.remove_tile(&id, Transaction::new());
-                pinned_workspace.add_tile(
+                pinned_workspace.add_overlay_tile(
                     removed.tile,
                     WorkspaceAddWindowTarget::Auto,
                     ActivateWindow::No,
                     removed.width,
                     removed.is_full_width,
-                    true,
                 );
             }
         }
@@ -382,7 +381,7 @@ impl<W: LayoutElement> Monitor<W> {
             layout_config,
         };
         monitor.clean_up_workspaces();
-        return monitor;
+        monitor
     }
 
     pub fn into_workspaces(mut self) -> Vec<Workspace<W>> {
@@ -830,13 +829,12 @@ impl<W: LayoutElement> Monitor<W> {
                 .collect();
             for id in overlay_ids {
                 let removed = workspace.remove_tile(&id, Transaction::new());
-                self.pinned_workspace.add_tile(
+                self.pinned_workspace.add_overlay_tile(
                     removed.tile,
                     WorkspaceAddWindowTarget::Auto,
                     ActivateWindow::No,
                     removed.width,
                     removed.is_full_width,
-                    true,
                 );
             }
         }
@@ -1942,29 +1940,11 @@ impl<W: LayoutElement> Monitor<W> {
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
         let scale = self.scale.fractional_scale();
-        let height = (self.view_size.h * scale).ceil() as i32;
         let crop_bounds = Rectangle::new(
             Point::from((-i32::MAX / 2, -i32::MAX / 2)),
-            Size::from((i32::MAX, i32::MAX.max(height))),
+            Size::from((i32::MAX, i32::MAX)),
         );
         self.pinned_workspace.render_floating(
-            ctx.r(),
-            XrayPos::new(Point::default(), 1.),
-            focus_ring && self.pinned_is_active,
-            &mut |elem| {
-                let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
-                if let Some(elem) = elem {
-                    let elem = MonitorInnerRenderElement::from(elem);
-                    let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
-                    push(RelocateRenderElement::from_element(
-                        elem,
-                        Point::default(),
-                        Relocate::Relative,
-                    ));
-                }
-            },
-        );
-        self.pinned_workspace.render_scrolling(
             ctx.r(),
             XrayPos::new(Point::default(), 1.),
             focus_ring && self.pinned_is_active,

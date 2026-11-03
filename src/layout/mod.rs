@@ -1033,7 +1033,7 @@ impl<W: LayoutElement> Layout<W> {
                     .resolve_scrolling_width(&window, width);
                 let mut tile = monitor.pinned_workspace.make_tile(window);
                 tile.pinned = true;
-                monitor.pinned_workspace.add_tile(
+                monitor.pinned_workspace.add_overlay_tile(
                     tile,
                     WorkspaceAddWindowTarget::Auto,
                     if activate_pinned {
@@ -1043,7 +1043,6 @@ impl<W: LayoutElement> Layout<W> {
                     },
                     width,
                     is_full_width,
-                    true,
                 );
                 monitor.pinned_is_active |= activate_pinned;
                 if activate_pinned {
@@ -1083,13 +1082,14 @@ impl<W: LayoutElement> Layout<W> {
                     unreachable!("monitor index only exists when outputs are connected")
                 };
                 let monitor = &mut monitors[mon_idx];
-                let activate_pinned = activate.map_smart(|| monitor.active_window().is_none());
+                let activate_pinned = activate
+                    .map_smart(|| monitor.active_window().is_some_and(|win| win.id() == next));
                 let width = monitor
                     .pinned_workspace
                     .resolve_scrolling_width(&window, width);
                 let mut tile = monitor.pinned_workspace.make_tile(window);
                 tile.pinned = true;
-                monitor.pinned_workspace.add_tile(
+                monitor.pinned_workspace.add_overlay_tile(
                     tile,
                     WorkspaceAddWindowTarget::NextTo(next),
                     if activate_pinned {
@@ -1099,7 +1099,6 @@ impl<W: LayoutElement> Layout<W> {
                     },
                     width,
                     is_full_width,
-                    true,
                 );
                 monitor.pinned_is_active |= activate_pinned;
                 if activate_pinned {
@@ -1333,6 +1332,9 @@ impl<W: LayoutElement> Layout<W> {
         window: &W::Id,
         transaction: Transaction,
     ) -> Option<RemovedTile<W>> {
+        if self.scratchpad_active.as_ref() == Some(window) {
+            self.scratchpad_active = None;
+        }
         if self.scratchpad.has_window(window) {
             let removed = self.scratchpad.remove_tile(window, transaction);
             self.scratchpad_cycle.retain(|id| id != window);
@@ -2047,6 +2049,15 @@ impl<W: LayoutElement> Layout<W> {
         Some(&mut mon.workspaces[mon.active_workspace_idx])
     }
 
+    fn focused_workspace_mut(&mut self) -> Option<&mut Workspace<W>> {
+        let monitor = self.active_monitor()?;
+        if monitor.pinned_is_active && monitor.pinned_workspace.has_windows() {
+            Some(&mut monitor.pinned_workspace)
+        } else {
+            Some(monitor.active_workspace())
+        }
+    }
+
     pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ {
         let overview = self.overview_open;
         let moving_output = output.clone();
@@ -2270,35 +2281,35 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_left(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_left();
     }
 
     pub fn move_right(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_right();
     }
 
     pub fn move_column_to_first(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_column_to_first();
     }
 
     pub fn move_column_to_last(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_column_to_last();
     }
 
     pub fn move_column_left_or_to_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.move_left() {
                 return false;
             }
@@ -2309,7 +2320,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_right_or_to_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.move_right() {
                 return false;
             }
@@ -2320,21 +2331,21 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_index(&mut self, index: usize) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_column_to_index(index);
     }
 
     pub fn move_down(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_down();
     }
 
     pub fn move_up(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.move_up();
@@ -2344,6 +2355,10 @@ impl<W: LayoutElement> Layout<W> {
         let Some(monitor) = self.active_monitor() else {
             return;
         };
+        if monitor.pinned_is_active {
+            monitor.pinned_workspace.move_down();
+            return;
+        }
         monitor.move_down_or_to_workspace_down();
     }
 
@@ -2351,6 +2366,10 @@ impl<W: LayoutElement> Layout<W> {
         let Some(monitor) = self.active_monitor() else {
             return;
         };
+        if monitor.pinned_is_active {
+            monitor.pinned_workspace.move_up();
+            return;
+        }
         monitor.move_up_or_to_workspace_up();
     }
 
@@ -2368,7 +2387,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -2391,7 +2410,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -2401,56 +2420,56 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_left(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_left();
     }
 
     pub fn focus_right(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_right();
     }
 
     pub fn focus_column_first(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_column_first();
     }
 
     pub fn focus_column_last(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_column_last();
     }
 
     pub fn focus_column_right_or_first(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_column_right_or_first();
     }
 
     pub fn focus_column_left_or_last(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_column_left_or_last();
     }
 
     pub fn focus_column(&mut self, index: usize) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_column(index);
     }
 
     pub fn focus_window_up_or_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.focus_up() {
                 return false;
             }
@@ -2461,7 +2480,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_window_down_or_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.focus_down() {
                 return false;
             }
@@ -2472,7 +2491,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_column_left_or_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.focus_left() {
                 return false;
             }
@@ -2483,7 +2502,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_column_right_or_output(&mut self, output: &Output) -> bool {
-        if let Some(workspace) = self.active_workspace_mut() {
+        if let Some(workspace) = self.focused_workspace_mut() {
             if workspace.focus_right() {
                 return false;
             }
@@ -2494,49 +2513,49 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_window_in_column(&mut self, index: u8) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_window_in_column(index);
     }
 
     pub fn focus_down(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_down();
     }
 
     pub fn focus_up(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_up();
     }
 
     pub fn focus_down_or_left(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_down_or_left();
     }
 
     pub fn focus_down_or_right(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_down_or_right();
     }
 
     pub fn focus_up_or_left(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_up_or_left();
     }
 
     pub fn focus_up_or_right(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_up_or_right();
@@ -2557,34 +2576,40 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_window_top(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_window_top();
     }
 
     pub fn focus_window_bottom(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_window_bottom();
     }
 
     pub fn focus_window_down_or_top(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_window_down_or_top();
     }
 
     pub fn focus_window_up_or_bottom(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.focus_window_up_or_bottom();
     }
 
     pub fn move_to_workspace_up(&mut self, focus: bool) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2592,6 +2617,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_to_workspace_down(&mut self, focus: bool) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2604,6 +2635,14 @@ impl<W: LayoutElement> Layout<W> {
         idx: usize,
         activate: ActivateWindow,
     ) {
+        let target = window
+            .cloned()
+            .or_else(|| self.focus().map(|win| win.id().clone()));
+        if target.as_ref().is_some_and(|id| {
+            self.is_window_in_overlay(id) || self.is_window_hidden(id) || self.is_window_pinned(id)
+        }) {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -2663,6 +2702,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace_up(&mut self, activate: bool) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2670,6 +2715,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace_down(&mut self, activate: bool) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2677,6 +2728,12 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_column_to_workspace(&mut self, idx: usize, activate: bool) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         let Some(monitor) = self.active_monitor() else {
             return;
         };
@@ -2719,48 +2776,50 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn consume_into_column(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.consume_into_column();
     }
 
     pub fn expel_from_column(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.expel_from_column();
     }
 
     pub fn swap_window_in_direction(&mut self, direction: ScrollDirection) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.swap_window_in_direction(direction);
     }
 
     pub fn toggle_column_tabbed_display(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.toggle_column_tabbed_display();
     }
 
     pub fn set_column_display(&mut self, display: ColumnDisplay) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.set_column_display(display);
     }
 
     pub fn center_column(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.center_column();
     }
 
     pub fn center_window(&mut self, id: Option<&W::Id>) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let id = id.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if id.is_none() || id == Some(move_.tile.window().id()) {
                 return;
@@ -2770,7 +2829,7 @@ impl<W: LayoutElement> Layout<W> {
         let workspace = if let Some(id) = id {
             Some(self.workspaces_mut().find(|ws| ws.has_window(id)).unwrap())
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -2780,7 +2839,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn center_visible_columns(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.center_visible_columns();
@@ -3111,10 +3170,10 @@ impl<W: LayoutElement> Layout<W> {
                 .pinned_workspace
                 .tiles()
                 .all(|tile| tile.pinned || tile.scratchpad));
-            assert!(monitor.pinned_workspace.tiles().all(|tile| {
-                !tile.window().pending_sizing_mode().is_normal()
-                    || monitor.pinned_workspace.is_floating(tile.window().id())
-            }));
+            assert!(monitor
+                .pinned_workspace
+                .tiles()
+                .all(|tile| { monitor.pinned_workspace.is_floating(tile.window().id()) }));
             monitor
                 .pinned_workspace
                 .verify_invariants(move_win_id.as_ref());
@@ -3644,13 +3703,15 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_width(&mut self, forwards: bool) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.toggle_width(forwards);
     }
 
     pub fn toggle_window_width(&mut self, window: Option<&W::Id>, forwards: bool) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let window = window.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -3664,7 +3725,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3674,6 +3735,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_window_height(&mut self, window: Option<&W::Id>, forwards: bool) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let window = window.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -3687,7 +3750,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3697,20 +3760,22 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_full_width(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.toggle_full_width();
     }
 
     pub fn set_column_width(&mut self, change: SizeChange) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.set_column_width(change);
     }
 
     pub fn set_window_width(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let window = window.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -3724,7 +3789,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3734,6 +3799,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_window_height(&mut self, window: Option<&W::Id>, change: SizeChange) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let window = window.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -3747,7 +3814,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3757,6 +3824,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn reset_window_height(&mut self, window: Option<&W::Id>) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let window = window.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -3770,7 +3839,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3780,7 +3849,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn expand_column_to_available_width(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(workspace) = self.focused_workspace_mut() else {
             return;
         };
         workspace.expand_column_to_available_width();
@@ -3833,11 +3902,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if window.is_some_and(|id| {
-            self.is_window_hidden(id)
-                || self
-                    .monitors()
-                    .any(|mon| mon.pinned_workspace.has_window(id))
+        let target = window
+            .cloned()
+            .or_else(|| self.focus().map(|win| win.id().clone()));
+        if target.as_ref().is_some_and(|id| {
+            self.is_window_hidden(id) || self.is_window_in_overlay(id) || self.is_window_pinned(id)
         }) {
             return;
         }
@@ -3849,7 +3918,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3868,11 +3937,11 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if window.is_some_and(|id| {
-            self.is_window_hidden(id)
-                || self
-                    .monitors()
-                    .any(|mon| mon.pinned_workspace.has_window(id))
+        let target = window
+            .cloned()
+            .or_else(|| self.focus().map(|win| win.id().clone()));
+        if target.as_ref().is_some_and(|id| {
+            self.is_window_hidden(id) || self.is_window_in_overlay(id) || self.is_window_pinned(id)
         }) {
             return;
         }
@@ -3884,7 +3953,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap(),
             )
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3894,24 +3963,38 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn focus_floating(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_floating();
+        if monitor.pinned_workspace.has_windows() {
+            monitor.pinned_is_active = true;
+            monitor.pinned_workspace.focus_floating();
+        } else {
+            monitor.active_workspace().focus_floating();
+        }
     }
 
     pub fn focus_tiling(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.focus_tiling();
+        monitor.pinned_is_active = false;
+        monitor.active_workspace().focus_tiling();
     }
 
     pub fn switch_focus_floating_tiling(&mut self) {
-        let Some(workspace) = self.active_workspace_mut() else {
+        let Some(monitor) = self.active_monitor() else {
             return;
         };
-        workspace.switch_focus_floating_tiling();
+        if monitor.pinned_is_active {
+            monitor.pinned_is_active = false;
+            monitor.active_workspace().focus_tiling();
+        } else if monitor.pinned_workspace.has_windows() {
+            monitor.pinned_is_active = true;
+            monitor.pinned_workspace.focus_floating();
+        } else {
+            monitor.active_workspace().switch_focus_floating_tiling();
+        }
     }
 
     pub fn move_floating_window(
@@ -3921,6 +4004,8 @@ impl<W: LayoutElement> Layout<W> {
         y: PositionChange,
         animate: bool,
     ) {
+        let focused = self.focus().map(|win| win.id().clone());
+        let id = id.or(focused.as_ref());
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if id.is_none() || id == Some(move_.tile.window().id()) {
                 return;
@@ -3930,7 +4015,7 @@ impl<W: LayoutElement> Layout<W> {
         let workspace = if let Some(id) = id {
             Some(self.workspaces_mut().find(|ws| ws.has_window(id)).unwrap())
         } else {
-            self.active_workspace_mut()
+            self.focused_workspace_mut()
         };
 
         let Some(workspace) = workspace else {
@@ -3962,6 +4047,14 @@ impl<W: LayoutElement> Layout<W> {
         target_ws_idx: Option<usize>,
         activate: ActivateWindow,
     ) {
+        let target = window
+            .cloned()
+            .or_else(|| self.focus().map(|win| win.id().clone()));
+        if target.as_ref().is_some_and(|id| {
+            self.is_window_in_overlay(id) || self.is_window_hidden(id) || self.is_window_pinned(id)
+        }) {
+            return;
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
             if window.is_none() || window == Some(move_.tile.window().id()) {
                 return;
@@ -4103,6 +4196,12 @@ impl<W: LayoutElement> Layout<W> {
         target_ws_idx: Option<usize>,
         activate: bool,
     ) {
+        if self
+            .focus()
+            .is_some_and(|win| self.is_window_in_overlay(win.id()))
+        {
+            return;
+        }
         if let MonitorSet::Normal {
             monitors,
             active_monitor_idx,
@@ -4229,15 +4328,9 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if self.scratchpad.has_window(id) {
-            self.scratchpad.set_fullscreen(id, is_fullscreen);
+        // Unpin or hide the overlay before changing its layout mode.
+        if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
             return;
-        }
-        for monitor in self.monitors_mut() {
-            if monitor.pinned_workspace.has_window(id) {
-                monitor.pinned_workspace.set_fullscreen(id, is_fullscreen);
-                return;
-            }
         }
 
         for ws in self.workspaces_mut() {
@@ -4255,15 +4348,9 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if self.scratchpad.has_window(id) {
-            self.scratchpad.toggle_fullscreen(id);
+        // Unpin or hide the overlay before changing its layout mode.
+        if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
             return;
-        }
-        for monitor in self.monitors_mut() {
-            if monitor.pinned_workspace.has_window(id) {
-                monitor.pinned_workspace.toggle_fullscreen(id);
-                return;
-            }
         }
 
         for ws in self.workspaces_mut() {
@@ -4275,6 +4362,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_windowed_fullscreen(&mut self, id: &W::Id) {
+        if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
+            return;
+        }
         let (_, window) = self.windows().find(|(_, win)| win.id() == id).unwrap();
         if window.pending_sizing_mode().is_fullscreen() {
             // Remove the real fullscreen.
@@ -4301,15 +4391,9 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if self.scratchpad.has_window(id) {
-            self.scratchpad.set_maximized(id, maximize);
+        // Unpin or hide the overlay before changing its layout mode.
+        if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
             return;
-        }
-        for monitor in self.monitors_mut() {
-            if monitor.pinned_workspace.has_window(id) {
-                monitor.pinned_workspace.set_maximized(id, maximize);
-                return;
-            }
         }
 
         for ws in self.workspaces_mut() {
@@ -4327,15 +4411,9 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
 
-        if self.scratchpad.has_window(id) {
-            self.scratchpad.toggle_maximized(id);
+        // Unpin or hide the overlay before changing its layout mode.
+        if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
             return;
-        }
-        for monitor in self.monitors_mut() {
-            if monitor.pinned_workspace.has_window(id) {
-                monitor.pinned_workspace.toggle_maximized(id);
-                return;
-            }
         }
 
         for ws in self.workspaces_mut() {
@@ -4568,7 +4646,16 @@ impl<W: LayoutElement> Layout<W> {
             .collection_overview_is_open()
             .then(|| self.collection_window_preview(output, &window_id))
             .flatten();
-        let Some((ws, ws_geo, zoom)) = preview.or_else(|| {
+        let overlay = self.monitors().find_map(|mon| {
+            (mon.output() == output && mon.pinned_workspace.has_window(&window_id)).then(|| {
+                (
+                    &mon.pinned_workspace,
+                    Rectangle::from_size(output_size(output)),
+                    1.,
+                )
+            })
+        });
+        let Some((ws, ws_geo, zoom)) = overlay.or(preview).or_else(|| {
             regular.and_then(|(mon, ws, geo)| {
                 (mon.output() == output).then_some((ws, geo, mon.overview_zoom()))
             })

@@ -598,6 +598,23 @@ impl<W: LayoutElement> Workspace<W> {
         )
     }
 
+    pub(super) fn add_overlay_tile(
+        &mut self,
+        tile: Tile<W>,
+        target: WorkspaceAddWindowTarget<W>,
+        activate: ActivateWindow,
+        width: ColumnWidth,
+        is_full_width: bool,
+    ) {
+        let id = tile.window().id().clone();
+        self.add_tile(tile, target, activate, width, is_full_width, true);
+        // Fullscreen and maximized clients initially enter the scrolling layout.
+        // An output overlay always floats, even before the client acknowledges.
+        if !self.is_floating(&id) {
+            self.toggle_window_floating(Some(&id));
+        }
+    }
+
     pub fn add_tile(
         &mut self,
         mut tile: Tile<W>,

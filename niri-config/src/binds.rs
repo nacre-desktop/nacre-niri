@@ -693,9 +693,7 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::ToggleWindowFloating { id: Some(id) } => {
                 Self::ToggleWindowFloatingById(id)
             }
-            niri_ipc::Action::MoveWindowToScratchpad { id: None } => {
-                Self::MoveWindowToScratchpad
-            }
+            niri_ipc::Action::MoveWindowToScratchpad { id: None } => Self::MoveWindowToScratchpad,
             niri_ipc::Action::MoveWindowToScratchpad { id: Some(id) } => {
                 Self::MoveWindowToScratchpadById(id)
             }

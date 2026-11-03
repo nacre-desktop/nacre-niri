@@ -34,7 +34,9 @@ switcher. The overview provides a scratchpad section. Window IPC exposes
 `toggle-window-pinned` pins the focused window (IPC also accepts an optional ID).
 Tiled windows become floating. The output owns pinned windows above its workspace
 stack, so switching workspace or collection does not hide them. Window IPC exposes
-`is_pinned`. The `open-pinned true` window rule applies this state on mapping,
+`is_pinned`. Overlays stay floating; unpin before requesting tiled, fullscreen or
+maximized modes. Dragging a window back into the workspace removes its overlay
+state. The `open-pinned true` window rule applies this state on mapping,
 including initial floating sizing, when the pinning capability is enabled.
 
 ## Nacre integration

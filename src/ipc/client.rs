@@ -753,8 +753,14 @@ fn print_window(window: &Window) {
         if window.is_floating { "yes" } else { "no" }
     );
 
-    println!("  Is hidden: {}", if window.is_hidden { "yes" } else { "no" });
-    println!("  Is pinned: {}", if window.is_pinned { "yes" } else { "no" });
+    println!(
+        "  Is hidden: {}",
+        if window.is_hidden { "yes" } else { "no" }
+    );
+    println!(
+        "  Is pinned: {}",
+        if window.is_pinned { "yes" } else { "no" }
+    );
 
     if let Some(pid) = window.pid {
         println!("  PID: {pid}");

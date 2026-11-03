@@ -243,3 +243,46 @@ fn fullscreen_scratchpad_and_open_pinned_windows_remain_visible() {
     assert!(!monitor.pinned_workspace.is_floating(&2));
     layout.verify_invariants();
 }
+
+#[test]
+fn pinned_windows_remain_floating_until_explicitly_unpinned() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    layout.set_fullscreen(&1, true);
+    layout.toggle_fullscreen(&1);
+    layout.set_maximized(&1, true);
+    layout.toggle_maximized(&1);
+    layout.set_window_floating(None, false);
+    layout.toggle_window_floating(Some(&1));
+    let window = layout.focus().unwrap();
+    assert_eq!(window.id(), &1);
+    assert!(window.pending_sizing_mode().is_normal());
+    assert!(layout.is_window_pinned(&1));
+    assert!(layout
+        .monitors()
+        .next()
+        .unwrap()
+        .pinned_workspace
+        .is_floating(&1));
+    layout.verify_invariants();
+}
+
+#[test]
+fn keyboard_focus_can_leave_and_return_to_the_output_overlay() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    add_window(&mut layout, 2);
+    layout.focus_floating();
+    assert_eq!(layout.focus().unwrap().id(), &1);
+    layout.focus_tiling();
+    assert_eq!(layout.focus().unwrap().id(), &2);
+    layout.switch_focus_floating_tiling();
+    assert_eq!(layout.focus().unwrap().id(), &1);
+    layout.switch_focus_floating_tiling();
+    assert_eq!(layout.focus().unwrap().id(), &2);
+    layout.verify_invariants();
+}
