@@ -857,6 +857,14 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
+        // Stripping pinned and shown-scratchpad overlays can leave only empty, unnamed rows
+        // from the disconnected output. They carry no state to restore and would make a later
+        // output replug remove the new monitor's sole workspace.
+        workspaces.retain(Workspace::has_windows_or_name);
+        if workspaces.is_empty() {
+            return;
+        }
+
         for ws in &mut workspaces {
             ws.set_output(Some(self.output.clone()));
             ws.update_config(self.options.clone());

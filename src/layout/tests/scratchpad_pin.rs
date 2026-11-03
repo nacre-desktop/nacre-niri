@@ -325,6 +325,86 @@ fn pin_returns_after_last_output_disconnects_from_a_different_collection() {
 }
 
 #[test]
+fn removing_output_with_pinned_window_keeps_monitor_workspace_on_replug() {
+    for empty_workspace_above_first in [false, true] {
+        let mut options = Options::default();
+        options.layout.empty_workspace_above_first = empty_workspace_above_first;
+        options.layout.collections.enabled = false;
+        let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+
+        check_ops_on_layout(
+            &mut layout,
+            [
+                Op::AddOutput(2),
+                Op::AddWindow {
+                    params: TestWindowParams::new(1),
+                },
+                Op::AddOutput(1),
+                Op::ToggleWindowPinned(Some(1)),
+                Op::UnnameWorkspace { ws_name: 1 },
+            ],
+        );
+        let disconnected = output(&layout, 2);
+        layout.remove_output(&disconnected);
+        layout.verify_invariants();
+        Op::AddOutput(2).apply(&mut layout);
+
+        let surviving = layout
+            .monitors()
+            .find(|monitor| monitor.output_name() == "output1")
+            .unwrap();
+        assert!(!surviving.workspaces.is_empty());
+        assert!(surviving.pinned_workspace.has_window(&1));
+        assert!(layout
+            .monitors()
+            .all(|monitor| !monitor.workspaces.is_empty()));
+        layout.verify_invariants();
+    }
+}
+
+#[test]
+fn removing_output_with_shown_scratchpad_keeps_monitor_workspace_on_replug() {
+    for empty_workspace_above_first in [false, true] {
+        let mut options = Options::default();
+        options.layout.empty_workspace_above_first = empty_workspace_above_first;
+        options.layout.collections.enabled = false;
+        let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+
+        check_ops_on_layout(
+            &mut layout,
+            [
+                Op::AddOutput(2),
+                Op::AddWindow {
+                    params: TestWindowParams::new(1),
+                },
+                Op::AddOutput(1),
+                Op::FocusOutput(2),
+                Op::MoveWindowToScratchpad(Some(1)),
+                Op::ToggleScratchpad,
+                Op::UnnameWorkspace { ws_name: 1 },
+            ],
+        );
+
+        let disconnected = output(&layout, 2);
+        layout.remove_output(&disconnected);
+        layout.verify_invariants();
+        Op::AddOutput(2).apply(&mut layout);
+
+        let surviving = layout
+            .monitors()
+            .find(|monitor| monitor.output_name() == "output1")
+            .unwrap();
+        assert!(!surviving.workspaces.is_empty());
+        assert!(surviving.pinned_workspace.has_window(&1));
+        assert!(!layout.is_window_hidden(&1));
+        assert!(layout
+            .monitors()
+            .all(|monitor| !monitor.workspaces.is_empty()));
+        layout.verify_invariants();
+    }
+}
+
+#[test]
 fn dragging_a_pin_to_another_output_keeps_it_sticky() {
     let mut layout = Layout::default();
     Op::AddOutput(1).apply(&mut layout);
