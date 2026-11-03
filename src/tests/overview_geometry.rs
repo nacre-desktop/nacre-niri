@@ -259,10 +259,14 @@ fn egl_overview_emits_consistent_workspace_and_window_geometry_on_both_outputs()
     let mut fixture = fixture();
     let client = fixture.add_client();
     create_window(&mut fixture, client, 800, 600);
+    create_window(&mut fixture, client, 800, 600);
+    create_window(&mut fixture, client, 800, 600);
     fixture.niri().layout.switch_workspace_down();
     create_window(&mut fixture, client, 900, 700);
     let output2 = fixture.niri_output(2);
     fixture.niri().layout.focus_output(&output2);
+    create_window(&mut fixture, client, 1200, 800);
+    create_window(&mut fixture, client, 1200, 800);
     create_window(&mut fixture, client, 1200, 800);
 
     // Add a detached collection so both outputs render side-column previews while their

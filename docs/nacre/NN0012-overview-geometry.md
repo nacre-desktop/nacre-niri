@@ -17,6 +17,11 @@ hidden and detached collections use side previews, with one transform for their
 windows, background, and shadow. Collections shown on other connected outputs
 are excluded: the other monitor already presents them. Side columns occupy the
 space remaining beside the native overview, preserving its zoom and camera.
+Scrolling columns can extend outside the native monitor viewport. In collection
+overview, their final transformed elements are clipped to the workspace background
+so they cannot cover a neighbouring frame or hidden side column. This crop uses
+output pixels after scaling and relocation, including matching damage and shader
+source coordinates; normal workspace switching keeps its existing bounds.
 
 The old render preparation visited every collection for every output and then
 prepared the output's normal workspaces again. Shown collections now prepare and
@@ -28,7 +33,8 @@ can rebuild snapshots; unchanged steady frames reuse them. Hidden snapshots foll
 surface commits with offscreen frame-callback throttling.
 
 The headless regression inspects final elements and output damage at quarter
-progress on 1920×1200 logical at scale 1.5 and 3440×1440 at scale 1.0. The standalone
+progress on 1920×1200 logical at scale 1.5 and 3440×1440 at scale 1.0, including
+workspaces with three scrolling columns. The standalone
 benchmark measures changing opening frames and steady frames separately, with
 element preparation/assembly separated from GLES drawing and synchronous readback.
 Readback adds overhead; these timings support comparison and do not measure physical

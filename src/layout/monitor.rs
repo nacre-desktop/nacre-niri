@@ -1764,8 +1764,8 @@ impl<W: LayoutElement> Monitor<W> {
         // that overflow would cover the margins and side columns. Clip in final output pixels,
         // after the normal workspace transform, so shader source coordinates and damage use the
         // same rounding as the workspace background. Keep ordinary workspace switching unchanged.
-        let clip_to_workspace = self.options.layout.collections.enabled
-            && self.overview_progress.is_some();
+        let clip_to_workspace =
+            self.options.layout.collections.enabled && self.overview_progress.is_some();
 
         for (ws, geo) in self.workspaces_with_render_geo() {
             let viewport = if clip_to_workspace {
@@ -1789,7 +1789,9 @@ impl<W: LayoutElement> Monitor<W> {
                             let elem = MonitorInnerRenderElement::from(elem);
                             let elem = scale_relocate(geo, elem);
                             if let Some(viewport) = viewport {
-                                if let Some(elem) = CropRenderElement::from_element(elem, scale, viewport) {
+                                if let Some(elem) =
+                                    CropRenderElement::from_element(elem, scale, viewport)
+                                {
                                     push(MonitorRenderElement::ViewportClipped(elem));
                                 }
                             } else {
