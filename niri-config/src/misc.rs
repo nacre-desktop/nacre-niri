@@ -158,6 +158,8 @@ pub struct Nacre {
     pub overview_hover: bool,
     pub scratchpad: bool,
     pub window_pinning: bool,
+    pub proportional_x11_widths: bool,
+    pub edge_triggers: bool,
 }
 
 impl Default for Nacre {
@@ -166,6 +168,8 @@ impl Default for Nacre {
             overview_hover: true,
             scratchpad: true,
             window_pinning: true,
+            proportional_x11_widths: true,
+            edge_triggers: true,
         }
     }
 }
@@ -178,11 +182,83 @@ pub struct NacrePart {
     pub scratchpad: Option<Flag>,
     #[knuffel(child)]
     pub window_pinning: Option<Flag>,
+    #[knuffel(child)]
+    pub proportional_x11_widths: Option<Flag>,
+    #[knuffel(child)]
+    pub edge_triggers: Option<Flag>,
 }
 
 impl MergeWith<NacrePart> for Nacre {
     fn merge_with(&mut self, part: &NacrePart) {
-        merge!((self, part), overview_hover, scratchpad, window_pinning);
+        merge!(
+            (self, part),
+            overview_hover,
+            scratchpad,
+            window_pinning,
+            proportional_x11_widths,
+            edge_triggers
+        );
+    }
+}
+
+/// Action performed when the pointer dwells on a configured output edge.
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+pub struct EdgeTriggerAction {
+    /// Emit an `EdgeTriggered` event on the dedicated IPC stream.
+    #[knuffel(child)]
+    pub event: bool,
+    /// Spawn a command.
+    #[knuffel(child, unwrap(arguments))]
+    pub spawn: Option<Vec<String>>,
+    /// Spawn a shell command.
+    #[knuffel(child, unwrap(argument))]
+    pub spawn_sh: Option<String>,
+}
+
+/// Behavior configured for one screen edge.
+#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+pub struct EdgeTrigger {
+    /// Disable this edge, including an inherited global edge on an output override.
+    #[knuffel(child)]
+    pub off: bool,
+    /// Optional action; defaults to emitting an IPC event.
+    #[knuffel(child)]
+    pub action: Option<EdgeTriggerAction>,
+    /// Time the pointer must remain in the edge zone, in milliseconds.
+    #[knuffel(child, unwrap(argument))]
+    pub dwell_time_ms: Option<u16>,
+    /// Logical pixels pushed into the edge while clipped there before triggering.
+    #[knuffel(child, unwrap(argument))]
+    pub pressure: Option<FloatOrInt<0, 1_000_000>>,
+    /// Minimum inward pointer speed, in logical pixels per second. Zero disables the gate.
+    #[knuffel(child, unwrap(argument))]
+    pub velocity: Option<FloatOrInt<0, 1_000_000>>,
+}
+
+/// Global edge trigger policy. Output blocks may override individual edges.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct EdgeTriggers {
+    pub left: Option<EdgeTrigger>,
+    pub right: Option<EdgeTrigger>,
+    pub top: Option<EdgeTrigger>,
+    pub bottom: Option<EdgeTrigger>,
+}
+
+#[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
+pub struct EdgeTriggersPart {
+    #[knuffel(child)]
+    pub left: Option<EdgeTrigger>,
+    #[knuffel(child)]
+    pub right: Option<EdgeTrigger>,
+    #[knuffel(child)]
+    pub top: Option<EdgeTrigger>,
+    #[knuffel(child)]
+    pub bottom: Option<EdgeTrigger>,
+}
+
+impl MergeWith<EdgeTriggersPart> for EdgeTriggers {
+    fn merge_with(&mut self, part: &EdgeTriggersPart) {
+        merge_clone_opt!((self, part), left, right, top, bottom);
     }
 }
 

@@ -507,6 +507,7 @@ impl SecurityContextHandler for State {
                     client,
                     restricted: true,
                     credentials_unknown: false,
+                    is_xwayland_satellite: false,
                 });
             })
             .unwrap();

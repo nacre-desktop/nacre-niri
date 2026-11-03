@@ -154,7 +154,7 @@ impl<W: LayoutElement> Layout<W> {
         &self,
         mut ctx: RenderCtx<R>,
         output: &Output,
-        focus_ring: bool,
+        _focus_ring: bool,
         push: &mut dyn FnMut(CollectionOverviewRenderElement<R>),
     ) {
         if self.collection_overview_is_open() {
@@ -176,31 +176,47 @@ impl<W: LayoutElement> Layout<W> {
         ) {
             push(label.into());
         }
-        let mut render = |elem| {
+        if let Some(buffer) = self.collection_overview.texture(ctx.r(), output, &preview) {
+            let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                buffer,
+                (0., 0.),
+                1.,
+                None,
+                Some(preview.workspace.view_size()),
+                Kind::Unspecified,
+            ));
             let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
             let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
             if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
-                push(CollectionOverviewRenderElement::Workspace(elem));
+                push(CollectionOverviewRenderElement::CachedPreview(elem));
             }
-        };
-        preview.workspace.render_floating(
-            ctx.r(),
-            XrayPos::new(preview.geometry.loc, preview.zoom),
-            focus_ring,
-            &mut render,
-        );
-        preview.workspace.render_scrolling(
-            ctx.r(),
-            XrayPos::new(preview.geometry.loc, preview.zoom),
-            focus_ring,
-            &mut render,
-        );
-        let background = preview.workspace.render_background();
-        let background = RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
-        let background = RelocateRenderElement::from_element(background, location, Relocate::Relative);
-        if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
-            push(CollectionOverviewRenderElement::Background(background));
+        } else {
+            let mut render = |elem| {
+                let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+                let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+                if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+                    push(CollectionOverviewRenderElement::Workspace(elem));
+                }
+            };
+            let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
+            preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut render);
+            preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut render);
+            let background = preview.workspace.render_background();
+            let background = RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
+            let background = RelocateRenderElement::from_element(background, location, Relocate::Relative);
+            if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
+                push(CollectionOverviewRenderElement::Background(background));
+            }
         }
+        let alpha = self.overview_progress.as_ref().map_or(1., |p| p.value().clamp(0., 1.)) as f32;
+        preview.workspace.render_shadow(ctx.renderer, &mut |elem| {
+            let elem = elem.with_alpha(alpha);
+            let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+            let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+            if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+                push(CollectionOverviewRenderElement::Shadow(elem));
+            }
+        });
     }
 
     #[cfg(test)]

@@ -9,6 +9,152 @@ use crate::layout::LayoutElement as _;
 use crate::utils::spawning::store_and_increase_nofile_rlimit;
 use crate::utils::with_toplevel_role;
 
+fn configured_x11_opening_width(
+    is_xwayland_satellite: bool,
+    proportional_x11_widths: bool,
+    min_width: i32,
+    max_width: i32,
+) -> i32 {
+    let mut config = Config::default();
+    config.nacre.proportional_x11_widths = proportional_x11_widths;
+    config.outputs = niri_config::Outputs(vec![niri_config::Output {
+        name: "headless-1".to_owned(),
+        scale: Some(niri_config::FloatOrInt(1.5)),
+        ..Default::default()
+    }]);
+
+    let mut fixture = Fixture::with_config(config);
+    fixture.add_output(1, (1920, 1080));
+
+    let id = fixture.add_client_with_xwayland_satellite(is_xwayland_satellite);
+    let window = fixture.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_min_size(min_width, 300);
+    window.set_max_size(max_width, 600);
+    window.commit();
+    fixture.roundtrip(id);
+
+    fixture
+        .client(id)
+        .window(&surface)
+        .configures_received
+        .last()
+        .unwrap()
+        .1
+        .size
+        .0
+}
+
+#[test]
+fn proportional_x11_widths_apply_only_to_managed_adjustable_tiled_clients() {
+    let managed = configured_x11_opening_width(true, true, 1000, 1100);
+    assert!(
+        managed > 0 && managed < 1000,
+        "managed X11 width: {managed}"
+    );
+
+    let wayland = configured_x11_opening_width(false, true, 1000, 1100);
+    assert_eq!(wayland, 1000, "Wayland min width remains effective");
+
+    let disabled = configured_x11_opening_width(true, false, 1000, 1100);
+    assert_eq!(disabled, 1000, "config opt-out keeps the X11 min width");
+
+    let fixed = configured_x11_opening_width(true, true, 1000, 1000);
+    assert_eq!(fixed, 1000, "fixed-width hints remain effective");
+}
+
+#[test]
+fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
+    let config = Config {
+        outputs: niri_config::Outputs(vec![niri_config::Output {
+            name: "headless-1".to_owned(),
+            scale: Some(niri_config::FloatOrInt(1.5)),
+            ..Default::default()
+        }]),
+        ..Default::default()
+    };
+    let mut fixture = Fixture::with_config(config);
+    fixture.add_output(1, (1920, 1080));
+
+    let id = fixture.add_client_with_xwayland_satellite(true);
+    let window = fixture.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_min_size(1000, 300);
+    window.set_max_size(1100, 600);
+    window.commit();
+    fixture.roundtrip(id);
+    let opening_width = fixture
+        .client(id)
+        .window(&surface)
+        .configures_received
+        .last()
+        .unwrap()
+        .1
+        .size
+        .0;
+    assert!(
+        opening_width > 0 && opening_width < 1000,
+        "opening width: {opening_width}"
+    );
+
+    let window = fixture.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.ack_last_and_commit();
+    fixture.double_roundtrip(id);
+
+    let window_id = {
+        let niri = fixture.niri();
+        let (_, mapped) = niri.layout.windows().next().unwrap();
+        assert_eq!(mapped.min_size().w, 1);
+        assert_eq!(mapped.max_size().w, 1100);
+        assert_eq!(mapped.min_size().h, 300);
+        assert_eq!(mapped.max_size().h, 600);
+        mapped.window.clone()
+    };
+
+    fixture
+        .niri()
+        .layout
+        .set_window_width(Some(&window_id), niri_ipc::SizeChange::SetProportion(100.0));
+    fixture.double_roundtrip(id);
+    let width = fixture
+        .client(id)
+        .window(&surface)
+        .configures_received
+        .last()
+        .unwrap()
+        .1
+        .size
+        .0;
+    assert!(width <= 1100, "max width should remain in effect: {width}");
+
+    fixture
+        .niri()
+        .layout
+        .set_window_floating(Some(&window_id), true);
+    fixture.double_roundtrip(id);
+    let floating_width = fixture
+        .client(id)
+        .window(&surface)
+        .configures_received
+        .last()
+        .unwrap()
+        .1
+        .size
+        .0;
+    assert!(
+        (1000..=1100).contains(&floating_width),
+        "floating width should restore the min/max range: {floating_width}"
+    );
+    let (min_width, max_width) = {
+        let niri = fixture.niri();
+        let (_, mapped) = niri.layout.windows().next().unwrap();
+        (mapped.min_size().w, mapped.max_size().w)
+    };
+    assert_eq!(min_width, 1000, "floating restores the X11 minimum");
+    assert_eq!(max_width, 1100, "floating keeps the X11 maximum");
+}
+
 #[test]
 fn simple_no_workspaces() {
     let mut f = Fixture::new();

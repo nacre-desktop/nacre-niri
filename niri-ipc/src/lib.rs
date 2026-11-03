@@ -121,6 +121,12 @@ pub enum Request {
     EventStream,
     /// Start an event stream that includes overview preview hover changes.
     NacreOverviewHoverStream,
+    /// Start a regular event stream that opts in to native screen-edge trigger events.
+    ///
+    /// The initial standard state snapshot is sent first. `EdgeTriggered` and `EdgeLeft` events
+    /// are delivered only to clients using this request, preserving compatibility with older
+    /// event clients.
+    NacreEdgeTriggerStream,
     /// Start an event stream including Nacre-Niri workspace collection events.
     ///
     /// Use this extension when communicating with a compositor that supports it. The standard
@@ -203,6 +209,23 @@ pub struct NacreCapabilities {
     /// Pinning floating windows across workspace and collection switches is available.
     #[serde(default)]
     pub window_pinning: bool,
+    /// Native screen-edge triggers are enabled.
+    #[serde(default)]
+    pub edge_triggers: bool,
+}
+
+/// Screen edge that activated a configured edge trigger.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum Edge {
+    /// Left output edge.
+    Left,
+    /// Right output edge.
+    Right,
+    /// Top output edge.
+    Top,
+    /// Bottom output edge.
+    Bottom,
 }
 
 /// Overview information.
@@ -879,26 +902,6 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
-    /// Hide the focused window in the scratchpad.
-    MoveWindowToScratchpad {
-        /// Id of the window to hide. If `None`, uses the focused window.
-        #[cfg_attr(feature = "clap", arg(long))]
-        id: Option<u64>,
-    },
-    /// Show or hide the most recently used scratchpad window.
-    ToggleScratchpad {},
-    /// Show a specific scratchpad window.
-    ScratchpadShowWindow {
-        /// Id of the scratchpad window to show.
-        #[cfg_attr(feature = "clap", arg())]
-        id: u64,
-    },
-    /// Toggle whether the focused window stays visible across workspace switches.
-    ToggleWindowPinned {
-        /// Id of the window to pin. If `None`, uses the focused window.
-        #[cfg_attr(feature = "clap", arg(long))]
-        id: Option<u64>,
-    },
     /// Move the focused window to the floating layout.
     MoveWindowToFloating {
         /// Id of the window to move.
@@ -1406,12 +1409,6 @@ pub struct Window {
     ///
     /// If the window isn't floating then it is in the tiling layout.
     pub is_floating: bool,
-    /// Whether this window is hidden in the scratchpad.
-    #[serde(default)]
-    pub is_hidden: bool,
-    /// Whether this window is pinned above workspaces on its output.
-    #[serde(default)]
-    pub is_pinned: bool,
     /// Whether this window requests your attention.
     pub is_urgent: bool,
     /// Position- and size-related properties of the window.
@@ -1786,6 +1783,28 @@ pub enum Event {
     NacreOverviewHoverChanged {
         /// Window ID, or `None` when no preview window is hovered.
         id: Option<u64>,
+    },
+    /// A configured screen edge was triggered after its dwell and pressure requirements passed.
+    EdgeTriggered {
+        /// Stable output connector name.
+        output: String,
+        /// Triggered output edge.
+        edge: Edge,
+        /// Pointer position in output-local logical coordinates.
+        position: [f64; 2],
+    },
+    /// A previously triggered event-action edge was left or became unavailable.
+    ///
+    /// The payload uses the same output-local logical coordinates as [`Event::EdgeTriggered`].
+    /// The position can be outside the prior output's rectangle after crossing to another
+    /// output. Spawn-action edges and candidates that never fired do not emit this event.
+    EdgeLeft {
+        /// Stable output connector name of the prior trigger.
+        output: String,
+        /// Edge that was previously triggered.
+        edge: Edge,
+        /// Pointer position in the prior output's local logical coordinates.
+        position: [f64; 2],
     },
     /// The configuration was reloaded.
     ///
@@ -2237,22 +2256,18 @@ mod tests {
             overview_hover: true,
             scratchpad: true,
             window_pinning: true,
+            edge_triggers: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true}}}"#,
         );
-
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
         )
         .unwrap();
         assert!(!old_capabilities.scratchpad);
         assert!(!old_capabilities.window_pinning);
-    }
-
-    #[test]
-    fn scratchpad_and_pinning_action_wire_format() {
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,
@@ -2269,5 +2284,25 @@ mod tests {
             serde_json::to_string(&Action::ToggleWindowPinned { id: Some(42) }).unwrap(),
             r#"{"ToggleWindowPinned":{"id":42}}"#,
         );
+        assert_eq!(
+            serde_json::to_string(&Request::NacreEdgeTriggerStream).unwrap(),
+            "\"NacreEdgeTriggerStream\""
+        );
+        let event = Event::EdgeTriggered {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [0.0, 10.0],
+        };
+        assert!(serde_json::to_string(&event)
+            .unwrap()
+            .contains(r#""EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,10.0]}"#));
+        let event = Event::EdgeLeft {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [12.0, 10.0],
+        };
+        assert!(serde_json::to_string(&event)
+            .unwrap()
+            .contains(r#""EdgeLeft":{"output":"DP-1","edge":"Left","position":[12.0,10.0]}"#));
     }
 }

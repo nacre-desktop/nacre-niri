@@ -19,7 +19,7 @@ use crate::render_helpers::{
     copy_framebuffer, create_texture, render_to_vec as render_pixels, RenderCtx, RenderTarget,
 };
 
-fn fixture() -> Fixture {
+fn fixture(collections: bool) -> Fixture {
     let mut config = Config::parse_mem(
         r##"
         output "headless-1" { scale 1.5; }
@@ -36,7 +36,7 @@ fn fixture() -> Fixture {
     "##,
     )
     .unwrap();
-    config.layout.collections.enabled = true;
+    config.layout.collections.enabled = collections;
     config.overview.workspace_shadow.off = false;
     let linear = Kind::Easing(EasingParams {
         duration_ms: 1000,
@@ -205,7 +205,7 @@ impl RasterOutput {
 
 #[test]
 fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales() {
-    let mut fixture = fixture();
+    let mut fixture = fixture(true);
     let client = fixture.add_client();
     for index in [1, 2] {
         fixture.niri_focus_output(index);
@@ -218,6 +218,11 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
             }
         }
     }
+    let scratchpad_window = fixture.niri().layout.windows().next().unwrap().1.id().clone();
+    fixture
+        .niri()
+        .layout
+        .move_window_to_scratchpad(Some(&scratchpad_window));
     fixture.niri_complete_animations();
     set_time(fixture.niri(), 0);
     let mut outputs = [
@@ -262,5 +267,31 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
             "output {} never exercised a partial repaint",
             idx + 1
         );
+    }
+}
+
+#[test]
+fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_collections() {
+    for collections in [false, true] {
+        let mut fixture = fixture(collections);
+        let client = fixture.add_client();
+        create_window(&mut fixture, client, 0);
+        let window = fixture.niri().layout.windows().next().unwrap().1.id().clone();
+        fixture.niri().layout.move_window_to_scratchpad(Some(&window));
+        fixture.niri_complete_animations();
+        let mut output = RasterOutput::new(&mut fixture, 1);
+        fixture.niri().layout.open_overview();
+
+        for millis in [0, 137, 500, 1000] {
+            set_time(fixture.niri(), millis);
+            fixture.niri().advance_animations();
+            output.compare(&mut fixture, 1, &format!("scratchpad {collections} {millis}ms"));
+        }
+        let (_, builds) = fixture.niri().layout.collection_overview_cache_counts();
+        assert!(builds > 0, "scratchpad preview did not use the shared texture cache");
+        output.compare(&mut fixture, 1, "steady scratchpad cache");
+        let (_, steady_builds) = fixture.niri().layout.collection_overview_cache_counts();
+        assert_eq!(steady_builds, builds, "steady scratchpad frame rebuilt its texture");
+        assert!(output.saw_partial_damage, "scratchpad preview never caused partial damage");
     }
 }

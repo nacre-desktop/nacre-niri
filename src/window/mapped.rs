@@ -97,6 +97,12 @@ pub struct Mapped {
     /// Whether this window is floating.
     is_floating: bool,
 
+    /// Whether this surface belongs to the compositor-managed xwayland-satellite client.
+    is_xwayland_satellite: bool,
+
+    /// Whether the native tiled X11 minimum-width policy is enabled by config.
+    proportional_x11_widths: bool,
+
     /// Whether this window is a target of a window cast.
     is_window_cast_target: bool,
 
@@ -272,9 +278,18 @@ enum RequestSizeOnce {
 }
 
 impl Mapped {
-    pub fn new(window: Window, rules: ResolvedWindowRules, hook: HookId, config: &Config) -> Self {
+    pub fn new(
+        window: Window,
+        mut rules: ResolvedWindowRules,
+        hook: HookId,
+        config: &Config,
+    ) -> Self {
         let surface = window.wl_surface().expect("no X11 support");
+        let is_xwayland_satellite = crate::niri::is_xwayland_satellite_surface(&surface);
         let credentials = get_credentials_for_surface(&surface);
+        // The resolved-rule bit is only used for initial configures. Mapped windows track the
+        // current config separately, avoiding a false rule change when rules are recomputed.
+        rules.proportional_x11_widths = false;
         let mut rv = Self {
             window,
             id: MappedId::next(),
@@ -289,6 +304,8 @@ impl Mapped {
             is_focused: false,
             is_active_in_column: true,
             is_floating: false,
+            is_xwayland_satellite,
+            proportional_x11_widths: config.nacre.proportional_x11_widths,
             is_window_cast_target: false,
             ignore_opacity_window_rule: false,
             block_out_buffer: RefCell::new(SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.])),
@@ -353,6 +370,10 @@ impl Mapped {
 
     pub fn set_needs_configure(&mut self) {
         self.needs_configure = true;
+    }
+
+    pub fn update_proportional_x11_widths(&mut self, enabled: bool) {
+        self.proportional_x11_widths = enabled;
     }
 
     pub fn id(&self) -> MappedId {
@@ -898,10 +919,19 @@ impl LayoutElement for Mapped {
     }
 
     fn min_size(&self) -> Size<i32, Logical> {
-        let min_size = with_states(self.toplevel().wl_surface(), |state| {
+        let (min_size, max_size) = with_states(self.toplevel().wl_surface(), |state| {
             let mut guard = state.cached_state.get::<SurfaceCachedState>();
-            guard.current().min_size
+            let current = guard.current();
+            (current.min_size, current.max_size)
         });
+
+        let min_size = super::effective_x11_min_size(
+            min_size,
+            max_size,
+            self.proportional_x11_widths,
+            self.is_xwayland_satellite && self.toplevel().parent().is_none(),
+            !self.is_floating,
+        );
 
         self.rules.apply_min_size(min_size)
     }

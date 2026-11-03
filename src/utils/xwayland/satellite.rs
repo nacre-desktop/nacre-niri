@@ -9,8 +9,9 @@ use calloop::channel::Sender;
 use calloop::generic::Generic;
 use calloop::{Interest, Mode, PostAction, RegistrationToken};
 use smithay::reexports::rustix::io::{fcntl_setfd, FdFlags};
+use smithay::wayland::socket::ListeningSocketSource;
 
-use crate::niri::State;
+use crate::niri::{NewClient, State};
 use crate::utils::expand_home;
 use crate::utils::xwayland::X11Connection;
 
@@ -19,6 +20,7 @@ pub struct Satellite {
     abstract_token: Option<RegistrationToken>,
     unix_token: Option<RegistrationToken>,
     to_main: Sender<ToMain>,
+    wayland_display: String,
 }
 
 enum ToMain {
@@ -56,6 +58,25 @@ pub fn setup(state: &mut State) {
     };
 
     let event_loop = &state.niri.event_loop;
+
+    // Give the managed satellite its own compositor socket. The resulting client marker is
+    // authoritative for Xwayland-origin windows, unlike matching app IDs or titles. Use a
+    // private WAYLAND_DISPLAY instead of an inherited WAYLAND_SOCKET fd: satellite passes its
+    // environment to Xwayland, which sets its own WAYLAND_DISPLAY but would otherwise inherit the
+    // fd and could connect to the compositor directly.
+    let wayland_source = ListeningSocketSource::new_auto().unwrap();
+    let wayland_display = wayland_source.socket_name().to_string_lossy().into_owned();
+    event_loop
+        .insert_source(wayland_source, |client, _, state| {
+            state.niri.insert_client(NewClient {
+                client,
+                restricted: false,
+                credentials_unknown: false,
+                is_xwayland_satellite: true,
+            });
+        })
+        .unwrap();
+
     let (to_main, rx) = calloop::channel::channel();
     event_loop
         .insert_source(rx, move |event, _, state| match event {
@@ -71,6 +92,7 @@ pub fn setup(state: &mut State) {
         abstract_token: None,
         unix_token: None,
         to_main,
+        wayland_display,
     });
 
     setup_watch(state);
@@ -233,7 +255,11 @@ fn spawn(path: String, xwl: &Satellite) {
     }
 
     let mut process = Command::new(&path);
-    process.arg(&xwl.x11.display_name).env_remove("DISPLAY");
+    process
+        .arg(&xwl.x11.display_name)
+        .env("WAYLAND_DISPLAY", &xwl.wayland_display)
+        .env_remove("WAYLAND_SOCKET")
+        .env_remove("DISPLAY");
 
     // We don't want it spamming the niri output.
     process

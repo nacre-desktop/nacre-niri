@@ -517,6 +517,20 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::NacreOverviewHoverChanged { id } => {
                         println!("Overview hovered window changed: {id:?}");
                     }
+                    Event::EdgeTriggered {
+                        output,
+                        edge,
+                        position,
+                    } => {
+                        println!("Edge triggered on {output} {edge:?} at {position:?}");
+                    }
+                    Event::EdgeLeft {
+                        output,
+                        edge,
+                        position,
+                    } => {
+                        println!("Edge left on {output} {edge:?} at {position:?}");
+                    }
                     Event::ConfigLoaded { failed } => {
                         let status = if failed {
                             "with an error"
@@ -589,6 +603,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
             println!("Overview hover: {}", capabilities.overview_hover);
             println!("Scratchpad: {}", capabilities.scratchpad);
             println!("Window pinning: {}", capabilities.window_pinning);
+            println!("Edge triggers: {}", capabilities.edge_triggers);
         }
         Msg::Casts => {
             let Response::Casts(mut casts) = response else {
@@ -751,15 +766,6 @@ fn print_window(window: &Window) {
     println!(
         "  Is floating: {}",
         if window.is_floating { "yes" } else { "no" }
-    );
-
-    println!(
-        "  Is hidden: {}",
-        if window.is_hidden { "yes" } else { "no" }
-    );
-    println!(
-        "  Is pinned: {}",
-        if window.is_pinned { "yes" } else { "no" }
     );
 
     if let Some(pid) = window.pid {

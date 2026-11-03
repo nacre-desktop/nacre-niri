@@ -368,6 +368,10 @@ pub struct Niri {
     /// resolution mice.
     pub notified_activity_this_iteration: bool,
     pub pointer_inside_hot_corner: bool,
+    pub(crate) edge_trigger_timer: Option<RegistrationToken>,
+    pub(crate) edge_trigger_candidate: Option<crate::edge_triggers::EdgeTriggerCandidate>,
+    pub(crate) edge_trigger_generation: u64,
+    pub(crate) edge_trigger_last_motion: Option<(Point<f64, Logical>, Instant)>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
@@ -1435,6 +1439,14 @@ impl State {
             }
         };
 
+        self.niri.clear_edge_trigger();
+        self.niri.edge_trigger_last_motion = None;
+        if !crate::edge_triggers::event_source_available(&config) {
+            if let Some(server) = &self.niri.ipc_server {
+                server.disconnect_edge_trigger_clients();
+            }
+        }
+
         self.niri.config_error_notification.hide();
 
         // Find & orphan removed named workspaces.
@@ -1448,6 +1460,9 @@ impl State {
             self.niri.layout.unname_workspace(&name);
         }
 
+        self.niri.layout.with_windows_mut(|mapped, _| {
+            mapped.update_proportional_x11_widths(config.nacre.proportional_x11_widths);
+        });
         self.niri.layout.update_config(&config);
         for mapped in self.niri.mapped_layer_surfaces.values_mut() {
             mapped.update_config(&config);
@@ -2441,6 +2456,7 @@ impl Niri {
                         client,
                         restricted: false,
                         credentials_unknown: false,
+                        is_xwayland_satellite: false,
                     });
                 })
                 .unwrap();
@@ -2580,6 +2596,10 @@ impl Niri {
             pointer_inactivity_timer_got_reset: false,
             notified_activity_this_iteration: false,
             pointer_inside_hot_corner: false,
+            edge_trigger_timer: None,
+            edge_trigger_candidate: None,
+            edge_trigger_generation: 0,
+            edge_trigger_last_motion: None,
             tablet_cursor_location: None,
             gesture_swipe_3f_cumulative: None,
             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
@@ -2638,6 +2658,7 @@ impl Niri {
             client,
             restricted,
             credentials_unknown,
+            is_xwayland_satellite,
         } = client;
 
         let config = self.config.borrow();
@@ -2647,6 +2668,7 @@ impl Niri {
             primary_selection_disabled: config.clipboard.disable_primary,
             restricted,
             credentials_unknown,
+            is_xwayland_satellite,
         });
 
         if let Err(err) = self.display_handle.insert_client(client, data) {
@@ -2683,6 +2705,8 @@ impl Niri {
     /// Repositions all outputs, optionally adding a new output.
     pub fn reposition_outputs(&mut self, new_output: Option<&Output>) {
         let _span = tracy_client::span!("Niri::reposition_outputs");
+        self.clear_edge_trigger();
+        self.edge_trigger_last_motion = None;
 
         #[derive(Debug)]
         struct Data {
@@ -2899,6 +2923,15 @@ impl Niri {
     }
 
     pub fn remove_output(&mut self, output: &Output) {
+        if self
+            .edge_trigger_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.output == output.name())
+        {
+            self.clear_edge_trigger();
+            self.edge_trigger_last_motion = None;
+        }
+
         for layer in layer_map_for_output(output).layers() {
             layer.layer_surface().send_close();
         }
@@ -2973,6 +3006,9 @@ impl Niri {
     }
 
     pub fn output_resized(&mut self, output: &Output) {
+        self.clear_edge_trigger();
+        self.edge_trigger_last_motion = None;
+
         let output_size = output_size(output);
         let scale = output.current_scale();
         let transform = output.current_transform();
@@ -6407,11 +6443,14 @@ impl Niri {
             let window_rules = &self.config.borrow().window_rules;
 
             for unmapped in self.unmapped_windows.values_mut() {
-                let new_rules = ResolvedWindowRules::compute(
+                let mut new_rules = ResolvedWindowRules::compute(
                     window_rules,
                     WindowRef::Unmapped(unmapped),
                     self.is_at_startup,
                 );
+                new_rules.proportional_x11_widths =
+                    self.config.borrow().nacre.proportional_x11_widths
+                        && is_xwayland_satellite_surface(unmapped.toplevel().wl_surface());
                 if let InitialConfigureState::Configured { rules, .. } = &mut unmapped.state {
                     *rules = new_rules;
                 }
@@ -6552,6 +6591,7 @@ pub struct NewClient {
     pub client: UnixStream,
     pub restricted: bool,
     pub credentials_unknown: bool,
+    pub is_xwayland_satellite: bool,
 }
 
 pub struct ClientState {
@@ -6562,6 +6602,16 @@ pub struct ClientState {
     pub restricted: bool,
     /// We cannot retrieve this client's socket credentials.
     pub credentials_unknown: bool,
+    /// This client was accepted on the private socket used by managed xwayland-satellite.
+    pub is_xwayland_satellite: bool,
+}
+
+pub fn is_xwayland_satellite_surface(surface: &WlSurface) -> bool {
+    surface.client().is_some_and(|client| {
+        client
+            .get_data::<ClientState>()
+            .is_some_and(|data| data.is_xwayland_satellite)
+    })
 }
 
 impl ClientData for ClientState {
