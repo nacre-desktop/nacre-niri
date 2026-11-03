@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use niri_config::animations::{Curve, EasingParams, Kind};
 use niri_config::Config;
 use smithay::backend::allocator::Fourcc;
 use smithay::utils::{Scale, Transform};
@@ -14,8 +15,17 @@ fn fixture() -> Fixture {
     )
     .unwrap();
     config.layout.collections.enabled = true;
+    config.animations.overview_open_close.0.kind = Kind::Easing(EasingParams {
+        duration_ms: 1000,
+        curve: Curve::Linear,
+    });
     let mut fixture = Fixture::with_config(config);
-    fixture.niri_state().backend.headless().add_renderer().unwrap();
+    fixture
+        .niri_state()
+        .backend
+        .headless()
+        .add_renderer()
+        .unwrap();
     fixture.add_output(1, (2880, 1800));
     fixture.add_output(2, (3440, 1440));
     fixture
@@ -36,7 +46,10 @@ fn create_window(fixture: &mut Fixture, client: super::client::ClientId, w: u16,
     fixture.double_roundtrip(client);
 }
 
-fn output_elements(fixture: &mut Fixture, output_idx: u8) -> Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>> {
+fn output_elements(
+    fixture: &mut Fixture,
+    output_idx: u8,
+) -> Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>> {
     let output = fixture.niri_output(output_idx);
     fixture.niri().update_render_elements(Some(&output));
     let state = &mut fixture.state.server.state;
@@ -119,10 +132,7 @@ fn measure_opening_sweep(fixture: &mut Fixture) {
     let mut assembly = [Vec::with_capacity(60), Vec::with_capacity(60)];
     let mut draw = [Vec::with_capacity(60), Vec::with_capacity(60)];
     for frame in 1..=60 {
-        set_time(
-            fixture.niri(),
-            Duration::from_millis(frame * 1000 / 60),
-        );
+        set_time(fixture.niri(), Duration::from_millis(frame * 1000 / 60));
         fixture.niri().advance_animations();
         for output_idx in [1, 2] {
             let (assembly_ms, draw_ms) = sample_frame(fixture, output_idx);
@@ -175,9 +185,10 @@ fn benchmark_overview_frame_assembly() {
         .id;
     fixture.niri().layout.create_collection(None);
     create_window(&mut fixture, client, 760, 560);
-    fixture.niri().layout.focus_collection(
-        &niri_config::WorkspaceReference::Id(output1_collection),
-    );
+    fixture
+        .niri()
+        .layout
+        .focus_collection(&niri_config::WorkspaceReference::Id(output1_collection));
     set_time(fixture.niri(), Duration::ZERO);
     fixture.niri().layout.open_overview();
     measure_opening_sweep(&mut fixture);

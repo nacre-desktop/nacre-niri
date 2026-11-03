@@ -7,11 +7,11 @@ use smithay::backend::renderer::element::Element as _;
 use smithay::utils::{Rectangle, Scale};
 
 use super::Fixture;
-use crate::niri::{OutputRenderElements, Niri};
+use crate::niri::{Niri, OutputRenderElements};
 use crate::render_helpers::{RenderCtx, RenderTarget};
 
 fn fixture() -> Fixture {
-    fixture_with_workspace_shadow(false)
+    fixture_with_workspace_shadow(true)
 }
 
 fn fixture_with_workspace_shadow(off: bool) -> Fixture {
@@ -26,7 +26,12 @@ fn fixture_with_workspace_shadow(off: bool) -> Fixture {
         curve: Curve::Linear,
     });
     let mut fixture = Fixture::with_config(config);
-    fixture.niri_state().backend.headless().add_renderer().unwrap();
+    fixture
+        .niri_state()
+        .backend
+        .headless()
+        .add_renderer()
+        .unwrap();
     fixture.add_output(1, (2880, 1800));
     fixture.add_output(2, (3440, 1440));
     fixture
@@ -56,7 +61,10 @@ fn create_window(
 fn output_elements(
     fixture: &mut Fixture,
     output_idx: u8,
-) -> (Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>>, f64) {
+) -> (
+    Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>>,
+    f64,
+) {
     let output = fixture.niri_output(output_idx);
     fixture.niri().update_render_elements(Some(&output));
     let scale = output.current_scale().fractional_scale();
@@ -107,9 +115,11 @@ fn damage_intersects(
     damage: &[Rectangle<i32, smithay::utils::Physical>],
     rects: &[Rectangle<i32, smithay::utils::Physical>],
 ) -> bool {
-    damage
-        .iter()
-        .any(|damage| rects.iter().any(|rect| damage.intersection(*rect).is_some()))
+    damage.iter().any(|damage| {
+        rects
+            .iter()
+            .any(|rect| damage.intersection(*rect).is_some())
+    })
 }
 
 fn set_time(niri: &mut Niri, time: Duration) {
@@ -140,7 +150,10 @@ fn assert_unique_ids(
 
 fn element_signature(
     elements: &[OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>],
-) -> Vec<(smithay::backend::renderer::element::Id, smithay::backend::renderer::utils::CommitCounter)> {
+) -> Vec<(
+    smithay::backend::renderer::element::Id,
+    smithay::backend::renderer::utils::CommitCounter,
+)> {
     elements
         .iter()
         .map(|element| (element.id().clone(), element.current_commit()))
@@ -209,9 +222,10 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
     let hidden_collection = fixture.niri().layout.create_collection(None);
     let hidden_surface = create_window(&mut fixture, client, 700, 500);
     assert_ne!(hidden_collection, output1_collection);
-    fixture.niri().layout.focus_collection(
-        &niri_config::WorkspaceReference::Id(output1_collection),
-    );
+    fixture
+        .niri()
+        .layout
+        .focus_collection(&niri_config::WorkspaceReference::Id(output1_collection));
     fixture.niri().layout.focus_output(&output1);
     let mut shown_content_ids = [Vec::new(), Vec::new()];
     for output_idx in [1, 2] {
@@ -249,10 +263,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                 .collect();
             assert_unique_ids(&elements);
             let signature = element_signature(&elements);
-            let cached = fixture
-                .niri()
-                .layout
-                .collection_overview_cache_counts();
+            let cached = fixture.niri().layout.collection_overview_cache_counts();
             let tracker_idx = usize::from(output_idx - 1);
             damage_trackers[tracker_idx]
                 .damage_output(1, &elements)
@@ -372,10 +383,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         old_preview_bounds[idx] = cached_preview_bounds(&elements, scale);
         damage_trackers[idx].damage_output(1, &elements).unwrap();
     }
-    let before_commit = fixture
-        .niri()
-        .layout
-        .collection_overview_cache_counts();
+    let before_commit = fixture.niri().layout.collection_overview_cache_counts();
     let hidden_window = fixture.client(client).window(&hidden_surface);
     hidden_window.attach_new_buffer();
     hidden_window.commit();
@@ -386,28 +394,23 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         let (damage, _) = damage_trackers[idx].damage_output(1, &elements).unwrap();
         assert!(damage.is_some_and(|damage| damage_intersects(damage, &old_preview_bounds[idx])));
     }
-    let after_commit = fixture
-        .niri()
-        .layout
-        .collection_overview_cache_counts();
+    let after_commit = fixture.niri().layout.collection_overview_cache_counts();
     assert!(after_commit.0 > before_commit.0);
     assert!(after_commit.1 > before_commit.1);
     let _ = output_elements(&mut fixture, 1);
     let _ = output_elements(&mut fixture, 2);
     assert_eq!(
         after_commit,
-        fixture
-            .niri()
-            .layout
-            .collection_overview_cache_counts(),
+        fixture.niri().layout.collection_overview_cache_counts(),
         "hidden preview was prepared or rebuilt again without a source change"
     );
 
     // Moving the cached collection onto output 1 changes the side-column contents on
     // both outputs. Damage must cover both the old and new preview bounds.
-    fixture.niri().layout.focus_collection(
-        &niri_config::WorkspaceReference::Id(hidden_collection),
-    );
+    fixture
+        .niri()
+        .layout
+        .focus_collection(&niri_config::WorkspaceReference::Id(hidden_collection));
     for output_idx in [1, 2] {
         let idx = usize::from(output_idx - 1);
         let (elements, scale) = output_elements(&mut fixture, output_idx);

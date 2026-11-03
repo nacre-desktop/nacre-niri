@@ -1,8 +1,8 @@
 //! Shared collection-column geometry for rendering, pointer selection, and drag targets.
 
-use std::cell::RefCell;
 #[cfg(test)]
 use std::cell::Cell;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use pangocairo::cairo::{self, ImageSurface};
@@ -11,9 +11,9 @@ use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
 };
 use smithay::backend::renderer::element::{Id, Kind};
+use smithay::backend::renderer::gles::GlesTexture;
 use smithay::backend::renderer::utils::CommitCounter;
 use smithay::backend::renderer::{Color32F, ContextId, Renderer as _};
-use smithay::backend::renderer::gles::GlesTexture;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size, Transform};
 
@@ -105,7 +105,10 @@ pub(super) struct Preview<'a, W: LayoutElement> {
 impl<W: LayoutElement> Layout<W> {
     #[cfg(test)]
     pub(crate) fn collection_overview_cache_counts(&self) -> (u64, u64) {
-        (self.collection_overview.preparations.get(), self.collection_overview.texture_builds.get())
+        (
+            self.collection_overview.preparations.get(),
+            self.collection_overview.texture_builds.get(),
+        )
     }
 
     pub fn collection_overview_is_enabled(&self) -> bool {
@@ -156,7 +159,11 @@ impl<W: LayoutElement> Layout<W> {
         let size = output_size(output);
         let active = self.collection_for_output(output);
         let columns = self.collection_columns(output);
-        let mut key = vec![size.w.to_bits(), size.h.to_bits(), self.overview_zoom().to_bits()];
+        let mut key = vec![
+            size.w.to_bits(),
+            size.h.to_bits(),
+            self.overview_zoom().to_bits(),
+        ];
         for column in &columns {
             if Some(column.id) == active || column.bounds.size.w <= 0. {
                 continue;
@@ -168,7 +175,10 @@ impl<W: LayoutElement> Layout<W> {
             ]);
             let workspaces: Vec<_> = self.collection_workspaces(column.id).collect();
             key.push(workspaces.len() as u64);
-            key.push(self.collection_active_workspace(column.id).map_or(0, WorkspaceId::get));
+            key.push(
+                self.collection_active_workspace(column.id)
+                    .map_or(0, WorkspaceId::get),
+            );
             for workspace in workspaces {
                 key.extend([
                     workspace.id().get(),
@@ -177,7 +187,12 @@ impl<W: LayoutElement> Layout<W> {
                 ]);
             }
         }
-        let cached = self.preview_geometry.borrow().get(&key).cloned();
+        let cached = self
+            .collection_overview
+            .preview_geometry
+            .borrow()
+            .get(&key)
+            .cloned();
         let geometries = if let Some(cached) = cached {
             cached
         } else {
@@ -194,9 +209,7 @@ impl<W: LayoutElement> Layout<W> {
                     .unwrap_or(0);
                 let heights: Vec<_> = workspaces
                     .iter()
-                    .map(|ws| {
-                        ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.)
-                    })
+                    .map(|ws| ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.))
                     .collect();
                 let mut positions = vec![0.; workspaces.len()];
                 if let Some(height) = heights.get(active_idx) {
@@ -215,16 +228,13 @@ impl<W: LayoutElement> Layout<W> {
                         workspace: workspace.id(),
                         geometry: Rectangle::new(
                             (column.bounds.loc.x, positions[idx]).into(),
-                            Size::from((
-                                column.bounds.size.w,
-                                workspace.view_size().h * zoom,
-                            )),
+                            Size::from((column.bounds.size.w, workspace.view_size().h * zoom)),
                         ),
                         zoom,
                     });
                 }
             }
-            let mut cache = self.preview_geometry.borrow_mut();
+            let mut cache = self.collection_overview.preview_geometry.borrow_mut();
             if cache.len() > 64 {
                 cache.clear();
             }
@@ -254,15 +264,12 @@ impl<W: LayoutElement> Layout<W> {
         pos: Point<f64, Logical>,
         extended: bool,
     ) -> Option<&Workspace<W>> {
-        if let Some(workspace) = self
-            .monitor_for_output(output)
-            .and_then(|monitor| {
-                monitor
-                    .workspace_under(pos)
-                    .filter(|(_, geometry)| geometry.contains(pos))
-                    .map(|(workspace, _)| workspace)
-            })
-        {
+        if let Some(workspace) = self.monitor_for_output(output).and_then(|monitor| {
+            monitor
+                .workspace_under(pos)
+                .filter(|(_, geometry)| geometry.contains(pos))
+                .map(|(workspace, _)| workspace)
+        }) {
             return Some(workspace);
         }
         if (16. ..56.).contains(&pos.y) {
@@ -320,12 +327,14 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         window: &W::Id,
     ) -> Option<(&Workspace<W>, Rectangle<f64, Logical>, f64)> {
-        if let Some((workspace, geometry, zoom)) = self.monitor_for_output(output).and_then(|monitor| {
-            monitor
-                .workspaces_with_render_geo()
-                .find(|(workspace, _)| workspace.has_window(window))
-                .map(|(workspace, geometry)| (workspace, geometry, monitor.overview_zoom()))
-        }) {
+        if let Some((workspace, geometry, zoom)) =
+            self.monitor_for_output(output).and_then(|monitor| {
+                monitor
+                    .workspaces_with_render_geo()
+                    .find(|(workspace, _)| workspace.has_window(window))
+                    .map(|(workspace, geometry)| (workspace, geometry, monitor.overview_zoom()))
+            })
+        {
             return Some((workspace, geometry, zoom));
         }
         self.collection_previews(output)
@@ -465,10 +474,7 @@ impl<W: LayoutElement> Layout<W> {
         let active = self.collection_for_output(output);
         let columns = self.collection_columns(output);
         for collection in &self.collections {
-            let Some(column) = columns
-                .iter()
-                .find(|c| c.id == collection.id)
-            else {
+            let Some(column) = columns.iter().find(|c| c.id == collection.id) else {
                 continue;
             };
             let name = collection.name.clone().unwrap_or_else(|| {
@@ -507,15 +513,25 @@ impl<W: LayoutElement> Layout<W> {
                 continue;
             }
             // Invisible rows need neither render-element traversal nor GPU allocation.
-            if preview.geometry.intersection(Rectangle::from_size(output_size(output))).is_none() {
+            if preview
+                .geometry
+                .intersection(Rectangle::from_size(output_size(output)))
+                .is_none()
+            {
                 continue;
             }
             let location = preview.geometry.loc.to_physical_precise_round(scale);
             let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
             if let Some(buffer) = self.collection_overview.texture(ctx.r(), output, &preview) {
-                let elem = PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
-                    buffer, (0., 0.), 1., None, Some(preview.workspace.view_size()), Kind::Unspecified,
-                ));
+                let elem =
+                    PrimaryGpuTextureRenderElement(TextureRenderElement::from_texture_buffer(
+                        buffer,
+                        (0., 0.),
+                        1.,
+                        None,
+                        Some(preview.workspace.view_size()),
+                        Kind::Unspecified,
+                    ));
                 let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
                 let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
                 if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
@@ -524,25 +540,33 @@ impl<W: LayoutElement> Layout<W> {
             } else {
                 // Allocation/render failure preserves a correct native rendering path.
                 let mut render = |elem| {
-                    let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
-                    let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+                    let elem =
+                        RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+                    let elem =
+                        RelocateRenderElement::from_element(elem, location, Relocate::Relative);
                     if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
                         push(CollectionOverviewRenderElement::Workspace(elem));
                     }
                 };
-                preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut render);
-                preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut render);
+                preview
+                    .workspace
+                    .render_floating(ctx.r(), xray_pos, false, &mut render);
+                preview
+                    .workspace
+                    .render_scrolling(ctx.r(), xray_pos, false, &mut render);
                 let background = preview.workspace.render_background();
-                let background = RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
-                let background = RelocateRenderElement::from_element(background, location, Relocate::Relative);
+                let background =
+                    RescaleRenderElement::from_element(background, (0, 0).into(), preview.zoom);
+                let background =
+                    RelocateRenderElement::from_element(background, location, Relocate::Relative);
                 if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
                     push(CollectionOverviewRenderElement::Background(background));
                 }
             }
-            let alpha = self
-                .overview_progress
-                .as_ref()
-                .map_or(1., |progress| progress.clamped_value()) as f32;
+            let alpha =
+                self.overview_progress
+                    .as_ref()
+                    .map_or(1., |progress| progress.value().clamp(0., 1.)) as f32;
             preview.workspace.render_shadow(ctx.renderer, &mut |elem| {
                 let elem = elem.with_alpha(alpha);
                 let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
@@ -566,16 +590,25 @@ impl Overview {
         // fill_xray_elements marks content pending; its commit changes only on preparation.
         // Flush pending damage before the cache lookup or a changed wallpaper could stay stale.
         if let Some(xray) = ctx.xray {
-            for buffer in [&xray.background[ctx.target as usize], &xray.backdrop[ctx.target as usize]] {
-                if !buffer.borrow_mut().prepare(ctx.renderer, false) { return None; }
+            for buffer in [
+                &xray.background[ctx.target as usize],
+                &xray.backdrop[ctx.target as usize],
+            ] {
+                if !buffer.borrow_mut().prepare(ctx.renderer, false) {
+                    return None;
+                }
             }
         }
-        let xray_stamp = |ctx: &RenderCtx<_>| ctx.xray.map(|xray| {
-            let background = xray.background[ctx.target as usize].borrow();
-            let backdrop = xray.backdrop[ctx.target as usize].borrow();
-            [(background.id().clone(), background.commit()),
-             (backdrop.id().clone(), backdrop.commit())]
-        });
+        let xray_stamp = |ctx: &RenderCtx<_>| {
+            ctx.xray.map(|xray| {
+                let background = xray.background[ctx.target as usize].borrow();
+                let backdrop = xray.backdrop[ctx.target as usize].borrow();
+                [
+                    (background.id().clone(), background.commit()),
+                    (backdrop.id().clone(), backdrop.commit()),
+                ]
+            })
+        };
         let mut key = TextureKey {
             output: output.clone(),
             context: ctx.renderer.context_id(),
@@ -594,35 +627,74 @@ impl Overview {
         if let Some(cached) = self.textures.borrow().iter().find(|entry| entry.key == key) {
             return Some(cached.buffer.clone());
         }
-        let mut elements: Vec<HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>> = Vec::new();
+        let mut elements: Vec<
+            HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
+        > = Vec::new();
         let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
-        preview.workspace.render_floating(ctx.r(), xray_pos, false, &mut |elem| elements.push(elem.into()));
-        preview.workspace.render_scrolling(ctx.r(), xray_pos, false, &mut |elem| elements.push(elem.into()));
+        preview
+            .workspace
+            .render_floating(ctx.r(), xray_pos, false, &mut |elem| {
+                elements.push(elem.into())
+            });
+        preview
+            .workspace
+            .render_scrolling(ctx.r(), xray_pos, false, &mut |elem| {
+                elements.push(elem.into())
+            });
         elements.push(preview.workspace.render_background().into());
         // Render at the final preview resolution, keeping source logical coordinates intact.
         let scale = key.scale * preview.zoom;
-        let size = preview.workspace.view_size().to_physical_precise_ceil(scale);
-        let (texture, _sync) = render_to_texture(ctx.renderer, size, scale.into(), Transform::Normal,
-            Fourcc::Abgr8888, elements.iter().rev()).ok()?;
-        let buffer = TextureBuffer::from_texture(ctx.renderer, texture, scale, Transform::Normal, Vec::new());
+        let size = preview
+            .workspace
+            .view_size()
+            .to_physical_precise_ceil(scale);
+        let (texture, _sync) = render_to_texture(
+            ctx.renderer,
+            size,
+            scale.into(),
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements.iter().rev(),
+        )
+        .ok()?;
+        let buffer = TextureBuffer::from_texture(
+            ctx.renderer,
+            texture,
+            scale,
+            Transform::Normal,
+            Vec::new(),
+        );
         // Xray preparation can update buffer commits while collecting the elements.
         key.xray = xray_stamp(&ctx);
         let mut textures = self.textures.borrow_mut();
-        textures.retain(|entry| !(entry.key.output == key.output && entry.key.target == key.target
-            && entry.key.workspace == key.workspace));
+        textures.retain(|entry| {
+            !(entry.key.output == key.output
+                && entry.key.target == key.target
+                && entry.key.workspace == key.workspace)
+        });
         // Bound retained textures across removed outputs/workspaces and GL context replacement.
-        if textures.len() >= 64 { textures.clear(); }
-        textures.push(PreviewTexture { key, buffer: buffer.clone() });
+        if textures.len() >= 64 {
+            textures.clear();
+        }
+        textures.push(PreviewTexture {
+            key,
+            buffer: buffer.clone(),
+        });
         #[cfg(test)]
         self.texture_builds.set(self.texture_builds.get() + 1);
         Some(buffer)
     }
 
     pub(super) fn needs_prepare(&self, workspace: WorkspaceId, revision: u64) -> bool {
-        let previous = self.prepared_revisions.borrow_mut().insert(workspace, revision);
+        let previous = self
+            .prepared_revisions
+            .borrow_mut()
+            .insert(workspace, revision);
         let needs = previous != Some(revision);
         #[cfg(test)]
-        if needs { self.preparations.set(self.preparations.get() + 1); }
+        if needs {
+            self.preparations.set(self.preparations.get() + 1);
+        }
         needs
     }
 
@@ -635,8 +707,12 @@ impl Overview {
 
     pub(super) fn retain_workspaces(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
         let workspaces: HashSet<_> = workspaces.collect();
-        self.prepared_revisions.borrow_mut().retain(|id, _| workspaces.contains(id));
-        self.textures.borrow_mut().retain(|entry| workspaces.contains(&entry.key.workspace));
+        self.prepared_revisions
+            .borrow_mut()
+            .retain(|id, _| workspaces.contains(id));
+        self.textures
+            .borrow_mut()
+            .retain(|entry| workspaces.contains(&entry.key.workspace));
     }
 
     fn label<R: NiriRenderer>(
@@ -765,10 +841,7 @@ pub(super) fn columns(
             };
             ColumnGeometry {
                 id,
-                bounds: Rectangle::new(
-                    Point::from((x, 0.)),
-                    Size::from((width, size.h)),
-                ),
+                bounds: Rectangle::new(Point::from((x, 0.)), Size::from((width, size.h))),
             }
         })
         .collect()
