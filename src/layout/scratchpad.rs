@@ -132,6 +132,10 @@ impl<W: LayoutElement> Layout<W> {
 
     /// Move a window into the hidden scratchpad. `None` means the focused window.
     pub fn move_window_to_scratchpad(&mut self, id: Option<&W::Id>) {
+        self.hide_in_scratchpad(id, true);
+    }
+
+    fn hide_in_scratchpad(&mut self, id: Option<&W::Id>, update_recency: bool) {
         if !self.options.nacre.scratchpad {
             return;
         }
@@ -159,6 +163,9 @@ impl<W: LayoutElement> Layout<W> {
             removed.is_floating,
         );
         self.scratchpad.refresh(false, false);
+        if update_recency {
+            self.scratchpad_cycle.retain(|candidate| candidate != &id);
+        }
         if !self.scratchpad_cycle.contains(&id) {
             self.scratchpad_cycle.push(id.clone());
         }
@@ -181,7 +188,7 @@ impl<W: LayoutElement> Layout<W> {
             .is_some_and(|active| active != id)
         {
             let active = self.scratchpad_active.clone().unwrap();
-            self.move_window_to_scratchpad(Some(&active));
+            self.hide_in_scratchpad(Some(&active), false);
         }
         let mut removed = self.scratchpad.remove_tile(id, Transaction::new());
         let Some(monitor) = self.active_monitor() else {
@@ -221,12 +228,12 @@ impl<W: LayoutElement> Layout<W> {
         let visible = self.scratchpad_active.clone();
         let Some(next) = self.next_scratchpad_id(visible.as_ref()) else {
             if let Some(visible) = visible {
-                self.move_window_to_scratchpad(Some(&visible));
+                self.hide_in_scratchpad(Some(&visible), false);
             }
             return;
         };
         if let Some(visible) = visible {
-            self.move_window_to_scratchpad(Some(&visible));
+            self.hide_in_scratchpad(Some(&visible), false);
         }
         self.scratchpad_show_window(&next);
     }

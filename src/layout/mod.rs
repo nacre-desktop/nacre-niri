@@ -1344,17 +1344,18 @@ impl<W: LayoutElement> Layout<W> {
             .monitors_mut()
             .find(|mon| mon.pinned_workspace.has_window(window))
             .map(|monitor| {
-                if monitor.pinned_is_active
+                let was_active = monitor.pinned_is_active
                     && monitor
                         .pinned_workspace
                         .active_window()
-                        .is_some_and(|active| active.id() == window)
-                {
-                    monitor.pinned_is_active = false;
-                }
-                monitor
+                        .is_some_and(|active| active.id() == window);
+                let removed = monitor
                     .pinned_workspace
-                    .remove_tile(window, transaction.clone())
+                    .remove_tile(window, transaction.clone());
+                if was_active {
+                    monitor.pinned_is_active = monitor.pinned_workspace.has_windows();
+                }
+                removed
             });
         if let Some(removed) = removed_pinned {
             if self.scratchpad_active.as_ref() == Some(window) {

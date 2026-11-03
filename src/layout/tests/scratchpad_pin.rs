@@ -356,3 +356,36 @@ fn dragging_a_pin_to_another_output_keeps_it_sticky() {
         .has_window(&1));
     layout.verify_invariants();
 }
+
+#[test]
+fn closing_the_active_overlay_focuses_the_remaining_overlay() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    for id in 1..=2 {
+        add_window(&mut layout, id);
+        layout.toggle_window_pinned(Some(&id));
+    }
+    assert_eq!(layout.focus().unwrap().id(), &2);
+    layout.remove_window(&2, Transaction::new()).unwrap();
+    assert_eq!(layout.focus().unwrap().id(), &1);
+    layout.remove_window(&1, Transaction::new()).unwrap();
+    assert!(layout.focus().is_none());
+    layout.verify_invariants();
+}
+
+#[test]
+fn explicitly_hiding_a_shown_window_makes_it_most_recent() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    for id in 1..=3 {
+        add_window(&mut layout, id);
+        layout.move_window_to_scratchpad(Some(&id));
+    }
+    layout.toggle_scratchpad();
+    layout.toggle_scratchpad();
+    assert_eq!(layout.scratchpad_active, Some(2));
+    layout.move_window_to_scratchpad(None);
+    layout.toggle_scratchpad();
+    assert_eq!(layout.scratchpad_active, Some(2));
+    layout.verify_invariants();
+}
