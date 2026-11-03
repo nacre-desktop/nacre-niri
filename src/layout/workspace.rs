@@ -377,7 +377,9 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn advance_animations(&mut self) {
-        if self.are_animations_ongoing() || self.are_transitions_ongoing() {
+        // Gesture input mutators invalidate explicitly; a stationary gesture does not
+        // change pixels merely because another output advances its animations.
+        if self.are_animations_ongoing() {
             self.overview_revision = self.overview_revision.wrapping_add(1);
         }
         self.scrolling.advance_animations();

@@ -332,7 +332,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                         )
                     ))
                     .count(),
-                2,
+                if millis == 0 { 1 } else { 2 },
                 "each output has its own shown collection and one hidden side column"
             );
             let signature = element_signature(&elements);
@@ -401,7 +401,12 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                             }
                         }
                         OutputRenderElements::Monitor(window) => {
-                            native_windows.push(window.geometry(Scale::from(scale)));
+                            let bounds = Rectangle::from_size(output.current_mode().unwrap().size);
+                            if let Some(visible) =
+                                window.geometry(Scale::from(scale)).intersection(bounds)
+                            {
+                                native_windows.push(visible);
+                            }
                         }
                         _ => {}
                     }
@@ -516,7 +521,7 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
         .find(|collection| collection.output.as_deref() == Some("headless-1"))
         .unwrap()
         .id;
-    fixture.niri().layout.create_collection(None);
+    let hidden_collection = fixture.niri().layout.create_collection(None);
     create_window(&mut fixture, client, 700, 500);
     fixture
         .niri()
@@ -540,7 +545,8 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
                             previews.push(frame.geometry(Scale::from(scale)));
                         }
                         crate::layout::CollectionOverviewRenderElement::Shadow(shadow) => {
-                            shadows.push(shadow.geometry(Scale::from(scale)));
+                            shadows
+                                .push((shadow.id().clone(), shadow.geometry(Scale::from(scale))));
                         }
                         _ => {}
                     }
@@ -548,9 +554,40 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
             }
             if millis > 0 {
                 assert!(!previews.is_empty());
-                assert_eq!(previews.len(), shadows.len());
+                // A shadow can be split into several shader rectangles to exclude the
+                // workspace interior. Group those rectangles by their source workspace.
+                let state = &mut fixture.state.server.state;
+                let niri = &state.niri;
+                let shadow_ids: Vec<Vec<_>> = state
+                    .backend
+                    .with_primary_renderer(|renderer| {
+                        niri.layout
+                            .collection_workspaces(hidden_collection)
+                            .map(|workspace| {
+                                let mut ids = Vec::new();
+                                workspace.render_shadow(renderer, &mut |element| {
+                                    ids.push(element.id().clone())
+                                });
+                                ids
+                            })
+                            .collect()
+                    })
+                    .unwrap();
+                let shadow_bounds: Vec<_> = shadow_ids
+                    .iter()
+                    .filter_map(|ids| {
+                        shadows
+                            .iter()
+                            .filter(|(id, _)| ids.contains(id))
+                            .map(|(_, geometry)| *geometry)
+                            .reduce(|a, b| a.merge(b))
+                    })
+                    .collect();
+                assert_eq!(previews.len(), shadow_bounds.len());
                 for preview in previews {
-                    assert!(shadows.iter().any(|shadow| contains(*shadow, preview)));
+                    assert!(shadow_bounds
+                        .iter()
+                        .any(|shadow| contains(*shadow, preview)));
                 }
             }
         }
