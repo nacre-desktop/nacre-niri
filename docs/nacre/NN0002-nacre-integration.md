@@ -7,6 +7,11 @@ Nacre product policy, and user overrides are not fork defaults. No private path,
 machine identifier, palette value, or command line from the owner's custom file
 is copied here.
 
+NN0010 follow-up: [native widths and screen edges](NN0010-native-widths-edges.md)
+supersedes the deferred width disposition below. The original audit remains the
+record of the helper contract; the follow-up describes managed-satellite scope,
+the X11 window-type metadata boundary, and capability-gated retirement.
+
 Classification: **BUILT-IN DEFAULT** is portable behavior shipped in
 `resources/default-config.kdl`; **NATIVE** is a small fork capability for a niri
 limitation, guarded by a config flag that defaults on and preserves upstream
