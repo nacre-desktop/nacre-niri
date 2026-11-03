@@ -63,6 +63,7 @@ struct Controller {
     committed_curve: MotionCurve,
     pending_animate: Option<(u32, Duration, bool)>,
     pending_cancel: Option<u32>,
+    pending_reset: bool,
     last_seen_serial: Option<u32>,
 }
 
@@ -123,11 +124,20 @@ impl LayerMotionManagerState {
             );
             return;
         }
+        let mut runtime = controller.runtime.lock().unwrap();
+        if std::mem::take(&mut controller.pending_reset) {
+            if let Some((serial, current)) = runtime.cancel_at(next_presentation) {
+                send_final_state(&controller.resource, &current);
+                controller.resource.cancelled(serial);
+            }
+            runtime.planes.clear();
+            runtime.current.clear();
+            controller.committed_planes.clear();
+        }
         controller
             .committed_planes
             .clone_from(&controller.pending_planes);
         controller.committed_curve = controller.pending_curve;
-        let mut runtime = controller.runtime.lock().unwrap();
         for plane in &mut controller.committed_planes {
             if let Some(previous) = runtime.planes.iter().find(|old| old.id == plane.id) {
                 plane.damage = previous.damage.clone();
@@ -150,21 +160,22 @@ impl LayerMotionManagerState {
             }
         }
 
+        if runtime.active.is_none() {
+            let current = runtime.current.clone();
+            runtime.current = controller
+                .committed_planes
+                .iter()
+                .map(|plane| {
+                    let pose = current
+                        .iter()
+                        .find(|(id, _)| *id == plane.id)
+                        .map_or(plane.from, |(_, pose)| *pose);
+                    (plane.id, pose)
+                })
+                .collect();
+        }
+
         let Some((serial, duration, retarget)) = controller.pending_animate.take() else {
-            if runtime.active.is_none() {
-                let current = runtime.current.clone();
-                runtime.current = controller
-                    .committed_planes
-                    .iter()
-                    .map(|plane| {
-                        let pose = current
-                            .iter()
-                            .find(|(id, _)| *id == plane.id)
-                            .map_or(plane.from, |(_, pose)| *pose);
-                        (plane.id, pose)
-                    })
-                    .collect();
-            }
             return;
         };
         if controller
@@ -388,6 +399,7 @@ where
                         committed_curve: MotionCurve::Linear,
                         pending_animate: None,
                         pending_cancel: None,
+                        pending_reset: false,
                         last_seen_serial: None,
                     },
                 );
@@ -680,6 +692,13 @@ where
             }
             bead_layer_motion_v1::Request::Cancel { serial } => {
                 controller.pending_cancel = Some(serial);
+            }
+            bead_layer_motion_v1::Request::Reset => {
+                controller.pending_planes.clear();
+                controller.pending_curve = MotionCurve::Linear;
+                controller.pending_animate = None;
+                controller.pending_cancel = None;
+                controller.pending_reset = true;
             }
         }
         let _ = resource;

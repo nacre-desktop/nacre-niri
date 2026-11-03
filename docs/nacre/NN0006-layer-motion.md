@@ -35,7 +35,12 @@ Unmapping cancels safely while retaining a reusable controller and its plane
 state; destroying the root drops the controller state. An explicit cancel
 freezes the sampled presentation pose, and ordinary later root commits keep
 that pose. A subsequent retarget starts from the frozen pose and ignores its
-submitted from values.
+submitted from values. Reset discards only staged plane, curve, animate and
+cancel requests until the next root commit; before that commit the old active
+presentation remains unchanged. At commit it samples and cancels the old
+timeline, emits final plane states then `cancelled`, clears old presentation
+and plane state, and applies any fresh planes queued after reset in the same
+commit. Serial monotonicity survives reset.
 Invalid or non-finite geometry, duration, curve or opacity is rejected or
 clamped per protocol contract. No request may create unbounded render geometry.
 
