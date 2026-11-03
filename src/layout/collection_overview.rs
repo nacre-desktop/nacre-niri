@@ -604,7 +604,7 @@ impl Overview {
         let scale = key.scale * preview.zoom;
         let size = preview.workspace.view_size().to_physical_precise_ceil(scale);
         let (texture, _sync) = render_to_texture(ctx.renderer, size, scale.into(), Transform::Normal,
-            Fourcc::Argb8888, elements.iter().rev()).ok()?;
+            Fourcc::Abgr8888, elements.iter().rev()).ok()?;
         let buffer = TextureBuffer::from_texture(ctx.renderer, texture, scale, Transform::Normal, Vec::new());
         // Xray preparation can update buffer commits while collecting the elements.
         key.xray = xray_stamp(&ctx);
