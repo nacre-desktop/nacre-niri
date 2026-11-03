@@ -1932,7 +1932,10 @@ mod tests {
                     delay_ms: 100,
                     max_speed: 1500.0,
                 },
-                collection_switch: gestures::CollectionSwitch::default(),
+                collection_switch: CollectionSwitch {
+                    on: true,
+                    fingers: 4,
+                },
                 hot_corners: HotCorners {
                     off: false,
                     top_left: false,
