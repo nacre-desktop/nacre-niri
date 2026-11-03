@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use niri_config::animations::{Curve, EasingParams, Kind};
 use niri_config::Config;
+use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::Element as _;
 use smithay::utils::{Rectangle, Scale};
 
@@ -76,6 +77,39 @@ fn output_elements(
         })
         .expect("headless EGL renderer");
     (elements, scale)
+}
+
+fn damage_tracker(fixture: &Fixture, output_idx: u8) -> OutputDamageTracker {
+    let output = fixture.niri_output(output_idx);
+    OutputDamageTracker::new(
+        output.current_mode().unwrap().size,
+        output.current_scale().fractional_scale(),
+        output.current_transform(),
+    )
+}
+
+fn cached_preview_bounds(
+    elements: &[OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>],
+    scale: f64,
+) -> Vec<Rectangle<i32, smithay::utils::Physical>> {
+    elements
+        .iter()
+        .filter_map(|element| match element {
+            OutputRenderElements::CollectionOverview(
+                crate::layout::CollectionOverviewRenderElement::CachedPreview(preview),
+            ) => Some(preview.geometry(Scale::from(scale))),
+            _ => None,
+        })
+        .collect()
+}
+
+fn damage_intersects(
+    damage: &[Rectangle<i32, smithay::utils::Physical>],
+    rects: &[Rectangle<i32, smithay::utils::Physical>],
+) -> bool {
+    damage
+        .iter()
+        .any(|damage| rects.iter().any(|rect| damage.intersection(*rect).is_some()))
 }
 
 fn set_time(niri: &mut Niri, time: Duration) {
@@ -189,6 +223,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         );
     }
     fixture.niri().layout.open_overview();
+    let mut damage_trackers = [damage_tracker(&fixture, 1), damage_tracker(&fixture, 2)];
 
     for millis in [0, 250, 500, 750, 1000] {
         set_time(fixture.niri(), Duration::from_millis(millis));
@@ -218,6 +253,10 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                 .niri()
                 .layout
                 .collection_overview_cache_counts();
+            let tracker_idx = usize::from(output_idx - 1);
+            damage_trackers[tracker_idx]
+                .damage_output(1, &elements)
+                .unwrap();
             let (steady, _) = output_elements(&mut fixture, output_idx);
             assert_eq!(
                 signature,
@@ -239,6 +278,13 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                     .layout
                     .collection_overview_cache_counts(),
                 "steady overview frame prepared or built a hidden preview again on output {output_idx}"
+            );
+            let (steady_damage, _) = damage_trackers[tracker_idx]
+                .damage_output(1, &steady)
+                .unwrap();
+            assert!(
+                steady_damage.is_none_or(|damage| damage.is_empty()),
+                "unchanged overview frame produced damage on output {output_idx}: {steady_damage:?}"
             );
 
             let mut frames = Vec::new();
@@ -308,29 +354,37 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                     "output {output_idx} scale {scale} progress {millis}ms: native window {window:?} is outside every shown workspace frame {native_frames:?}"
                 );
             }
-                for content in contents {
-                    assert!(
-                        frames.iter().any(|frame| contains(*frame, content)),
-                        "output {output_idx} scale {scale} progress {millis}ms: preview {content:?} is outside every workspace frame {frames:?}"
-                    );
-                }
+            for content in contents {
+                assert!(
+                    frames.iter().any(|frame| contains(*frame, content)),
+                    "output {output_idx} scale {scale} progress {millis}ms: preview {content:?} is outside every workspace frame {frames:?}"
+                );
             }
         }
     }
 
     // Commit fresh content to the hidden collection while its preview is cached. The
     // hidden workspace should be prepared and its GLES snapshot rebuilt once per output.
+    let mut old_preview_bounds = [Vec::new(), Vec::new()];
+    for output_idx in [1, 2] {
+        let idx = usize::from(output_idx - 1);
+        let (elements, scale) = output_elements(&mut fixture, output_idx);
+        old_preview_bounds[idx] = cached_preview_bounds(&elements, scale);
+        damage_trackers[idx].damage_output(1, &elements).unwrap();
+    }
     let before_commit = fixture
         .niri()
         .layout
         .collection_overview_cache_counts();
     let hidden_window = fixture.client(client).window(&hidden_surface);
     hidden_window.attach_new_buffer();
-    hidden_window.set_size(701, 501);
-    hidden_window.ack_last_and_commit();
+    hidden_window.commit();
     fixture.double_roundtrip(client);
     for output_idx in [1, 2] {
-        let _ = output_elements(&mut fixture, output_idx);
+        let idx = usize::from(output_idx - 1);
+        let (elements, _) = output_elements(&mut fixture, output_idx);
+        let (damage, _) = damage_trackers[idx].damage_output(1, &elements).unwrap();
+        assert!(damage.is_some_and(|damage| damage_intersects(damage, &old_preview_bounds[idx])));
     }
     let after_commit = fixture
         .niri()
@@ -348,6 +402,22 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
             .collection_overview_cache_counts(),
         "hidden preview was prepared or rebuilt again without a source change"
     );
+
+    // Moving the cached collection onto output 1 changes the side-column contents on
+    // both outputs. Damage must cover both the old and new preview bounds.
+    fixture.niri().layout.focus_collection(
+        &niri_config::WorkspaceReference::Id(hidden_collection),
+    );
+    for output_idx in [1, 2] {
+        let idx = usize::from(output_idx - 1);
+        let (elements, scale) = output_elements(&mut fixture, output_idx);
+        let new_bounds = cached_preview_bounds(&elements, scale);
+        let (damage, _) = damage_trackers[idx].damage_output(1, &elements).unwrap();
+        let damage = damage.expect("collection move should damage the output");
+        assert!(damage_intersects(&damage, &old_preview_bounds[idx]));
+        assert!(!new_bounds.is_empty());
+        assert!(damage_intersects(&damage, &new_bounds));
+    }
 }
 
 #[test]
