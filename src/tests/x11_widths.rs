@@ -1,11 +1,9 @@
-use std::{
-    io::{BufRead, BufReader, Write},
-    path::Path,
-    process::{Child, ChildStdin, Command, Stdio},
-    sync::mpsc::{self, Receiver},
-    thread::{self, JoinHandle},
-    time::{Duration, Instant},
-};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use niri_config::Config;
 use serde_json::Value;
@@ -154,7 +152,10 @@ impl X11Client {
             if predicate(result["width"].as_u64().unwrap_or_default()) {
                 return result;
             }
-            assert!(Instant::now() < deadline, "X11 width did not reach expected range: {result}");
+            assert!(
+                Instant::now() < deadline,
+                "X11 width did not reach expected range: {result}"
+            );
             thread::sleep(Duration::from_millis(5));
         }
     }
@@ -199,7 +200,11 @@ fn first_window(fixture: &mut Fixture) -> Option<(smithay::desktop::Window, bool
     let mut result = None;
     niri.layout.with_windows(|mapped, _, _, _| {
         if result.is_none() {
-            result = Some((mapped.window.clone(), mapped.is_floating(), mapped.min_size().w));
+            result = Some((
+                mapped.window.clone(),
+                mapped.is_floating(),
+                mapped.min_size().w,
+            ));
         }
     });
     result
@@ -213,7 +218,8 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
         return;
     };
     assert!(Path::new(&satellite_path).is_absolute());
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("isolated XDG_RUNTIME_DIR is required");
+    let runtime =
+        std::env::var_os("XDG_RUNTIME_DIR").expect("isolated XDG_RUNTIME_DIR is required");
     assert!(Path::new(&runtime).is_dir());
 
     let mut config = Config::default();
@@ -253,7 +259,10 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
         thread::sleep(Duration::from_millis(5));
     };
     assert!(!floating);
-    assert_eq!(min_width, 1, "native tiled policy should relax only the effective minimum");
+    assert_eq!(
+        min_width, 1,
+        "native tiled policy should relax only the effective minimum"
+    );
 
     let tiled = client.wait_for_width(&mut fixture, |width| width < 1500);
     assert!(tiled["width"].as_u64().unwrap() < 1500);
@@ -262,8 +271,14 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
     assert_eq!(original_hints["max_width"], 1800);
     assert_eq!(original_hints["width_inc"], 13);
     assert_eq!(original_hints["height_inc"], 17);
-    assert_eq!(original_hints["min_aspect"], serde_json::json!({"x": 4, "y": 3}));
-    assert_eq!(original_hints["max_aspect"], serde_json::json!({"x": 16, "y": 9}));
+    assert_eq!(
+        original_hints["min_aspect"],
+        serde_json::json!({"x": 4, "y": 3})
+    );
+    assert_eq!(
+        original_hints["max_aspect"],
+        serde_json::json!({"x": 16, "y": 9})
+    );
 
     fixture
         .niri()
@@ -271,7 +286,10 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
         .set_window_width(Some(&window), niri_ipc::SizeChange::SetProportion(1.0));
     let maximum_geometry = client.wait_for_width(&mut fixture, |width| width >= 1500);
     let maximum_width = maximum_geometry["width"].as_u64().unwrap();
-    assert!(maximum_width <= 1800, "X11 maximum width was exceeded: {maximum_width}");
+    assert!(
+        maximum_width <= 1800,
+        "X11 maximum width was exceeded: {maximum_width}"
+    );
     assert_eq!(maximum_geometry["hints"], original_hints);
 
     fixture

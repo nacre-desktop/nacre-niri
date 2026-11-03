@@ -32,7 +32,8 @@ pub enum WindowRef<'a> {
 /// Rules fully resolved for a window.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ResolvedWindowRules {
-    /// Whether tiled managed xwayland-satellite windows may ignore an adjustable X11 minimum width.
+    /// Whether tiled managed xwayland-satellite windows may ignore an adjustable X11 minimum
+    /// width.
     pub proportional_x11_widths: bool,
 
     /// Default width for this window.
@@ -476,8 +477,9 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
 
 #[cfg(test)]
 mod proportional_x11_width_tests {
-    use super::*;
     use proptest::prelude::*;
+
+    use super::*;
 
     #[test]
     fn only_adjustable_tiled_x11_width_minimum_is_relaxed() {

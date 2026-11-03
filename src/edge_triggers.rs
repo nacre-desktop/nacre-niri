@@ -344,16 +344,16 @@ impl Niri {
             .edge_trigger_candidate
             .as_ref()
             .is_some_and(|candidate| {
-                candidate.output == output_name
-                    && candidate.output_size != [size.w, size.h]
+                candidate.output == output_name && candidate.output_size != [size.w, size.h]
             })
         {
             self.clear_edge_trigger();
         }
 
-        let same_candidate = self.edge_trigger_candidate.as_ref().is_some_and(|candidate| {
-            candidate.output == output_name && candidate.edge == edge
-        });
+        let same_candidate = self
+            .edge_trigger_candidate
+            .as_ref()
+            .is_some_and(|candidate| candidate.output == output_name && candidate.edge == edge);
         if !same_candidate {
             self.clear_edge_trigger();
             self.edge_trigger_generation = self.edge_trigger_generation.wrapping_add(1);
@@ -390,15 +390,12 @@ impl Niri {
             return;
         };
         let inward_pressure = crate::edge_triggers::inward_delta(edge, clipped_delta);
-        let inward_velocity = crate::edge_triggers::inward_delta(
-            edge,
-            [raw_delta.x, raw_delta.y],
-        );
+        let inward_velocity = crate::edge_triggers::inward_delta(edge, [raw_delta.x, raw_delta.y]);
         candidate.pressure += inward_pressure;
         if candidate.velocity_required > 0. {
             if let Some(elapsed) = elapsed {
-                candidate.velocity_passed |= inward_velocity / elapsed
-                    >= candidate.velocity_required;
+                candidate.velocity_passed |=
+                    inward_velocity / elapsed >= candidate.velocity_required;
             }
         }
         if !candidate.armed
