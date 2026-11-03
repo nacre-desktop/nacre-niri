@@ -50,12 +50,11 @@ exclusive zones, and compositor-rule shadows/background effects remain at the
 layer's configured geometry, matching the existing frame-driven slide path.
 
 The render path composes existing textures with destination transforms,
-fixed-frame clips and opacity. It must preserve B0185's split-panel motion: a
-single full-panel texture cannot independently resize body/shadow while content
-translates behind a growing reveal. The agreed atlas planes encode those parts
-and share one timeline. Source/destination aspect mismatch requires
-non-uniform texture scaling; otherwise clients should use matching aspect
-ratios.
+fixed-frame clips and opacity. Planes can translate, resize, crop and fade
+regions of a submitted texture atlas on one timeline. They cannot exactly
+express an arbitrary rounded body and gradient rim being reshaped while other
+content translates behind a reveal. Source/destination aspect mismatch uses
+non-uniform texture scaling.
 
 Input hit testing uses the same sampled plane geometry: map points through the
 inverse destination transform and reject points outside the fixed-frame clip.
@@ -84,11 +83,17 @@ and cancellation on unmap; verify dispatch and commit arming; and cover damage
 conversion at scale 1.5. Render tests should compare sampled pixels with Bead
 goldens. Also validate screenshot/screencast consistency and two outputs.
 
-## Background and status
+## Background and verified status
 
 B0202/B0205 describe battery stutter remaining after B0185's cached slide
 content. B0178 defines committed-frame scheduling; B0181 defines close pose
 and exit lifetime; B0175 requires the open pose before presentation. The
-grouped multi-plane contract is agreed with Bead; server implementation and
-exact XML remain in progress. Heavy builds, tests, nested sessions and
-captures run only in the assigned dev-1 container.
+protocol and Nacre-niri server are implemented and verified. Bead keeps cold
+revealing opens that reshape rounded bodies or gradient rims on its CPU fallback;
+plain slides and closes can use compositor motion. Therefore the main 120 Hz
+goal is not yet met. No before/after client CPU measurement was made.
+
+Full CI passed on source commit `c14f43ba` in the task-owned dev-1 container:
+format, workspace tests, config validation, clippy, feature checks, randomized
+release tests and release build. The desktop TEST nested capture timed out, so
+there is no nested visual evidence. Builds and tests ran only in that container.
