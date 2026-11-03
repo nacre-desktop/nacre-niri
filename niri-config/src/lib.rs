@@ -769,15 +769,27 @@ mod tests {
                 .unwrap(),
             &vec!["nacre-panel".to_owned(), "right".to_owned()]
         );
-        let output = config.outputs.find(&OutputName {
-            connector: "DP-1".into(),
-            make: None,
-            model: None,
-            serial: None,
-        }).unwrap();
+        let output = config
+            .outputs
+            .find(&OutputName {
+                connector: "DP-1".into(),
+                make: None,
+                model: None,
+                serial: None,
+            })
+            .unwrap();
         let overrides = output.edge_triggers.as_ref().unwrap();
         assert!(overrides.left.as_ref().unwrap().off);
-        assert!(overrides.bottom.as_ref().unwrap().action.as_ref().unwrap().event);
+        assert!(
+            overrides
+                .bottom
+                .as_ref()
+                .unwrap()
+                .action
+                .as_ref()
+                .unwrap()
+                .event
+        );
     }
 
     #[test]
