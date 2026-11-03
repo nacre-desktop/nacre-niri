@@ -25,7 +25,12 @@ fn fixture() -> Fixture {
         output "headless-1" { scale 1.5; }
         output "headless-2" { scale 1.0; }
         layout {
-            border { on; width 3; active-color "#ff9010"; inactive-color "#3070ff"; }
+            border {
+                on
+                width 3
+                active-gradient from="#ff9010" to="#10a0ff" angle=45 relative-to="workspace-view"
+                inactive-gradient from="#3070ff" to="#e03090" angle=135 relative-to="workspace-view"
+            }
             focus-ring { off; }
         }
     "##,
