@@ -125,10 +125,11 @@ fn run_worker(shared: Arc<(Mutex<Shared>, Condvar)>, saver: Saver) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::layout::collection_persistence::{PersistedCollection, PersistedWorkspace};
     use std::sync::mpsc;
     use std::time::Duration;
+
+    use super::*;
+    use crate::layout::collection_persistence::{PersistedCollection, PersistedWorkspace};
 
     fn snapshot(name: &str) -> PersistedCollections {
         let mut state = PersistedCollections::empty();

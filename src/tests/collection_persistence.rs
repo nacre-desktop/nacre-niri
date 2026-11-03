@@ -1,3 +1,5 @@
+use niri_config::Config;
+
 use super::Fixture;
 use crate::layout::collection_persistence::{
     PersistedCollection, PersistedCollections, PersistedWindowRoute, PersistedWorkspace,
@@ -5,7 +7,6 @@ use crate::layout::collection_persistence::{
 };
 use crate::layout::workspace::WorkspaceId;
 use crate::utils::with_toplevel_role;
-use niri_config::Config;
 
 fn mapped_window(fixture: &mut Fixture, app_id: &str, title: &str) {
     let client = fixture.add_client();
