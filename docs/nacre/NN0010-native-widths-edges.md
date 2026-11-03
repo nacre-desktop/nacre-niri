@@ -49,7 +49,8 @@ A fired edge stays latched until the pointer leaves it. Geometry uses the same
 rounded logical output bounds as pointer clamping, including fractional scale.
 
 Overview, fullscreen, lock, and outputs without a layout monitor suppress
-actions. Reload and output geometry/removal cancel pending triggers. No lookup
+actions. Pointer grabs, confinement, and spatial wrapping suppress edge input.
+Reload and output geometry/removal cancel pending triggers. No lookup
 assumes that a workspace has a monitor.
 
 The `edge_triggers` capability reflects the native flag. Subscribe using JSON
@@ -58,6 +59,10 @@ contain `{"EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,600.0]}
 Positions are output-local logical coordinates. Existing event streams never
 receive the new event. Consumers must filter the edge event from ordinary stream
 snapshots/events, and restore their compatibility input source on disconnect.
+Disabling the native flag on reload disconnects only edge subscribers. Consumers
+can query capabilities and reconnect after `ConfigLoaded` when the flag returns.
+The event reports a completed trigger; it does not expose pre-trigger dwell
+progress for client-side hover cues.
 
 Nacre owns panel selection, lip hit testing, dwell settings, and generated edge
 actions. Fork-only configuration belongs in its sibling `nacre-niri.kdl` overlay;
