@@ -114,6 +114,8 @@ pub struct Workspace<W: LayoutElement> {
 
     /// Changes to source contents or layout, excluding periodic render preparation.
     overview_revision: u64,
+    /// Urgency can change through mutable window access without a surface commit.
+    overview_urgencies: Vec<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -275,6 +277,7 @@ impl<W: LayoutElement> Workspace<W> {
             layout_config,
             id: WorkspaceId::next(),
             overview_revision: 0,
+            overview_urgencies: Vec::new(),
         }
     }
 
@@ -340,6 +343,7 @@ impl<W: LayoutElement> Workspace<W> {
             layout_config,
             id: WorkspaceId::next(),
             overview_revision: 0,
+            overview_urgencies: Vec::new(),
         }
     }
 
@@ -1902,6 +1906,18 @@ impl<W: LayoutElement> Workspace<W> {
             .refresh(is_active && !self.floating_is_active.get(), is_focused);
         self.floating
             .refresh(is_active && self.floating_is_active.get(), is_focused);
+
+        // Activation requests and urgency actions mutate windows directly. Rules may remain
+        // unchanged, so no update_window call is guaranteed. Compare without allocating on
+        // unchanged periodic refreshes, and invalidate the hidden preview only on a change.
+        if self
+            .windows()
+            .map(|window| window.is_urgent())
+            .ne(self.overview_urgencies.iter().copied())
+        {
+            self.overview_urgencies = self.windows().map(|window| window.is_urgent()).collect();
+            self.overview_revision = self.overview_revision.wrapping_add(1);
+        }
     }
 
     pub fn scroll_amount_to_activate(&self, window: &W::Id) -> f64 {
