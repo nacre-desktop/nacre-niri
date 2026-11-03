@@ -2922,6 +2922,7 @@ impl Niri {
             .is_some_and(|candidate| candidate.output == output.name())
         {
             self.clear_edge_trigger();
+            self.edge_trigger_last_motion = None;
         }
 
         for layer in layer_map_for_output(output).layers() {

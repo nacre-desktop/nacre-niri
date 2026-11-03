@@ -82,6 +82,14 @@ pub fn inward_delta(edge: Edge, delta: [f64; 2]) -> f64 {
     .max(0.)
 }
 
+/// Portion of relative pointer motion clipped by the output boundary.
+pub fn clipped_delta(raw_delta: [f64; 2], actual_delta: [f64; 2]) -> [f64; 2] {
+    [
+        raw_delta[0] - actual_delta[0],
+        raw_delta[1] - actual_delta[1],
+    ]
+}
+
 /// Returns whether both pressure/velocity gates are satisfied.
 pub fn gates_satisfied(
     pressure: f64,
@@ -128,6 +136,16 @@ mod tests {
         assert!(!gates_satisfied(20., 30., 700., 600.));
         assert!(!gates_satisfied(30., 30., 599., 600.));
         assert!(gates_satisfied(30., 30., 600., 600.));
+    }
+
+    #[test]
+    fn pressure_counts_only_motion_clipped_at_the_edge() {
+        let approach = clipped_delta([-500., 0.], [-497., 0.]);
+        assert_eq!(inward_delta(Edge::Left, approach), 3.);
+        let tangent = clipped_delta([0., 4.], [0., 4.]);
+        assert_eq!(inward_delta(Edge::Left, tangent), 0.);
+        let clipped_push = clipped_delta([-2., 0.], [0., 0.]);
+        assert_eq!(inward_delta(Edge::Left, clipped_push), 2.);
     }
 
     #[test]
@@ -286,6 +304,18 @@ impl Niri {
             return;
         };
         let size = geometry.size.to_f64();
+        let pointer_position = self
+            .seat
+            .get_pointer()
+            .map(|pointer| pointer.current_location())
+            .unwrap_or(position);
+        let clipped_delta = crate::edge_triggers::clipped_delta(
+            [raw_delta.x, raw_delta.y],
+            [
+                position.x - pointer_position.x,
+                position.y - pointer_position.y,
+            ],
+        );
         let edges = self.edge_triggers_for_output(output);
         let enabled = [
             edges.left.as_ref().is_some_and(|trigger| !trigger.off),
@@ -310,10 +340,20 @@ impl Niri {
             return;
         };
 
-        let same_candidate = self
+        if self
             .edge_trigger_candidate
             .as_ref()
-            .is_some_and(|candidate| candidate.output == output_name && candidate.edge == edge);
+            .is_some_and(|candidate| {
+                candidate.output == output_name
+                    && candidate.output_size != [size.w, size.h]
+            })
+        {
+            self.clear_edge_trigger();
+        }
+
+        let same_candidate = self.edge_trigger_candidate.as_ref().is_some_and(|candidate| {
+            candidate.output == output_name && candidate.edge == edge
+        });
         if !same_candidate {
             self.clear_edge_trigger();
             self.edge_trigger_generation = self.edge_trigger_generation.wrapping_add(1);
@@ -349,11 +389,16 @@ impl Niri {
         let Some(candidate) = self.edge_trigger_candidate.as_mut() else {
             return;
         };
-        let inward_delta = crate::edge_triggers::inward_delta(edge, [raw_delta.x, raw_delta.y]);
-        candidate.pressure += inward_delta;
+        let inward_pressure = crate::edge_triggers::inward_delta(edge, clipped_delta);
+        let inward_velocity = crate::edge_triggers::inward_delta(
+            edge,
+            [raw_delta.x, raw_delta.y],
+        );
+        candidate.pressure += inward_pressure;
         if candidate.velocity_required > 0. {
             if let Some(elapsed) = elapsed {
-                candidate.velocity_passed |= inward_delta / elapsed >= candidate.velocity_required;
+                candidate.velocity_passed |= inward_velocity / elapsed
+                    >= candidate.velocity_required;
             }
         }
         if !candidate.armed
@@ -558,6 +603,42 @@ mod edge_trigger_runtime_tests {
         fixture.niri().config.borrow_mut().nacre.edge_triggers = false;
         enter_left_edge(fixture.niri(), position);
         assert!(fixture.niri().edge_trigger_candidate.is_none());
+    }
+
+    #[test]
+    fn pending_fullscreen_suppresses_edge_trigger_on_its_monitor() {
+        let mut fixture = configured_fixture();
+        let client = fixture.add_client();
+        let surface = {
+            let window = fixture.client(client).create_window();
+            let surface = window.surface.clone();
+            window.commit();
+            surface
+        };
+        fixture.roundtrip(client);
+        let window = fixture.client(client).window(&surface);
+        window.attach_new_buffer();
+        window.set_size(100, 100);
+        window.ack_last_and_commit();
+        fixture.double_roundtrip(client);
+
+        let window_id = fixture
+            .niri()
+            .layout
+            .windows()
+            .next()
+            .unwrap()
+            .1
+            .window
+            .clone();
+        fixture.niri().layout.set_fullscreen(&window_id, true);
+        let position = left_edge_position(&fixture, 1);
+        enter_left_edge(fixture.niri(), position);
+        assert!(fixture.niri().edge_trigger_candidate.is_none());
+
+        fixture.niri().layout.set_fullscreen(&window_id, false);
+        enter_left_edge(fixture.niri(), position);
+        assert!(fixture.niri().edge_trigger_candidate.is_some());
     }
 
     #[test]
