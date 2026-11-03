@@ -68,3 +68,21 @@ Nacre owns panel selection, lip hit testing, dwell settings, and generated edge
 actions. Fork-only configuration belongs in its sibling `nacre-niri.kdl` overlay;
 stock niri configurations never include it. Native source takeover must follow
 an accepted IPC stream, rather than binary identity alone.
+
+## Validation
+
+The implementation passed in an isolated Ubuntu 24.04 container with 8 CPUs,
+16 GiB, and two Cargo jobs. All 5,499 checked source/resource files matched the
+tested snapshot. Every check below returned zero:
+
+- Workspace tests/doc tests: 279 passed; the one opt-in X11 proof also passed.
+- Real managed satellite (`7bf5e0dcb0d4250860b24b04a6cb3ddeada515d0`), Xwayland,
+  and Xlib proof at scale 1.5: tiled/floating/config-off geometry and unchanged
+  raw minimum, maximum, height, increment, and aspect hints.
+- Collection operation and edge geometry properties: 100,000 cases each;
+  the width policy property also runs 100,000 cases in the normal suite.
+- Nightly formatting, Clippy, bundled config validation, no-default/dbus/systemd/
+  dinit/screencast feature checks, profiling build, and visual-test compilation.
+
+Clippy retains four inherited warnings and adds none. Rendered interaction and
+live desktop acceptance were not run; no installed runtime or live config changed.
