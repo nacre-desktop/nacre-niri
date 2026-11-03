@@ -45,7 +45,8 @@ use crate::layout::ActivateWindow;
 use crate::niri::{CastTarget, PopupGrabState, State};
 use crate::utils::transaction::Transaction;
 use crate::utils::{
-    get_monotonic_time, output_matches_name, send_scale_transform, update_tiled_state, ResizeEdge,
+    get_monotonic_time, output_matches_name, send_scale_transform, update_tiled_state,
+    with_toplevel_role, ResizeEdge,
 };
 use crate::window::{InitialConfigureState, ResolvedWindowRules, Unmapped, WindowRef};
 
@@ -430,6 +431,7 @@ impl XdgShellHandler for State {
                 InitialConfigureState::Configured {
                     rules,
                     output,
+                    persisted_workspace_id,
                     is_pending_maximized,
                     ..
                 } => {
@@ -461,9 +463,13 @@ impl XdgShellHandler for State {
                         .map(|(mon, _)| mon.output().clone());
                     let mon = mon.map(|(mon, _)| mon);
 
-                    let ws = mon
-                        .map(|mon| mon.active_workspace_ref())
-                        .or_else(|| self.niri.layout.active_workspace());
+                    let ws = persisted_workspace_id
+                        .as_ref()
+                        .and_then(|id| self.niri.layout.find_workspace_by_id(*id).map(|(_, ws)| ws))
+                        .or_else(|| {
+                            mon.map(|mon| mon.active_workspace_ref())
+                                .or_else(|| self.niri.layout.active_workspace())
+                        });
 
                     if let Some(ws) = ws {
                         // If the window is pending fullscreen, then this will do nothing. But
@@ -518,6 +524,7 @@ impl XdgShellHandler for State {
                     is_full_width,
                     output,
                     workspace_name,
+                    persisted_workspace_id,
                     is_pending_maximized,
                 } => {
                     // Figure out the monitor following a similar logic to initial configure.
@@ -557,9 +564,14 @@ impl XdgShellHandler for State {
                         .map(|(mon, _)| mon.output().clone());
                     let mon = mon.map(|(mon, _)| mon);
 
-                    let ws = workspace_name
-                        .as_deref()
-                        .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                    let ws = persisted_workspace_id
+                        .as_ref()
+                        .and_then(|id| self.niri.layout.find_workspace_by_id(*id).map(|(_, ws)| ws))
+                        .or_else(|| {
+                            workspace_name
+                                .as_deref()
+                                .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                        })
                         .unwrap_or_else(|| {
                             mon.map(|mon| mon.active_workspace_ref())
                                 .or_else(|| self.niri.layout.active_workspace())
@@ -731,6 +743,7 @@ impl XdgShellHandler for State {
                     is_full_width,
                     output,
                     workspace_name,
+                    persisted_workspace_id,
                     is_pending_maximized,
                 } => {
                     // Figure out the monitor following a similar logic to initial configure.
@@ -770,9 +783,14 @@ impl XdgShellHandler for State {
                         .map(|(mon, _)| mon.output().clone());
                     let mon = mon.map(|(mon, _)| mon);
 
-                    let ws = workspace_name
-                        .as_deref()
-                        .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                    let ws = persisted_workspace_id
+                        .as_ref()
+                        .and_then(|id| self.niri.layout.find_workspace_by_id(*id).map(|(_, ws)| ws))
+                        .or_else(|| {
+                            workspace_name
+                                .as_deref()
+                                .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                        })
                         .unwrap_or_else(|| {
                             mon.map(|mon| mon.active_workspace_ref())
                                 .or_else(|| self.niri.layout.active_workspace())
@@ -1129,12 +1147,37 @@ impl State {
         let is_floating = (config.nacre.window_pinning && rules.open_pinned == Some(true))
             || rules.compute_open_floating(toplevel);
 
-        // Tell the surface the preferred size and bounds for its likely output.
-        let ws = rules
-            .open_on_workspace
-            .as_deref()
-            .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
-            .unwrap_or_else(|| {
+        // Configured placement wins, followed by a remembered app-id/title destination.
+        let explicit_workspace = rules.open_on_workspace.as_deref().and_then(|name| {
+            self.niri
+                .layout
+                .find_workspace_by_name(name)
+                .map(|(_, ws)| ws)
+        });
+        let persisted_workspace_id =
+            if rules.open_on_workspace.is_none() && rules.open_on_output.is_none() {
+                let (app_id, title) =
+                    with_toplevel_role(toplevel, |role| (role.app_id.clone(), role.title.clone()));
+                let app_id = app_id.as_deref().filter(|value| !value.is_empty());
+                let title = title.as_deref().filter(|value| !value.is_empty());
+                self.niri.collection_persistence.as_ref().and_then(|state| {
+                    state.route_for_window(app_id, title).and_then(|route| {
+                        self.niri.layout.persisted_workspace_id(
+                            state,
+                            &route.collection,
+                            &route.workspace,
+                        )
+                    })
+                })
+            } else {
+                None
+            };
+        let ws = explicit_workspace
+            .or_else(|| {
+                persisted_workspace_id
+                    .and_then(|id| self.niri.layout.find_workspace_by_id(id).map(|(_, ws)| ws))
+            })
+            .or_else(|| {
                 mon.map(|mon| mon.active_workspace_ref())
                     .or_else(|| self.niri.layout.active_workspace())
             });
@@ -1192,6 +1235,7 @@ impl State {
             is_full_width,
             output,
             workspace_name: ws.and_then(|w| w.name().cloned()),
+            persisted_workspace_id,
             is_pending_maximized,
         };
 

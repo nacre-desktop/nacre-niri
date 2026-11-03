@@ -78,6 +78,7 @@ use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;
 mod collection_overview;
+pub(crate) mod collection_persistence;
 pub mod collections;
 pub mod floating;
 pub mod focus_ring;

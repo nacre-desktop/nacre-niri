@@ -108,6 +108,7 @@ impl CompositorHandler for State {
                         is_full_width,
                         output,
                         workspace_name,
+                        persisted_workspace_id,
                         is_pending_maximized,
                     } = state
                     {
@@ -116,10 +117,20 @@ impl CompositorHandler for State {
                             output.filter(|o| self.niri.layout.monitor_for_output(o).is_some());
 
                         // Check that the workspace still exists.
-                        let workspace_id = workspace_name
-                            .as_deref()
-                            .and_then(|n| self.niri.layout.find_workspace_by_name(n))
-                            .map(|(_, ws)| ws.id());
+                        let workspace_id = if rules.open_on_workspace.is_none()
+                            && rules.open_on_output.is_none()
+                        {
+                            persisted_workspace_id
+                                .filter(|id| self.niri.layout.find_workspace_by_id(*id).is_some())
+                        } else {
+                            None
+                        }
+                        .or_else(|| {
+                            workspace_name
+                                .as_deref()
+                                .and_then(|n| self.niri.layout.find_workspace_by_name(n))
+                                .map(|(_, ws)| ws.id())
+                        });
 
                         (
                             rules,

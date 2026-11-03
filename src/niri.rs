@@ -138,6 +138,7 @@ use crate::input::{
 use crate::ipc::server::IpcServer;
 use crate::layer::mapped::LayerSurfaceRenderElement;
 use crate::layer::MappedLayer;
+use crate::layout::collection_persistence::{PersistedCollections, PersistedWindowRoute};
 use crate::layout::tile::TileRenderElement;
 use crate::layout::workspace::{Workspace, WorkspaceId};
 use crate::layout::{
@@ -179,7 +180,7 @@ use crate::utils::xwayland::satellite::Satellite;
 use crate::utils::{
     center, center_f64, expand_home, get_monotonic_time, ipc_transform_to_smithay, is_mapped,
     logical_output, make_screenshot_path, output_matches_name, output_size, panel_orientation,
-    send_scale_transform, write_png_rgba8, xwayland,
+    send_scale_transform, with_toplevel_role, write_png_rgba8, xwayland,
 };
 use crate::window::mapped::MappedId;
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped, WindowRef};
@@ -227,6 +228,8 @@ pub struct Niri {
     // Each workspace corresponds to a Space. Each workspace generally has one Output mapped to it,
     // however it may have none (when there are no outputs connected) or multiple (when mirroring).
     pub layout: Layout<Mapped>,
+    /// None means state could not be read and must not be overwritten.
+    pub(crate) collection_persistence: Option<PersistedCollections>,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
     // according to their global position.
@@ -2284,7 +2287,29 @@ impl Niri {
         animation_clock.set_rate(rate);
         animation_clock.set_complete_instantly(config_.animations.off);
 
-        let layout = Layout::new(animation_clock.clone(), &config_);
+        let mut layout = Layout::new(animation_clock.clone(), &config_);
+        let collection_persistence = if cfg!(test) || !config_.layout.collections.enabled {
+            None
+        } else {
+            match PersistedCollections::load() {
+                Ok(Some(mut persisted)) => layout
+                    .restore_persisted_collections(&mut persisted)
+                    .then_some(persisted),
+                Ok(None) => {
+                    let mut persisted = PersistedCollections::empty();
+                    layout
+                        .restore_persisted_collections(&mut persisted)
+                        .then_some(persisted)
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "could not load named collection state; preserving the state file"
+                    );
+                    None
+                }
+            }
+        };
 
         let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
 
@@ -2468,6 +2493,16 @@ impl Niri {
             )
             .unwrap();
 
+        event_loop
+            .insert_source(
+                Timer::from_duration(Duration::from_secs(1)),
+                |_, _, state| {
+                    state.niri.persist_collection_state();
+                    TimeoutAction::ToDuration(Duration::from_secs(1))
+                },
+            )
+            .unwrap();
+
         let socket_name = create_wayland_socket.then(|| {
             let socket_source = ListeningSocketSource::new_auto().unwrap();
             let socket_name = socket_source.socket_name().to_os_string();
@@ -2536,6 +2571,7 @@ impl Niri {
             clock: animation_clock,
 
             layout,
+            collection_persistence,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
@@ -2675,6 +2711,66 @@ impl Niri {
         niri.reset_pointer_inactivity_timer();
 
         niri
+    }
+
+    pub(crate) fn persist_collection_state(&mut self) {
+        if !self.config.borrow().layout.collections.enabled {
+            self.collection_persistence = None;
+            return;
+        }
+        let Some(previous) = self.collection_persistence.as_ref().cloned() else {
+            return;
+        };
+        let mut next = previous.clone();
+        next.collections = self.layout.persisted_collection_snapshot();
+        let locations = self.layout.persisted_workspace_locations();
+        next.migrate_routes_to_runtime_locations(&previous, &locations);
+
+        let mut live_routes = Vec::new();
+        self.layout.with_windows(|mapped, _, workspace_id, _| {
+            let Some(workspace_id) = workspace_id else {
+                return;
+            };
+            let Some((collection, workspace)) = locations.get(&workspace_id) else {
+                return;
+            };
+            let route = with_toplevel_role(mapped.toplevel(), |role| {
+                let app_id = role.app_id.clone().filter(|id| !id.is_empty());
+                let title = role.title.clone().filter(|title| !title.is_empty());
+                if app_id.is_none() {
+                    return None;
+                }
+                Some(PersistedWindowRoute {
+                    app_id,
+                    title,
+                    collection: collection.clone(),
+                    workspace: workspace.clone(),
+                })
+            });
+            if let Some(route) = route {
+                live_routes.push(route);
+            }
+        });
+        next.replace_live_routes(live_routes);
+        next.retain_routed_empty_workspaces();
+
+        if next.same_persisted_state(&previous) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+            return;
+        }
+        if cfg!(test) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+            return;
+        }
+        match next.save_atomic() {
+            Ok(()) => {
+                self.layout.retain_persisted_workspace_slots(&next);
+                self.collection_persistence = Some(next);
+            }
+            Err(error) => warn!(?error, "could not write named collection state"),
+        }
     }
 
     pub fn insert_client(&mut self, client: NewClient) {
