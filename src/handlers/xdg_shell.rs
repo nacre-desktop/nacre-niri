@@ -1033,11 +1033,13 @@ impl State {
         };
 
         let config = self.niri.config.borrow();
-        let rules = ResolvedWindowRules::compute(
+        let mut rules = ResolvedWindowRules::compute(
             &config.window_rules,
             WindowRef::Unmapped(unmapped),
             self.niri.is_at_startup,
         );
+        rules.proportional_x11_widths = config.nacre.proportional_x11_widths
+            && crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface());
 
         let Unmapped { window, state, .. } = unmapped;
 
@@ -1369,11 +1371,13 @@ impl State {
         let window_rules = &config.window_rules;
 
         if let Some(unmapped) = self.niri.unmapped_windows.get_mut(toplevel.wl_surface()) {
-            let new_rules = ResolvedWindowRules::compute(
+            let mut new_rules = ResolvedWindowRules::compute(
                 window_rules,
                 WindowRef::Unmapped(unmapped),
                 self.niri.is_at_startup,
             );
+            new_rules.proportional_x11_widths = config.nacre.proportional_x11_widths
+                && crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface());
             if let InitialConfigureState::Configured { rules, .. } = &mut unmapped.state {
                 *rules = new_rules;
             }

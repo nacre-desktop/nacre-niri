@@ -32,6 +32,9 @@ pub enum WindowRef<'a> {
 /// Rules fully resolved for a window.
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct ResolvedWindowRules {
+    /// Whether tiled managed xwayland-satellite windows may ignore an adjustable X11 minimum width.
+    pub proportional_x11_widths: bool,
+
     /// Default width for this window.
     ///
     /// - `None`: unset (global default should be used).
@@ -125,6 +128,29 @@ pub struct ResolvedWindowRules {
 
     /// Rules for this window's popups.
     pub popups: ResolvedPopupsRules,
+}
+
+/// Apply the native X11 proportional-width policy to the effective minimum size.
+/// The XDG surface's cached constraints are left untouched so floating windows and a disabled
+/// policy continue to see the client's original hints. The satellite forwards XDG min/max but not
+/// `_NET_WM_WINDOW_TYPE`; the caller therefore limits this to unparented satellite toplevels, and
+/// cannot distinguish a non-normal type that has no transient parent.
+pub fn effective_x11_min_size(
+    mut min_size: Size<i32, Logical>,
+    max_size: Size<i32, Logical>,
+    enabled: bool,
+    is_xwayland_satellite: bool,
+    is_tiled: bool,
+) -> Size<i32, Logical> {
+    if enabled
+        && is_xwayland_satellite
+        && is_tiled
+        && min_size.w > 1
+        && (max_size.w <= 0 || max_size.w > min_size.w)
+    {
+        min_size.w = 1;
+    }
+    min_size
 }
 
 impl<'a> WindowRef<'a> {
@@ -446,4 +472,85 @@ fn window_matches(window: WindowRef, role: &XdgToplevelSurfaceRoleAttributes, m:
     }
 
     true
+}
+
+#[cfg(test)]
+mod proportional_x11_width_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn only_adjustable_tiled_x11_width_minimum_is_relaxed() {
+        let min = Size::from((1280, 480));
+        let max = Size::from((0, 0));
+        assert_eq!(
+            effective_x11_min_size(min, max, true, true, true),
+            Size::from((1, 480))
+        );
+        assert_eq!(
+            effective_x11_min_size(min, max, false, true, true),
+            min,
+            "config opt-out preserves both client constraints"
+        );
+        assert_eq!(
+            effective_x11_min_size(min, max, true, false, true),
+            min,
+            "ordinary Wayland windows are unchanged"
+        );
+        assert_eq!(
+            effective_x11_min_size(min, max, true, true, false),
+            min,
+            "floating windows keep their client constraints"
+        );
+    }
+
+    #[test]
+    fn fixed_or_invalid_maximum_and_trivial_minimum_are_preserved() {
+        let min = Size::from((1280, 480));
+        assert_eq!(
+            effective_x11_min_size(min, Size::from((1280, 0)), true, true, true),
+            min,
+            "fixed-width windows keep their width"
+        );
+        assert_eq!(
+            effective_x11_min_size(min, Size::from((900, 0)), true, true, true),
+            min,
+            "contradictory max hints are preserved"
+        );
+        assert_eq!(
+            effective_x11_min_size(Size::from((1, 480)), Size::from((0, 0)), true, true, true),
+            Size::from((1, 480)),
+            "an already trivial minimum needs no change"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: 100_000,
+            ..ProptestConfig::default()
+        })]
+
+        #[test]
+        fn x11_minimum_policy_never_changes_height_or_unmatched_width(
+            min_width in any::<i32>(),
+            min_height in any::<i32>(),
+            max_width in any::<i32>(),
+            max_height in any::<i32>(),
+            enabled in any::<bool>(),
+            satellite in any::<bool>(),
+            tiled in any::<bool>(),
+        ) {
+            let min = Size::from((min_width, min_height));
+            let max = Size::from((max_width, max_height));
+            let effective = effective_x11_min_size(min, max, enabled, satellite, tiled);
+            let should_relax = enabled
+                && satellite
+                && tiled
+                && min_width > 1
+                && (max_width <= 0 || max_width > min_width);
+
+            prop_assert_eq!(effective.h, min_height);
+            prop_assert_eq!(effective.w, if should_relax { 1 } else { min_width });
+        }
+    }
 }

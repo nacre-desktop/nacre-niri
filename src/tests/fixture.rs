@@ -96,11 +96,19 @@ impl Fixture {
     }
 
     pub fn add_client(&mut self) -> ClientId {
+        self.add_client_with_xwayland_satellite(false)
+    }
+
+    pub fn add_client_with_xwayland_satellite(
+        &mut self,
+        is_xwayland_satellite: bool,
+    ) -> ClientId {
         let (sock1, sock2) = UnixStream::pair().unwrap();
         self.niri().insert_client(NewClient {
             client: sock1,
             restricted: false,
             credentials_unknown: false,
+            is_xwayland_satellite,
         });
 
         let client = Client::new(sock2);

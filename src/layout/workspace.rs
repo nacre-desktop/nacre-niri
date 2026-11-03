@@ -40,7 +40,8 @@ use crate::utils::{
     ensure_min_max_size, ensure_min_max_size_maybe_zero, output_size, send_scale_transform,
     ResizeEdge,
 };
-use crate::window::ResolvedWindowRules;
+use crate::niri::is_xwayland_satellite_surface;
+use crate::window::{effective_x11_min_size, ResolvedWindowRules};
 
 #[derive(Debug)]
 pub struct Workspace<W: LayoutElement> {
@@ -863,6 +864,13 @@ impl<W: LayoutElement> Workspace<W> {
             let current = guard.current();
             (current.min_size, current.max_size)
         });
+        let min_size = effective_x11_min_size(
+            min_size,
+            max_size,
+            rules.proportional_x11_widths,
+            is_xwayland_satellite_surface(toplevel.wl_surface()) && toplevel.parent().is_none(),
+            !is_floating,
+        );
         toplevel.with_pending_state(|state| {
             if state.states.contains(xdg_toplevel::State::Fullscreen) {
                 state.size = Some(self.view_size.to_i32_round());

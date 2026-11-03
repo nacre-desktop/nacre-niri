@@ -1448,6 +1448,9 @@ impl State {
             self.niri.layout.unname_workspace(&name);
         }
 
+        self.niri.layout.with_windows_mut(|mapped, _| {
+            mapped.update_proportional_x11_widths(config.nacre.proportional_x11_widths);
+        });
         self.niri.layout.update_config(&config);
         for mapped in self.niri.mapped_layer_surfaces.values_mut() {
             mapped.update_config(&config);
@@ -2441,6 +2444,7 @@ impl Niri {
                         client,
                         restricted: false,
                         credentials_unknown: false,
+                        is_xwayland_satellite: false,
                     });
                 })
                 .unwrap();
@@ -2638,6 +2642,7 @@ impl Niri {
             client,
             restricted,
             credentials_unknown,
+            is_xwayland_satellite,
         } = client;
 
         let config = self.config.borrow();
@@ -2647,6 +2652,7 @@ impl Niri {
             primary_selection_disabled: config.clipboard.disable_primary,
             restricted,
             credentials_unknown,
+            is_xwayland_satellite,
         });
 
         if let Err(err) = self.display_handle.insert_client(client, data) {
@@ -6399,11 +6405,17 @@ impl Niri {
             let window_rules = &self.config.borrow().window_rules;
 
             for unmapped in self.unmapped_windows.values_mut() {
-                let new_rules = ResolvedWindowRules::compute(
+                let mut new_rules = ResolvedWindowRules::compute(
                     window_rules,
                     WindowRef::Unmapped(unmapped),
                     self.is_at_startup,
                 );
+                new_rules.proportional_x11_widths = self
+                    .config
+                    .borrow()
+                    .nacre
+                    .proportional_x11_widths
+                    && is_xwayland_satellite_surface(unmapped.toplevel().wl_surface());
                 if let InitialConfigureState::Configured { rules, .. } = &mut unmapped.state {
                     *rules = new_rules;
                 }
@@ -6544,6 +6556,7 @@ pub struct NewClient {
     pub client: UnixStream,
     pub restricted: bool,
     pub credentials_unknown: bool,
+    pub is_xwayland_satellite: bool,
 }
 
 pub struct ClientState {
@@ -6554,6 +6567,18 @@ pub struct ClientState {
     pub restricted: bool,
     /// We cannot retrieve this client's socket credentials.
     pub credentials_unknown: bool,
+    /// This client was accepted on the private socket used by managed xwayland-satellite.
+    pub is_xwayland_satellite: bool,
+}
+
+pub fn is_xwayland_satellite_surface(surface: &WlSurface) -> bool {
+    surface
+        .client()
+        .is_some_and(|client| {
+            client
+                .get_data::<ClientState>()
+                .is_some_and(|data| data.is_xwayland_satellite)
+        })
 }
 
 impl ClientData for ClientState {
