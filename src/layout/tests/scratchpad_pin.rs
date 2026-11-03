@@ -484,3 +484,25 @@ fn closing_an_overlay_cancels_a_starting_interactive_move() {
         layout.verify_invariants();
     }
 }
+
+#[test]
+fn starting_an_overlay_drag_survives_layout_refresh() {
+    for pin in [false, true] {
+        let mut layout = Layout::default();
+        Op::AddOutput(1).apply(&mut layout);
+        add_window(&mut layout, 1);
+        if pin {
+            layout.toggle_window_pinned(Some(&1));
+        } else {
+            layout.move_window_to_scratchpad(Some(&1));
+            layout.toggle_scratchpad();
+        }
+        let output = output(&layout, 1);
+        assert!(layout.interactive_move_begin(1, &output, (0., 0.).into()));
+        layout.refresh(false);
+        layout.refresh(true);
+        layout.verify_invariants();
+        layout.interactive_move_end(&1);
+        layout.verify_invariants();
+    }
+}

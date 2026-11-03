@@ -5803,11 +5803,14 @@ impl<W: LayoutElement> Layout<W> {
             &self.interactive_move
         {
             ongoing_scrolling_dnd.get_or_insert_with(|| {
-                let (_, _, ws) = self
-                    .workspaces()
-                    .find(|(_, _, ws)| ws.has_window(window_id))
-                    .unwrap();
-                !ws.is_floating(window_id)
+                if self.is_window_in_overlay(window_id) {
+                    return false;
+                }
+                self.workspaces()
+                    .map(|(_, _, ws)| ws)
+                    .chain(std::iter::once(&self.scratchpad))
+                    .find(|ws| ws.has_window(window_id))
+                    .is_some_and(|ws| !ws.is_floating(window_id))
             });
         }
 
