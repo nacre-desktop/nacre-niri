@@ -164,7 +164,7 @@ fn measure_opening_sweep(fixture: &mut Fixture) {
 
 #[test]
 #[ignore = "manual headless overview frame assembly benchmark"]
-fn benchmark_overview_frame_assembly() {
+fn egl_benchmark_overview_frame_assembly() {
     let mut fixture = fixture();
     let client = fixture.add_client();
     for idx in 0..8 {

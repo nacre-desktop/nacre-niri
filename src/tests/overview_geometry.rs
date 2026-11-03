@@ -1,3 +1,5 @@
+//! The `egl_` test prefix follows the EGL sandbox filter in flake.nix.
+
 use std::time::Duration;
 
 use niri_config::animations::{Curve, EasingParams, Kind};
@@ -253,7 +255,7 @@ fn contains(
 }
 
 #[test]
-fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
+fn egl_overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
     let mut fixture = fixture();
     let client = fixture.add_client();
     create_window(&mut fixture, client, 800, 600);
@@ -504,7 +506,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
 }
 
 #[test]
-fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
+fn egl_overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
     let mut fixture = fixture_with_workspace_shadow(false);
     let client = fixture.add_client();
     create_window(&mut fixture, client, 800, 600);
@@ -595,7 +597,7 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
 }
 
 #[test]
-fn many_hidden_previews_remain_cached_across_outputs_and_capture_targets() {
+fn egl_many_hidden_previews_remain_cached_across_outputs_and_capture_targets() {
     let mut fixture = fixture();
     let client = fixture.add_client();
     let output1 = fixture.niri_output(1);
