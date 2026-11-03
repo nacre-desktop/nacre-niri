@@ -31,7 +31,11 @@ Cancellation, replacement and unmap similarly emit final plane states and one
 cancellation event. Retargeting samples all planes at the replacement start
 time and ignores submitted from values. Stale serials are ignored.
 
-Unmapping or destroying the root cancels safely and drops controller state.
+Unmapping cancels safely while retaining a reusable controller and its plane
+state; destroying the root drops the controller state. An explicit cancel
+freezes the sampled presentation pose, and ordinary later root commits keep
+that pose. A subsequent retarget starts from the frozen pose and ignores its
+submitted from values.
 Invalid or non-finite geometry, duration, curve or opacity is rejected or
 clamped per protocol contract. No request may create unbounded render geometry.
 
@@ -97,7 +101,10 @@ measured client CPU falling from 4.336 ms to 0.00188 ms per refresh for a
 laptop measurement at scale 1.5. No live laptop before/after measurement was
 made.
 
-Full CI passed on source commit `c14f43ba` in the task-owned dev-1 container:
-format, workspace tests, config validation, clippy, feature checks, randomized
-release tests and release build. The desktop TEST nested capture timed out, so
-there is no nested visual evidence. Builds and tests ran only in that container.
+Full Niri CI passed on source commit `48ea4f2a` in the task-owned dev-1
+container: nightly rustfmt, 240 Niri tests plus config, wiki, IPC and doc tests,
+config validation, clippy, all six feature checks, Tracy build, release test
+build, 200k randomized release tests, release build and session-wrapper test.
+The release binary reports commit `48ea4f2a9729d0babdd00e4946ebdae29da89f50`.
+The desktop TEST nested capture timed out, so there is no nested visual
+evidence. Builds and tests ran only in that container.
