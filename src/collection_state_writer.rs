@@ -75,7 +75,10 @@ impl CollectionStateWriter {
                 return Err("collection-state worker panicked".into());
             }
         }
-        recover_lock(&self.shared.0).last_error.clone().map_or(Ok(()), Err)
+        recover_lock(&self.shared.0)
+            .last_error
+            .clone()
+            .map_or(Ok(()), Err)
     }
 }
 
@@ -86,7 +89,9 @@ impl Drop for CollectionStateWriter {
 }
 
 fn recover_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn run_worker(shared: Arc<(Mutex<Shared>, Condvar)>, saver: Saver) {

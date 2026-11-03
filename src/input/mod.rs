@@ -85,6 +85,14 @@ fn classify_collection_swipe(x: f64, y: f64) -> Option<CollectionSwipeAxis> {
     }
 }
 
+fn collection_swipe_pan_delta(raw_delta_x: f64, natural_scroll: bool) -> f64 {
+    if natural_scroll {
+        raw_delta_x
+    } else {
+        -raw_delta_x
+    }
+}
+
 fn should_recognize_collection_swipe(
     fingers: u32,
     configured_fingers: u8,
@@ -3967,14 +3975,17 @@ impl State {
         }
 
         let uninverted_delta_y = delta_y;
+        let raw_delta_x = delta_x;
 
         let device = event.device();
-        if let Some(device) = (&device as &dyn Any).downcast_ref::<input::Device>() {
-            if device.config_scroll_natural_scroll_enabled() {
-                delta_x = -delta_x;
-                delta_y = -delta_y;
-            }
+        let natural_scroll = (&device as &dyn Any)
+            .downcast_ref::<input::Device>()
+            .is_some_and(|device| device.config_scroll_natural_scroll_enabled());
+        if natural_scroll {
+            delta_x = -delta_x;
+            delta_y = -delta_y;
         }
+        let collection_pan_delta = collection_swipe_pan_delta(raw_delta_x, natural_scroll);
 
         if let Some(crate::niri::CollectionSwipeMode::Recognizing) =
             self.niri.gesture_swipe_collection_mode
@@ -4004,11 +4015,10 @@ impl State {
                 }
                 self.niri.gesture_swipe_collection_mode =
                     Some(crate::niri::CollectionSwipeMode::Switching);
-                if let Some(output) = self
-                    .niri
-                    .layout
-                    .collection_switch_gesture_update(sum_x, Duration::from_micros(event.time()))
-                {
+                if let Some(output) = self.niri.layout.collection_switch_gesture_update(
+                    collection_pan_delta,
+                    Duration::from_micros(event.time()),
+                ) {
                     self.niri.queue_redraw(&output);
                 }
                 return;
@@ -4032,11 +4042,10 @@ impl State {
             self.niri.gesture_swipe_collection_mode,
             Some(crate::niri::CollectionSwipeMode::Switching)
         ) {
-            if let Some(output) = self
-                .niri
-                .layout
-                .collection_switch_gesture_update(delta_x, Duration::from_micros(event.time()))
-            {
+            if let Some(output) = self.niri.layout.collection_switch_gesture_update(
+                collection_pan_delta,
+                Duration::from_micros(event.time()),
+            ) {
                 self.niri.queue_redraw(&output);
             }
             return;
@@ -5384,6 +5393,15 @@ mod tests {
         assert!(!should_recognize_collection_swipe(
             4, 4, true, true, available, true
         ));
+    }
+
+    #[test]
+    fn collection_swipe_pan_matches_native_direction_with_natural_scroll() {
+        let raw_finger_right = 12.;
+        assert_eq!(collection_swipe_pan_delta(raw_finger_right, false), -12.);
+        assert_eq!(collection_swipe_pan_delta(raw_finger_right, true), 12.);
+        assert_eq!(collection_swipe_pan_delta(-raw_finger_right, false), 12.);
+        assert_eq!(collection_swipe_pan_delta(-raw_finger_right, true), -12.);
     }
 
     #[test]

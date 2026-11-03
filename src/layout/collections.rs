@@ -221,6 +221,7 @@ impl<W: LayoutElement> Layout<W> {
                 .as_ref()
                 .is_some_and(|old| self.options.layout.collections.names.contains(old));
         collection.name = name;
+        self.clear_retention_for_nonpersistent_collections();
         self.clean_up_collections();
         true
     }
@@ -256,6 +257,35 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        self.clear_retention_for_nonpersistent_collections();
+    }
+
+    fn clear_retention_for_nonpersistent_collections(&mut self) {
+        let nonpersistent_ids: Vec<_> = self
+            .collections
+            .iter()
+            .filter(|collection| !collection.persistent)
+            .map(|collection| collection.id)
+            .collect();
+        for collection in &mut self.collections {
+            if nonpersistent_ids.contains(&collection.id) {
+                for workspace in &mut collection.workspaces {
+                    workspace.set_collection_persistent(false);
+                }
+            }
+        }
+        if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+            for monitor in monitors {
+                if monitor
+                    .collection_id
+                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+                {
+                    for workspace in &mut monitor.workspaces {
+                        workspace.set_collection_persistent(false);
+                    }
+                }
+            }
+        }
     }
 
     pub(super) fn transition_collections(&mut self, enabled: bool) {
@@ -263,9 +293,17 @@ impl<W: LayoutElement> Layout<W> {
             return;
         }
         self.collection_switch = None;
+        for collection in &mut self.collections {
+            for workspace in &mut collection.workspaces {
+                workspace.set_collection_persistent(false);
+            }
+        }
         for monitor in self.monitors_mut() {
             monitor.collection_switch_active = false;
             monitor.collection_switch_offset_x = 0.;
+            for workspace in &mut monitor.workspaces {
+                workspace.set_collection_persistent(false);
+            }
         }
         self.collection_pending_workspaces.clear();
         if enabled {
@@ -393,7 +431,7 @@ impl<W: LayoutElement> Layout<W> {
             if mon
                 .workspaces
                 .last()
-                .is_some_and(|ws| ws.has_windows_or_name())
+                .is_some_and(|ws| ws.has_workspace_contents())
             {
                 mon.add_workspace_bottom();
             }
@@ -401,7 +439,7 @@ impl<W: LayoutElement> Layout<W> {
                 && mon
                     .workspaces
                     .first()
-                    .is_some_and(|ws| ws.has_windows_or_name())
+                    .is_some_and(|ws| ws.has_workspace_contents())
             {
                 mon.add_workspace_top();
             }

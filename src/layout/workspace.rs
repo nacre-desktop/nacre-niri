@@ -374,7 +374,11 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn has_windows_or_name(&self) -> bool {
-        self.has_windows() || self.name.is_some() || self.collection_persistent
+        self.has_workspace_contents() || self.collection_persistent
+    }
+
+    pub(super) fn has_workspace_contents(&self) -> bool {
+        self.has_windows() || self.name.is_some()
     }
 
     pub(super) fn set_collection_persistent(&mut self, persistent: bool) {

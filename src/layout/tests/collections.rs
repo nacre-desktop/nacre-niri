@@ -67,6 +67,23 @@ fn collection_swipe_tracks_fraction_of_output_width_and_cancel_keeps_source() {
 }
 
 #[test]
+fn first_collection_swipe_frame_uses_only_the_axis_recognition_event() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
+    layout.create_collection(Some("desk".into()));
+    let width = layout.monitor_for_output(&output).unwrap().view_size().w;
+
+    assert!(layout.collection_switch_gesture_begin(&output));
+    layout.collection_switch_gesture_update(-4., Duration::from_millis(1));
+    let offset = layout
+        .monitor_for_output(&output)
+        .unwrap()
+        .collection_switch_offset_x;
+    assert!((offset + width * 4. / WORKSPACE_GESTURE_MOVEMENT).abs() < 0.01);
+}
+
+#[test]
 fn collection_swipe_to_a_collection_shown_elsewhere_leases_only_on_commit() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
@@ -128,6 +145,53 @@ fn one_collection_does_not_start_a_horizontal_transition() {
     let output = layout.outputs().next().unwrap().clone();
     assert!(!layout.collection_switch_gesture_available(&output));
     assert!(!layout.collection_switch_gesture_begin(&output));
+}
+
+#[test]
+fn unname_and_disable_clear_persisted_workspace_retention() {
+    let mut config = Config::default();
+    config.layout.collections.enabled = true;
+    let mut layout = Layout::new(Clock::with_time(Duration::ZERO), &config);
+    Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
+    let first = layout.create_collection(Some("desk".into()));
+    let workspace_id = layout.collection_active_workspace(first).unwrap();
+    layout
+        .monitor_for_output_mut(&output)
+        .unwrap()
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id() == workspace_id)
+        .unwrap()
+        .set_collection_persistent(true);
+
+    assert!(layout.set_collection_name(&WorkspaceReference::Id(first), None));
+    assert!(!layout
+        .monitor_for_output(&output)
+        .unwrap()
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id() == workspace_id)
+        .unwrap()
+        .collection_persistent());
+
+    let second = layout.create_collection(Some("desk-two".into()));
+    let workspace_id = layout.collection_active_workspace(second).unwrap();
+    layout
+        .monitor_for_output_mut(&output)
+        .unwrap()
+        .workspaces
+        .iter_mut()
+        .find(|workspace| workspace.id() == workspace_id)
+        .unwrap()
+        .set_collection_persistent(true);
+    config.layout.collections.enabled = false;
+    layout.update_config(&config);
+    assert!(layout
+        .monitors()
+        .flat_map(|monitor| &monitor.workspaces)
+        .all(|workspace| !workspace.collection_persistent()));
+    layout.verify_invariants();
 }
 
 #[test]

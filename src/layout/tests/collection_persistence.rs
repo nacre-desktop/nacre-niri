@@ -147,7 +147,7 @@ fn empty_named_collection_keeps_one_workspace_without_growing_placeholders() {
 fn malformed_duplicate_workspace_state_is_rejected_without_mutating_layout() {
     let mut options = Options::default();
     options.layout.collections.enabled = true;
-    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    let mut layout = Layout::<TestWindow>::with_options(Clock::with_time(Duration::ZERO), options);
     layout.create_collection(Some("kept".into()));
     let before = layout.persisted_collection_snapshot();
 
@@ -176,6 +176,50 @@ fn malformed_duplicate_workspace_state_is_rejected_without_mutating_layout() {
     ];
     assert!(!layout.restore_persisted_collections(&mut malformed));
     assert_eq!(layout.persisted_collection_snapshot(), before);
+}
+
+#[test]
+fn restored_config_workspace_is_removed_from_pending_output_placement() {
+    let mut config = Config::default();
+    config.layout.collections.enabled = true;
+    config.layout.collections.names = vec!["primary".into(), "hidden".into()];
+    config.workspaces.push(niri_config::Workspace {
+        name: niri_config::workspace::WorkspaceName("CODE".into()),
+        open_on_output: Some("output1".into()),
+        layout: None,
+    });
+    let mut layout = Layout::new(Clock::with_time(Duration::ZERO), &config);
+
+    let mut state = PersistedCollections::empty();
+    state.collections.push(PersistedCollection {
+        name: "hidden".into(),
+        configured_origin: Some("hidden".into()),
+        original_output: None,
+        workspaces: vec![PersistedWorkspace {
+            name: Some("code".into()),
+            retain_empty: true,
+        }],
+        active_workspace: 0,
+    });
+    assert!(layout.restore_persisted_collections(&mut state));
+    let hidden_id = layout
+        .collections()
+        .iter()
+        .find(|collection| collection.name.as_deref() == Some("hidden"))
+        .unwrap()
+        .id;
+    let code_id = layout
+        .collection_workspaces(hidden_id)
+        .find(|workspace| workspace.name().is_some_and(|name| name == "CODE"))
+        .unwrap()
+        .id();
+    assert!(!layout.collection_pending_workspaces.contains(&code_id));
+
+    add_output(&mut layout);
+    assert!(layout
+        .collection_workspaces(hidden_id)
+        .any(|workspace| workspace.id() == code_id));
+    layout.verify_invariants();
 }
 
 #[test]
@@ -242,7 +286,7 @@ fn first_session_closed_window_route_keeps_its_unnamed_slot_for_restart() {
 
 fn add_output(layout: &mut Layout<TestWindow>) {
     let output = Output::new(
-        "output1",
+        "output1".into(),
         PhysicalProperties {
             size: Size::from((1280, 720)),
             subpixel: Subpixel::Unknown,

@@ -3,7 +3,7 @@ use crate::layout::collection_persistence::{
     PersistedCollection, PersistedCollections, PersistedWindowRoute, PersistedWorkspace,
     PersistedWorkspaceRef,
 };
-use crate::layout::{workspace::WorkspaceId, LayoutElement};
+use crate::layout::workspace::WorkspaceId;
 use crate::utils::with_toplevel_role;
 use niri_config::Config;
 

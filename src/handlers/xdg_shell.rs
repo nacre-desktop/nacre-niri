@@ -570,9 +570,9 @@ impl XdgShellHandler for State {
                         .or_else(|| {
                             workspace_name
                                 .as_deref()
-                                .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                                .and_then(|name| mon.and_then(|mon| mon.find_named_workspace(name)))
                         })
-                        .unwrap_or_else(|| {
+                        .or_else(|| {
                             mon.map(|mon| mon.active_workspace_ref())
                                 .or_else(|| self.niri.layout.active_workspace())
                         });
@@ -789,9 +789,9 @@ impl XdgShellHandler for State {
                         .or_else(|| {
                             workspace_name
                                 .as_deref()
-                                .and_then(|name| mon.map(|mon| mon.find_named_workspace(name)))
+                                .and_then(|name| mon.and_then(|mon| mon.find_named_workspace(name)))
                         })
-                        .unwrap_or_else(|| {
+                        .or_else(|| {
                             mon.map(|mon| mon.active_workspace_ref())
                                 .or_else(|| self.niri.layout.active_workspace())
                         });

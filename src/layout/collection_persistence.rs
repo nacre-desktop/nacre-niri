@@ -453,6 +453,7 @@ impl PersistedCollections {
     }
 
     /// Keep historical window assignments attached when a collection is renamed.
+    #[cfg(test)]
     pub fn rename_collection(&mut self, previous: &str, next: &str) -> bool {
         if previous == next {
             return self
@@ -481,18 +482,9 @@ impl PersistedCollections {
         true
     }
 
-    /// Dropping a collection's name makes it non-persistent and removes routes that would point
-    /// to an identity that can no longer be resolved after restart.
-    pub fn unname_collection(&mut self, name: &str) -> bool {
-        let before = self.collections.len();
-        self.collections
-            .retain(|collection| collection.name != name);
-        self.window_routes.retain(|route| route.collection != name);
-        before != self.collections.len()
-    }
-
     /// Migrate a named workspace route before changing its name. When the workspace becomes
     /// unnamed, preserve assignments by its collection-local ordinal instead.
+    #[cfg(test)]
     pub fn rename_workspace(
         &mut self,
         collection_name: &str,
@@ -614,7 +606,10 @@ impl PersistedCollections {
 impl<W: super::LayoutElement> super::Layout<W> {
     /// Restore saved named stacks before outputs are added. Existing config workspaces are moved
     /// into their saved stack by name, while unnamed saved slots get fresh runtime IDs.
-    pub fn restore_persisted_collections(&mut self, state: &mut PersistedCollections) -> bool {
+    pub(crate) fn restore_persisted_collections(
+        &mut self,
+        state: &mut PersistedCollections,
+    ) -> bool {
         if !self.options.layout.collections.enabled
             || self.monitors().next().is_some()
             || state.validate().is_err()
@@ -642,7 +637,7 @@ impl<W: super::LayoutElement> super::Layout<W> {
                 let restored_workspace = if let Some(name) = &workspace.name {
                     self.take_workspace_by_name(name).unwrap_or_else(|| {
                         let config = niri_config::Workspace {
-                            name: niri_config::WorkspaceName(name.clone()),
+                            name: niri_config::workspace::WorkspaceName(name.clone()),
                             open_on_output: None,
                             layout: None,
                         };
@@ -659,6 +654,8 @@ impl<W: super::LayoutElement> super::Layout<W> {
                     )
                 };
                 let mut restored_workspace = restored_workspace;
+                self.collection_pending_workspaces
+                    .retain(|pending| *pending != restored_workspace.id());
                 restored_workspace.set_collection_persistent(
                     workspace.retain_empty || ordinal == saved.active_workspace,
                 );
@@ -709,19 +706,20 @@ impl<W: super::LayoutElement> super::Layout<W> {
 
     fn take_workspace_by_name(&mut self, name: &str) -> Option<super::workspace::Workspace<W>> {
         if let super::MonitorSet::NoOutputs { workspaces } = &mut self.monitor_set {
-            if let Some(index) = workspaces
-                .iter()
-                .position(|workspace| workspace.name().is_some_and(|saved| saved == name))
-            {
+            if let Some(index) = workspaces.iter().position(|workspace| {
+                workspace
+                    .name()
+                    .is_some_and(|saved| saved.eq_ignore_ascii_case(name))
+            }) {
                 return Some(workspaces.remove(index));
             }
         }
         for collection in &mut self.collections {
-            if let Some(index) = collection
-                .workspaces
-                .iter()
-                .position(|workspace| workspace.name().is_some_and(|saved| saved == name))
-            {
+            if let Some(index) = collection.workspaces.iter().position(|workspace| {
+                workspace
+                    .name()
+                    .is_some_and(|saved| saved.eq_ignore_ascii_case(name))
+            }) {
                 return Some(collection.workspaces.remove(index));
             }
         }
@@ -729,7 +727,7 @@ impl<W: super::LayoutElement> super::Layout<W> {
     }
 
     /// Snapshot only persistent named collections; workspace vector order records unnamed slots.
-    pub fn persisted_collection_snapshot(&self) -> Vec<PersistedCollection> {
+    pub(crate) fn persisted_collection_snapshot(&self) -> Vec<PersistedCollection> {
         self.collections
             .iter()
             .filter(|collection| collection.persistent)
@@ -774,7 +772,7 @@ impl<W: super::LayoutElement> super::Layout<W> {
             .collect()
     }
 
-    pub fn persisted_workspace_id(
+    pub(crate) fn persisted_workspace_id(
         &self,
         state: &PersistedCollections,
         collection_name: &str,
@@ -808,7 +806,8 @@ impl<W: super::LayoutElement> super::Layout<W> {
             .map(|(_, workspace)| workspace.id())
     }
 
-    pub fn persisted_workspace_location(
+    #[cfg(test)]
+    pub(crate) fn persisted_workspace_location(
         &self,
         workspace_id: super::workspace::WorkspaceId,
     ) -> Option<(String, PersistedWorkspaceRef)> {
@@ -838,7 +837,7 @@ impl<W: super::LayoutElement> super::Layout<W> {
         None
     }
 
-    pub fn persisted_workspace_locations(
+    pub(crate) fn persisted_workspace_locations(
         &self,
     ) -> HashMap<WorkspaceId, (String, PersistedWorkspaceRef)> {
         let mut locations = HashMap::new();
@@ -870,7 +869,8 @@ impl<W: super::LayoutElement> super::Layout<W> {
 
     /// Refresh process-local ordinal IDs after a layout snapshot has changed. Output-local empty
     /// placeholders are excluded exactly as they are from the persisted stack.
-    pub fn refresh_persisted_workspace_ids(&self, state: &mut PersistedCollections) {
+    #[cfg(test)]
+    pub(crate) fn refresh_persisted_workspace_ids(&self, state: &mut PersistedCollections) {
         state.runtime_workspace_ids.clear();
         for collection in self.collections.iter().filter(|c| c.persistent) {
             let Some(name) = &collection.name else {
@@ -893,7 +893,7 @@ impl<W: super::LayoutElement> super::Layout<W> {
 
     /// Once a slot has been committed to disk, retain it after its last window closes so the
     /// historical route and ordinal still refer to the same workspace.
-    pub fn retain_persisted_workspace_slots(&mut self, state: &PersistedCollections) {
+    pub(crate) fn retain_persisted_workspace_slots(&mut self, state: &PersistedCollections) {
         let workspace_ids: Vec<_> = state
             .collections
             .iter()
@@ -990,7 +990,30 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn tempdir() -> io::Result<TestDirectory> {
+        let path = std::env::temp_dir().join(format!(
+            "nacre-niri-persistence-test-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&path)?;
+        Ok(TestDirectory(path))
+    }
 
     fn sample_state() -> PersistedCollections {
         PersistedCollections {
@@ -1017,6 +1040,7 @@ mod tests {
                 collection: "work".into(),
                 workspace: PersistedWorkspaceRef::Name("editor".into()),
             }],
+            runtime_workspace_ids: HashMap::new(),
         }
     }
 
@@ -1047,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_title_route_precedes_app_id_only_fallback() {
+    fn exact_title_route_precedes_fallback_and_refuses_ambiguity() {
         let mut state = sample_state();
         state.window_routes.push(PersistedWindowRoute {
             app_id: Some("org.example.Editor".into()),
@@ -1062,16 +1086,12 @@ mod tests {
                 .collection,
             "work"
         );
-        assert_eq!(
-            state
-                .route_for_window(Some("org.example.Editor"), Some("Welcome"))
-                .unwrap()
-                .collection,
-            "personal"
-        );
+        assert!(state
+            .route_for_window(Some("org.example.Editor"), Some("Welcome"))
+            .is_none());
         assert!(state
             .route_for_window(Some("org.example.Editor"), None)
-            .is_some());
+            .is_none());
         assert!(state.route_for_window(None, Some("Review")).is_none());
     }
 

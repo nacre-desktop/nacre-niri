@@ -117,6 +117,7 @@ use crate::a11y::A11y;
 use crate::animation::Clock;
 use crate::backend::tty::SurfaceDmabufFeedback;
 use crate::backend::{Backend, Headless, RenderResult, Tty, Winit};
+use crate::collection_state_writer::CollectionStateWriter;
 use crate::cursor::{CursorManager, CursorTextureCache, RenderCursor, XCursor};
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_locale1::Locale1ToNiri;
@@ -230,6 +231,7 @@ pub struct Niri {
     pub layout: Layout<Mapped>,
     /// None means state could not be read and must not be overwritten.
     pub(crate) collection_persistence: Option<PersistedCollections>,
+    collection_state_writer: Option<CollectionStateWriter>,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
     // according to their global position.
@@ -2310,6 +2312,17 @@ impl Niri {
                 }
             }
         };
+        let collection_state_writer = if collection_persistence.is_some() && !cfg!(test) {
+            match CollectionStateWriter::new() {
+                Ok(writer) => Some(writer),
+                Err(error) => {
+                    warn!(?error, "could not start named collection state writer");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
 
@@ -2572,6 +2585,7 @@ impl Niri {
 
             layout,
             collection_persistence,
+            collection_state_writer,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
@@ -2713,7 +2727,7 @@ impl Niri {
         niri
     }
 
-    pub(crate) fn persist_collection_state(&mut self) {
+    pub fn persist_collection_state(&mut self) {
         if !self.config.borrow().layout.collections.enabled {
             self.collection_persistence = None;
             return;
@@ -2764,12 +2778,23 @@ impl Niri {
             self.collection_persistence = Some(next);
             return;
         }
-        match next.save_atomic() {
-            Ok(()) => {
-                self.layout.retain_persisted_workspace_slots(&next);
-                self.collection_persistence = Some(next);
+        let Some(writer) = &self.collection_state_writer else {
+            warn!("named collection state writer is unavailable");
+            return;
+        };
+        if writer.enqueue(next.clone()) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+        } else {
+            warn!("named collection state writer is stopping");
+        }
+    }
+
+    pub fn finish_collection_state_writer(&mut self) {
+        if let Some(writer) = self.collection_state_writer.take() {
+            if let Err(error) = writer.finish() {
+                warn!(%error, "could not flush named collection state");
             }
-            Err(error) => warn!(?error, "could not write named collection state"),
         }
     }
 

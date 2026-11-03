@@ -761,9 +761,12 @@ impl<W: LayoutElement> Monitor<W> {
 
         // Special case handling when empty_workspace_above_first is set and all workspaces
         // are empty.
-        if self.options.layout.empty_workspace_above_first && self.workspaces.len() == 2 {
-            assert!(!self.workspaces[0].has_windows_or_name());
-            assert!(!self.workspaces[1].has_windows_or_name());
+        if self.options.layout.empty_workspace_above_first
+            && self.workspaces.len() == 2
+            && self.workspaces.iter().all(|workspace| {
+                !workspace.has_workspace_contents() && !workspace.collection_persistent()
+            })
+        {
             self.workspaces.remove(1);
             self.active_workspace_idx = 0;
         }
@@ -886,7 +889,7 @@ impl<W: LayoutElement> Monitor<W> {
         // If empty_workspace_above_first is set and the first workspace is now no longer empty,
         // add a new empty workspace on top.
         if self.options.layout.empty_workspace_above_first
-            && self.workspaces[0].has_windows_or_name()
+            && self.workspaces[0].has_workspace_contents()
         {
             self.add_workspace_top();
         }
@@ -1367,7 +1370,10 @@ impl<W: LayoutElement> Monitor<W> {
         {
             if options.layout.empty_workspace_above_first {
                 self.add_workspace_top();
-            } else if self.workspace_switch.is_none() && self.active_workspace_idx != 0 {
+            } else if self.workspace_switch.is_none()
+                && self.active_workspace_idx != 0
+                && !self.workspaces[0].collection_persistent()
+            {
                 self.workspaces.remove(0);
                 self.active_workspace_idx = self.active_workspace_idx.saturating_sub(1);
             }
@@ -2420,8 +2426,12 @@ impl<W: LayoutElement> Monitor<W> {
 
         if self.options.layout.empty_workspace_above_first {
             assert!(
-                self.workspaces.len() != 2,
-                "if empty_workspace_above_first is set there must be just 1 or 3+ workspaces"
+                self.workspaces.len() != 2
+                    || self
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.collection_persistent()),
+                "two empty workspaces require a retained persisted slot"
             )
         }
 
