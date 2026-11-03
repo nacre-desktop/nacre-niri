@@ -197,6 +197,12 @@ pub struct NacreCapabilities {
     pub proportional_x11_widths: bool,
     /// Pointer hover metadata for overview previews is enabled.
     pub overview_hover: bool,
+    /// Scratchpad actions and hidden-window state are available.
+    #[serde(default)]
+    pub scratchpad: bool,
+    /// Pinning floating windows across workspace and collection switches is available.
+    #[serde(default)]
+    pub window_pinning: bool,
 }
 
 /// Overview information.
@@ -873,6 +879,26 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
+    /// Hide the focused window in the scratchpad.
+    MoveWindowToScratchpad {
+        /// Id of the window to hide. If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
+    /// Show or hide the most recently used scratchpad window.
+    ToggleScratchpad {},
+    /// Show a specific scratchpad window.
+    ScratchpadShowWindow {
+        /// Id of the scratchpad window to show.
+        #[cfg_attr(feature = "clap", arg())]
+        id: u64,
+    },
+    /// Toggle whether the focused window stays visible across workspace switches.
+    ToggleWindowPinned {
+        /// Id of the window to pin. If `None`, uses the focused window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
     /// Move the focused window to the floating layout.
     MoveWindowToFloating {
         /// Id of the window to move.
@@ -1380,6 +1406,12 @@ pub struct Window {
     ///
     /// If the window isn't floating then it is in the tiling layout.
     pub is_floating: bool,
+    /// Whether this window is hidden in the scratchpad.
+    #[serde(default)]
+    pub is_hidden: bool,
+    /// Whether this window is pinned above workspaces on its output.
+    #[serde(default)]
+    pub is_pinned: bool,
     /// Whether this window requests your attention.
     pub is_urgent: bool,
     /// Position- and size-related properties of the window.
@@ -2203,10 +2235,39 @@ mod tests {
             workspace_collections: true,
             proportional_x11_widths: false,
             overview_hover: true,
+            scratchpad: true,
+            window_pinning: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true}}}"#,
+        );
+
+        let old_capabilities: NacreCapabilities = serde_json::from_str(
+            r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
+        )
+        .unwrap();
+        assert!(!old_capabilities.scratchpad);
+        assert!(!old_capabilities.window_pinning);
+    }
+
+    #[test]
+    fn scratchpad_and_pinning_action_wire_format() {
+        assert_eq!(
+            serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
+            r#"{"MoveWindowToScratchpad":{"id":null}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::ToggleScratchpad {}).unwrap(),
+            r#"{"ToggleScratchpad":{}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::ScratchpadShowWindow { id: 42 }).unwrap(),
+            r#"{"ScratchpadShowWindow":{"id":42}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::ToggleWindowPinned { id: Some(42) }).unwrap(),
+            r#"{"ToggleWindowPinned":{"id":42}}"#,
         );
     }
 }

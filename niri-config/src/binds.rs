@@ -341,6 +341,14 @@ pub enum Action {
     ToggleWindowFloating,
     #[knuffel(skip)]
     ToggleWindowFloatingById(u64),
+    MoveWindowToScratchpad,
+    #[knuffel(skip)]
+    MoveWindowToScratchpadById(u64),
+    ToggleScratchpad,
+    ScratchpadShowWindow(#[knuffel(argument)] u64),
+    ToggleWindowPinned,
+    #[knuffel(skip)]
+    ToggleWindowPinnedById(u64),
     MoveWindowToFloating,
     #[knuffel(skip)]
     MoveWindowToFloatingById(u64),
@@ -684,6 +692,18 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::ToggleWindowFloating { id: None } => Self::ToggleWindowFloating,
             niri_ipc::Action::ToggleWindowFloating { id: Some(id) } => {
                 Self::ToggleWindowFloatingById(id)
+            }
+            niri_ipc::Action::MoveWindowToScratchpad { id: None } => {
+                Self::MoveWindowToScratchpad
+            }
+            niri_ipc::Action::MoveWindowToScratchpad { id: Some(id) } => {
+                Self::MoveWindowToScratchpadById(id)
+            }
+            niri_ipc::Action::ToggleScratchpad {} => Self::ToggleScratchpad,
+            niri_ipc::Action::ScratchpadShowWindow { id } => Self::ScratchpadShowWindow(id),
+            niri_ipc::Action::ToggleWindowPinned { id: None } => Self::ToggleWindowPinned,
+            niri_ipc::Action::ToggleWindowPinned { id: Some(id) } => {
+                Self::ToggleWindowPinnedById(id)
             }
             niri_ipc::Action::MoveWindowToFloating { id: None } => Self::MoveWindowToFloating,
             niri_ipc::Action::MoveWindowToFloating { id: Some(id) } => {

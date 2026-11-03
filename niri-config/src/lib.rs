@@ -698,6 +698,40 @@ mod tests {
     }
 
     #[test]
+    fn nacre_scratchpad_and_pinning_default_on_and_can_be_disabled() {
+        let defaults = do_parse("");
+        assert!(defaults.nacre.scratchpad);
+        assert!(defaults.nacre.window_pinning);
+
+        let disabled = do_parse("nacre { scratchpad false; window-pinning false; }");
+        assert!(!disabled.nacre.scratchpad);
+        assert!(!disabled.nacre.window_pinning);
+    }
+
+    #[test]
+    fn scratchpad_and_pinning_actions_decode() {
+        let config = do_parse(
+            r#"binds {
+                Mod+1 { move-window-to-scratchpad; }
+                Mod+2 { toggle-scratchpad; }
+                Mod+3 { scratchpad-show-window 42; }
+                Mod+4 { toggle-window-pinned; }
+            }"#,
+        );
+        assert_eq!(config.binds.0.len(), 4);
+        assert_eq!(config.binds.0[0].action, Action::MoveWindowToScratchpad);
+        assert_eq!(config.binds.0[1].action, Action::ToggleScratchpad);
+        assert_eq!(config.binds.0[2].action, Action::ScratchpadShowWindow(42));
+        assert_eq!(config.binds.0[3].action, Action::ToggleWindowPinned);
+    }
+
+    #[test]
+    fn window_rule_open_pinned_decodes() {
+        let config = do_parse("window-rule { open-pinned true; }");
+        assert_eq!(config.window_rules[0].open_pinned, Some(true));
+    }
+
+    #[test]
     fn collection_actions_decode_with_optional_create_name() {
         let config = do_parse(
             r#"binds {
@@ -1771,6 +1805,8 @@ mod tests {
             },
             nacre: Nacre {
                 overview_hover: true,
+                scratchpad: true,
+                window_pinning: true,
             },
             environment: Environment(
                 [
@@ -1869,6 +1905,7 @@ mod tests {
                     open_floating: Some(
                         false,
                     ),
+                    open_pinned: None,
                     open_focused: Some(
                         true,
                     ),
