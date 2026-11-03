@@ -1993,12 +1993,12 @@ impl<W: LayoutElement> Monitor<W> {
         let Some(viewport) = output_bounds.intersection(workspace_bounds) else {
             return;
         };
-        let height = viewport.size.h;
+        let source_size = workspace.view_size();
+        let source_height = source_size.to_physical_precise_round(scale).h;
         let source_crop = Rectangle::new(
             Point::from((-i32::MAX / 2, 0)),
-            Size::from((i32::MAX, height)),
+            Size::from((i32::MAX, source_height)),
         );
-        let source_size = workspace.view_size();
         let destination_size = output_size(&self.output);
         let fitted_scale =
             (destination_size.w / source_size.w).max(destination_size.h / source_size.h);
