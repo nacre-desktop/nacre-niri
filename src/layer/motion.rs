@@ -354,12 +354,80 @@ impl LayerMotion {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     fn pose(x: f64, width: f64, opacity: f64) -> MotionPose {
         MotionPose {
             destination: Rectangle::new(Point::from((x, 0.)), Size::from((width, 20.))),
             clip: Rectangle::new(Point::from((0., 0.)), Size::from((width, 20.))),
             opacity,
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn randomized_motion_sampling_stays_valid_and_retarget_is_continuous(
+            from_x in -20_000.0f64..20_000.0,
+            from_y in -20_000.0f64..20_000.0,
+            from_w in 0.0f64..10_000.0,
+            from_h in 0.0f64..10_000.0,
+            from_opacity in 0.0f64..=1.0,
+            to_x in -20_000.0f64..20_000.0,
+            to_y in -20_000.0f64..20_000.0,
+            to_w in 0.0f64..10_000.0,
+            to_h in 0.0f64..10_000.0,
+            to_opacity in 0.0f64..=1.0,
+            curve_index in 0u8..5,
+            elapsed_ms in 0u64..10_000,
+        ) {
+            let from = MotionPose::new(
+                from_x, from_y, from_w, from_h, from_x, from_y, from_w, from_h, from_opacity,
+            ).unwrap();
+            let to = MotionPose::new(
+                to_x, to_y, to_w, to_h, to_x, to_y, to_w, to_h, to_opacity,
+            ).unwrap();
+            let curve = match curve_index {
+                0 => MotionCurve::Linear,
+                1 => MotionCurve::EaseOutCubic,
+                2 => MotionCurve::EaseInOutCubic,
+                3 => MotionCurve::EmphasizedAccelerate,
+                _ => MotionCurve::CriticalSpring,
+            };
+            let duration = Duration::from_millis(10_000);
+            let motion = LayerMotion::new(
+                1, from, to, Duration::ZERO, duration, curve, OpacityMode::Linear,
+            ).unwrap();
+            let sampled = motion.sample(Duration::from_millis(elapsed_ms));
+            prop_assert!(sampled.is_valid());
+            let retargeted = motion.retarget(
+                2, from, Duration::from_millis(elapsed_ms), duration, curve, OpacityMode::Linear,
+            ).unwrap();
+            prop_assert_eq!(retargeted.sample(Duration::from_millis(elapsed_ms)), sampled);
+        }
+
+        #[test]
+        fn randomized_visible_plane_input_maps_back_to_source(
+            x in -20_000.0f64..20_000.0,
+            y in -20_000.0f64..20_000.0,
+            width in 1.0f64..10_000.0,
+            height in 1.0f64..10_000.0,
+            fx in 0.01f64..0.99,
+            fy in 0.01f64..0.99,
+            opacity in 0.01f64..=1.0,
+            source_x in -20_000.0f64..20_000.0,
+            source_y in -20_000.0f64..20_000.0,
+            source_w in 1.0f64..10_000.0,
+            source_h in 1.0f64..10_000.0,
+        ) {
+            let plane = MotionPose::new(x, y, width, height, x, y, width, height, opacity).unwrap();
+            let source = Rectangle::new(
+                Point::from((source_x, source_y)),
+                Size::from((source_w, source_h)),
+            );
+            let point = Point::from((x + fx * width, y + fy * height));
+            let mapped = plane.map_input(point, source).unwrap();
+            prop_assert!((mapped.x - (source_x + fx * source_w)).abs() < 1e-7);
+            prop_assert!((mapped.y - (source_y + fy * source_h)).abs() < 1e-7);
         }
     }
 
