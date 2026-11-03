@@ -50,7 +50,7 @@ struct Preview<'a, W: LayoutElement> {
 
 impl<W: LayoutElement> Layout<W> {
     fn scratchpad_preview(&self, output: &Output) -> Option<Preview<'_, W>> {
-        if !self.scratchpad.has_windows() {
+        if !self.overview_open || !self.scratchpad.has_windows() {
             return None;
         }
         let size = output_size(output);
