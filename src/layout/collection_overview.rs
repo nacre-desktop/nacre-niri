@@ -1,7 +1,7 @@
 //! Shared collection-column geometry for rendering, pointer selection, and drag targets.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pangocairo::cairo::{self, ImageSurface};
 use smithay::backend::allocator::Fourcc;
@@ -19,6 +19,7 @@ use super::{ActivateWindow, HitType, InteractiveMoveData, Layout, LayoutElement}
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
+use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::XrayPos;
@@ -27,22 +28,33 @@ use crate::utils::output_size;
 
 #[derive(Debug, Default)]
 pub(super) struct Overview {
-    labels: RefCell<HashMap<(String, u64), TextureBuffer<GlesTexture>>>,
+    labels: RefCell<HashMap<(u64, String, u64), TextureBuffer<GlesTexture>>>,
+    dirty_hidden_workspaces: RefCell<HashSet<WorkspaceId>>,
+    preview_geometry: RefCell<HashMap<Vec<u64>, Vec<PreviewGeometry>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PreviewGeometry {
+    collection: u64,
+    workspace: WorkspaceId,
+    geometry: Rectangle<f64, Logical>,
+    zoom: f64,
 }
 
 niri_render_elements! {
     CollectionOverviewRenderElement<R> => {
         Workspace = CropRenderElement<RelocateRenderElement<RescaleRenderElement<WorkspaceRenderElement<R>>>>,
         Background = CropRenderElement<RelocateRenderElement<RescaleRenderElement<SolidColorRenderElement>>>,
+        Shadow = CropRenderElement<RelocateRenderElement<RescaleRenderElement<ShadowRenderElement>>>,
         Label = PrimaryGpuTextureRenderElement,
     }
 }
 
-struct Preview<'a, W: LayoutElement> {
-    id: u64,
-    workspace: &'a Workspace<W>,
-    geometry: Rectangle<f64, Logical>,
-    zoom: f64,
+pub(super) struct Preview<'a, W: LayoutElement> {
+    pub(super) id: u64,
+    pub(super) workspace: &'a Workspace<W>,
+    pub(super) geometry: Rectangle<f64, Logical>,
+    pub(super) zoom: f64,
 }
 
 impl<W: LayoutElement> Layout<W> {
@@ -81,50 +93,105 @@ impl<W: LayoutElement> Layout<W> {
             return Vec::new();
         };
         columns(
-            self.collections.iter().map(|c| c.id),
+            self.collections.iter().map(|c| c.id).filter(|id| {
+                *id == active || !self.monitors().any(|m| m.collection_id == Some(*id))
+            }),
             active,
             output_size(output),
             self.overview_zoom(),
         )
     }
 
-    fn collection_previews(&self, output: &Output) -> Vec<Preview<'_, W>> {
+    pub(super) fn collection_previews(&self, output: &Output) -> Vec<Preview<'_, W>> {
         let size = output_size(output);
-        let mut previews = Vec::new();
-        for column in self.collection_columns(output) {
+        let active = self.collection_for_output(output);
+        let columns = self.collection_columns(output);
+        let mut key = vec![size.w.to_bits(), size.h.to_bits(), self.overview_zoom().to_bits()];
+        for column in &columns {
+            if Some(column.id) == active || column.bounds.size.w <= 0. {
+                continue;
+            }
+            key.extend([
+                column.id,
+                column.bounds.loc.x.to_bits(),
+                column.bounds.size.w.to_bits(),
+            ]);
             let workspaces: Vec<_> = self.collection_workspaces(column.id).collect();
-            let active = self.collection_active_workspace(column.id);
-            let active_idx = workspaces
-                .iter()
-                .position(|ws| Some(ws.id()) == active)
-                .unwrap_or(0);
-            // Every stack uses its saved workspace sizes. A detached monitor may have had a
-            // different aspect ratio; fitting its width preserves the actual window geometry.
-            let heights: Vec<_> = workspaces
-                .iter()
-                .map(|ws| ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.))
-                .collect();
-            let mut positions = vec![0.; workspaces.len()];
-            if let Some(height) = heights.get(active_idx) {
-                positions[active_idx] = (size.h - height) / 2.;
-                for idx in active_idx + 1..workspaces.len() {
-                    positions[idx] = positions[idx - 1] + heights[idx - 1] + 24.;
+            key.push(workspaces.len() as u64);
+            key.push(self.collection_active_workspace(column.id).map_or(0, WorkspaceId::get));
+            for workspace in workspaces {
+                key.extend([
+                    workspace.id().get(),
+                    workspace.view_size().w.to_bits(),
+                    workspace.view_size().h.to_bits(),
+                ]);
+            }
+        }
+        let cached = self.preview_geometry.borrow().get(&key).cloned();
+        let geometries = if let Some(cached) = cached {
+            cached
+        } else {
+            let mut geometries = Vec::new();
+            for column in &columns {
+                if Some(column.id) == active || column.bounds.size.w <= 0. {
+                    continue;
                 }
-                for idx in (0..active_idx).rev() {
-                    positions[idx] = positions[idx + 1] - heights[idx] - 24.;
+                let workspaces: Vec<_> = self.collection_workspaces(column.id).collect();
+                let active_ws = self.collection_active_workspace(column.id);
+                let active_idx = workspaces
+                    .iter()
+                    .position(|ws| Some(ws.id()) == active_ws)
+                    .unwrap_or(0);
+                let heights: Vec<_> = workspaces
+                    .iter()
+                    .map(|ws| {
+                        ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.)
+                    })
+                    .collect();
+                let mut positions = vec![0.; workspaces.len()];
+                if let Some(height) = heights.get(active_idx) {
+                    positions[active_idx] = (size.h - height) / 2.;
+                    for idx in active_idx + 1..workspaces.len() {
+                        positions[idx] = positions[idx - 1] + heights[idx - 1] + 24.;
+                    }
+                    for idx in (0..active_idx).rev() {
+                        positions[idx] = positions[idx + 1] - heights[idx] - 24.;
+                    }
+                }
+                for (idx, workspace) in workspaces.into_iter().enumerate() {
+                    let zoom = column.bounds.size.w / workspace.view_size().w.max(1.);
+                    geometries.push(PreviewGeometry {
+                        collection: column.id,
+                        workspace: workspace.id(),
+                        geometry: Rectangle::new(
+                            (column.bounds.loc.x, positions[idx]).into(),
+                            Size::from((
+                                column.bounds.size.w,
+                                workspace.view_size().h * zoom,
+                            )),
+                        ),
+                        zoom,
+                    });
                 }
             }
-            for (idx, ws) in workspaces.into_iter().enumerate() {
-                let zoom = column.bounds.size.w / ws.view_size().w.max(1.);
-                let geometry = Rectangle::new(
-                    (column.bounds.loc.x, positions[idx]).into(),
-                    Size::from((column.bounds.size.w, ws.view_size().h * zoom)),
-                );
+            let mut cache = self.preview_geometry.borrow_mut();
+            if cache.len() > 64 {
+                cache.clear();
+            }
+            cache.insert(key, geometries.clone());
+            geometries
+        };
+        let mut previews = Vec::new();
+        for geometry in geometries {
+            if let Some(workspace) = self
+                .collection_workspaces(geometry.collection)
+                .find(|workspace| workspace.id() == geometry.workspace)
+            {
                 previews.push(Preview {
-                    id: column.id,
-                    workspace: ws,
-                    geometry,
-                    zoom,
+                    id: geometry.collection,
+                    workspace,
+                    geometry: geometry.geometry,
+                    zoom: geometry.zoom,
                 });
             }
         }
@@ -137,6 +204,17 @@ impl<W: LayoutElement> Layout<W> {
         pos: Point<f64, Logical>,
         extended: bool,
     ) -> Option<&Workspace<W>> {
+        if let Some(workspace) = self
+            .monitor_for_output(output)
+            .and_then(|monitor| {
+                monitor
+                    .workspace_under(pos)
+                    .filter(|(_, geometry)| geometry.contains(pos))
+                    .map(|(workspace, _)| workspace)
+            })
+        {
+            return Some(workspace);
+        }
         if (16. ..56.).contains(&pos.y) {
             if let Some(column) = self
                 .collection_columns(output)
@@ -168,14 +246,23 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         pos: Point<f64, Logical>,
     ) -> Option<(&W, HitType)> {
-        let preview = self
+        if let Some(preview) = self
             .collection_previews(output)
             .into_iter()
-            .find(|p| p.geometry.contains(pos))?;
-        let (window, hit) = preview
-            .workspace
-            .window_under((pos - preview.geometry.loc).downscale(preview.zoom))?;
-        Some((window, hit.to_activate()))
+            .find(|p| p.geometry.contains(pos))
+        {
+            let (window, hit) = preview
+                .workspace
+                .window_under((pos - preview.geometry.loc).downscale(preview.zoom))?;
+            return Some((window, hit.to_activate()));
+        }
+        self.monitor_for_output(output)
+            .filter(|monitor| {
+                monitor
+                    .workspaces_with_render_geo()
+                    .any(|(_, geometry)| geometry.contains(pos))
+            })
+            .and_then(|monitor| monitor.window_under(pos))
     }
 
     pub(super) fn collection_window_preview(
@@ -183,6 +270,14 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         window: &W::Id,
     ) -> Option<(&Workspace<W>, Rectangle<f64, Logical>, f64)> {
+        if let Some((workspace, geometry, zoom)) = self.monitor_for_output(output).and_then(|monitor| {
+            monitor
+                .workspaces_with_render_geo()
+                .find(|(workspace, _)| workspace.has_window(window))
+                .map(|(workspace, geometry)| (workspace, geometry, monitor.overview_zoom()))
+        }) {
+            return Some((workspace, geometry, zoom));
+        }
         self.collection_previews(output)
             .into_iter()
             .find(|p| p.workspace.has_window(window))
@@ -345,6 +440,7 @@ impl<W: LayoutElement> Layout<W> {
             };
             if let Some(label) = self.collection_overview.label(
                 ctx.renderer,
+                collection.id,
                 &text,
                 scale,
                 (column.bounds.loc.x, 24.).into(),
@@ -354,6 +450,12 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
         for preview in self.collection_previews(output) {
+            // The collection currently shown on this output uses the monitor's normal render path
+            // so its windows, workspace layers, shadows, hover behavior, and animation share one
+            // transform. This function only renders hidden/detached side columns.
+            if active == Some(preview.id) {
+                continue;
+            }
             let location = preview.geometry.loc.to_physical_precise_round(scale);
             let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
             let mut render = |elem| {
@@ -378,6 +480,18 @@ impl<W: LayoutElement> Layout<W> {
             if let Some(background) = CropRenderElement::from_element(background, scale, crop) {
                 push(CollectionOverviewRenderElement::Background(background));
             }
+            let alpha = self
+                .overview_progress
+                .as_ref()
+                .map_or(1., |progress| progress.clamped_value()) as f32;
+            preview.workspace.render_shadow(ctx.renderer, &mut |elem| {
+                let elem = elem.with_alpha(alpha);
+                let elem = RescaleRenderElement::from_element(elem, (0, 0).into(), preview.zoom);
+                let elem = RelocateRenderElement::from_element(elem, location, Relocate::Relative);
+                if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+                    push(CollectionOverviewRenderElement::Shadow(elem));
+                }
+            });
         }
     }
 }
@@ -385,18 +499,32 @@ impl<W: LayoutElement> Layout<W> {
 impl Overview {
     pub(super) fn clear(&self) {
         self.labels.borrow_mut().clear();
+        self.preview_geometry.borrow_mut().clear();
+    }
+
+    pub(super) fn mark_hidden_workspace_dirty(&self, workspace: WorkspaceId) {
+        self.dirty_hidden_workspaces.borrow_mut().insert(workspace);
+    }
+
+    pub(super) fn mark_hidden_workspaces_dirty(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
+        self.dirty_hidden_workspaces.borrow_mut().extend(workspaces);
+    }
+
+    pub(super) fn take_dirty_hidden_workspaces(&self) -> HashSet<WorkspaceId> {
+        std::mem::take(&mut *self.dirty_hidden_workspaces.borrow_mut())
     }
 
     fn label<R: NiriRenderer>(
         &self,
         renderer: &mut R,
+        collection_id: u64,
         text: &str,
         scale: f64,
         location: Point<f64, Logical>,
         width: f64,
     ) -> Option<PrimaryGpuTextureRenderElement> {
         let width = (width * scale).ceil().max(1.) as i32;
-        let key = (format!("{text}\0{width}"), scale.to_bits());
+        let key = (collection_id, format!("{text}\0{width}"), scale.to_bits());
         let mut labels = self.labels.borrow_mut();
         // Config reloads and output scale changes should not grow the cache without bound.
         if labels.len() > 128 {
@@ -452,8 +580,8 @@ pub(super) struct ColumnGeometry {
     pub bounds: Rectangle<f64, Logical>,
 }
 
-/// Keep the current collection centered, placing other columns alternately right and left.
-/// Shrink the previews only as far as necessary to fit every collection on this output.
+/// Keep the current collection at its native monitor zoom and place hidden collections in the
+/// remaining side space, alternating right and left.
 pub(super) fn columns(
     ids: impl IntoIterator<Item = u64>,
     active: u64,
@@ -461,29 +589,59 @@ pub(super) fn columns(
     zoom: f64,
 ) -> Vec<ColumnGeometry> {
     let mut ids: Vec<_> = ids.into_iter().collect();
+    if ids.is_empty() {
+        return Vec::new();
+    }
     if let Some(idx) = ids.iter().position(|id| *id == active) {
         ids.rotate_left(idx);
     }
-    let slots = 2 * (ids.len() / 2) + 1;
-    let gap = 24_f64.min(size.w / (slots as f64 * 8.));
-    let width = (size.w / slots as f64 - gap).max(1.).min(size.w * zoom);
+    let active_width = (size.w * zoom).clamp(0., size.w);
+    if active_width >= size.w {
+        return vec![ColumnGeometry {
+            id: ids[0],
+            bounds: Rectangle::new(Point::from((0., 0.)), size),
+        }];
+    }
+    let active_left = (size.w - active_width) / 2.;
+    let right_count = ids.len() / 2;
+    let left_count = (ids.len() - 1) / 2;
+    let available_side_width = (size.w - active_width) / 2.;
+    let gap = if ids.len() > 1 {
+        24_f64.min(available_side_width / ids.len() as f64)
+    } else {
+        0.
+    };
+    let side_width = |count: usize| {
+        if count == 0 {
+            0.
+        } else {
+            (((size.w - active_width) / 2.) - gap * count as f64).max(0.) / count as f64
+        }
+    };
+    let right_width = side_width(right_count);
+    let left_width = side_width(left_count);
     ids.into_iter()
         .enumerate()
         .map(|(idx, id)| {
-            let offset = if idx == 0 {
-                0.
+            let (x, width) = if idx == 0 {
+                (active_left, active_width)
+            } else if idx % 2 == 1 {
+                let slot = idx.div_ceil(2) - 1;
+                (
+                    active_left + active_width + gap + slot as f64 * (right_width + gap),
+                    right_width,
+                )
             } else {
-                let step = idx.div_ceil(2) as f64;
-                if idx % 2 == 1 {
-                    step
-                } else {
-                    -step
-                }
+                let slot = idx / 2 - 1;
+                (
+                    active_left - gap - (slot + 1) as f64 * left_width - slot as f64 * gap,
+                    left_width,
+                )
             };
             ColumnGeometry {
                 id,
                 bounds: Rectangle::new(
-                    Point::from(((size.w - width) / 2. + offset * (width + gap), 0.)),
+                    Point::from((x, 0.)),
                     Size::from((width, size.h)),
                 ),
             }

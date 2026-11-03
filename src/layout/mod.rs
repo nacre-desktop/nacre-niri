@@ -1322,6 +1322,7 @@ impl<W: LayoutElement> Layout<W> {
         for c in &mut self.collections {
             if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.has_window(window)) {
                 ws.update_window(window, serial);
+                self.collection_overview.mark_hidden_workspace_dirty(ws.id());
                 return;
             }
         }
@@ -1826,13 +1827,13 @@ impl<W: LayoutElement> Layout<W> {
             .interactive_move
             .as_ref()
             .and_then(|x| x.moving())
-            .filter(move |move_| overview || move_.output == moving_output)
+            .filter(move |move_| move_.output == moving_output)
             .map(|move_| move_.tile.window())
             .into_iter();
 
         let mon_windows = monitors
             .iter()
-            .filter(move |mon| overview || mon.output == output)
+            .filter(move |mon| mon.output == output)
             .flat_map(|mon| mon.workspaces.iter().flat_map(|ws| ws.windows()));
         let hidden_windows = self
             .collections
@@ -1856,13 +1857,13 @@ impl<W: LayoutElement> Layout<W> {
             .interactive_move
             .as_mut()
             .and_then(|x| x.moving_mut())
-            .filter(move |move_| overview || move_.output == moving_output)
+            .filter(move |move_| move_.output == moving_output)
             .map(|move_| move_.tile.window_mut())
             .into_iter();
 
         let mon_windows = monitors
             .iter_mut()
-            .filter(move |mon| overview || mon.output == output)
+            .filter(move |mon| mon.output == output)
             .flat_map(|mon| mon.workspaces.iter_mut().flat_map(|ws| ws.windows_mut()));
         let hidden_windows = self
             .collections
@@ -3092,9 +3093,13 @@ impl<W: LayoutElement> Layout<W> {
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
         if self.collection_overview_is_open() {
             // All stacks can appear on this output, with more vertical previews visible at the
-            // smaller collection zoom than the monitor's usual culling rectangle permits.
+            // smaller collection zoom than the monitor's usual culling rectangle permits. Their
+            // render elements are refreshed only after a window commit or when the overview opens.
+            let mut dirty_workspaces = self.collection_overview.take_dirty_hidden_workspaces();
             for ws in self.workspaces_mut() {
-                ws.update_render_elements(false);
+                if dirty_workspaces.remove(&ws.id()) {
+                    ws.update_render_elements(false);
+                }
             }
         }
         let _span = tracy_client::span!("Layout::update_render_elements");
@@ -5007,6 +5012,17 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_overview(&mut self) {
         self.overview_open = !self.overview_open;
+
+        if self.overview_open {
+            let dirty_workspaces = self
+                .collections
+                .iter()
+                .flat_map(|collection| collection.workspaces.iter())
+                .map(|workspace| workspace.id())
+                .collect::<Vec<_>>();
+            self.collection_overview
+                .mark_hidden_workspaces_dirty(dirty_workspaces.into_iter());
+        }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());
         let to = if self.overview_open { 1. } else { 0. };
