@@ -495,7 +495,9 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 let config = state.niri.config.borrow();
                 let _ = tx.send_blocking(niri_ipc::NacreCapabilities {
                     workspace_collections: config.layout.collections.enabled,
-                    proportional_x11_widths: false,
+                    proportional_x11_widths: config.nacre.proportional_x11_widths
+                        && !config.xwayland_satellite.off
+                        && state.niri.satellite.is_some(),
                     overview_hover: config.nacre.overview_hover,
                     edge_triggers: config.nacre.edge_triggers,
                 });

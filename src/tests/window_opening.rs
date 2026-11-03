@@ -96,7 +96,7 @@ fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
 
     let window_id = {
         let niri = fixture.niri();
-        let (mapped, _) = niri.layout.find_window_and_output(&surface).unwrap();
+        let (_, mapped) = niri.layout.windows().next().unwrap();
         assert_eq!(mapped.min_size().w, 1);
         assert_eq!(mapped.max_size().w, 1100);
         assert_eq!(mapped.min_size().h, 300);
@@ -107,7 +107,7 @@ fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
     fixture
         .niri()
         .layout
-        .set_window_width(Some(&window_id), niri_ipc::SizeChange::SetProportion(1.0));
+        .set_window_width(Some(&window_id), niri_ipc::SizeChange::SetProportion(100.0));
     fixture.double_roundtrip(id);
     let width = fixture
         .client(id)
@@ -140,7 +140,7 @@ fn proportional_x11_widths_preserve_max_height_and_floating_constraints() {
     );
     let (min_width, max_width) = {
         let niri = fixture.niri();
-        let (mapped, _) = niri.layout.find_window_and_output(&surface).unwrap();
+        let (_, mapped) = niri.layout.windows().next().unwrap();
         (mapped.min_size().w, mapped.max_size().w)
     };
     assert_eq!(min_width, 1000, "floating restores the X11 minimum");
