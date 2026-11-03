@@ -87,6 +87,9 @@ pub struct Monitor<W: LayoutElement> {
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
     overview_progress: Option<OverviewProgress>,
+    /// Horizontal translation for an in-progress full-desk collection switch.
+    pub(super) collection_switch_offset_x: f64,
+    pub(super) collection_switch_active: bool,
     /// Clock for driving animations.
     pub(super) clock: Clock,
     /// Configurable properties of the layout as received from the parent layout.
@@ -365,6 +368,8 @@ impl<W: LayoutElement> Monitor<W> {
             insert_hint_render_loc: None,
             overview_open: false,
             overview_progress: None,
+            collection_switch_offset_x: 0.,
+            collection_switch_active: false,
             workspace_switch: None,
             clock,
             base_options,
@@ -1662,7 +1667,7 @@ impl<W: LayoutElement> Monitor<W> {
         // Return position for one-past-last workspace too.
         (0..=self.workspaces.len()).map(move |idx| {
             let y = first_ws_y + idx as f64 * ws_height_with_gap;
-            let loc = Point::from((0., y)) + static_offset;
+            let loc = Point::from((self.collection_switch_offset_x, y)) + static_offset;
 
             // Even though all components that go into loc are rounded to physical pixels, the
             // floating point addition may lose precision. This can result for example in the
@@ -1851,6 +1856,7 @@ impl<W: LayoutElement> Monitor<W> {
         &self,
         mut ctx: RenderCtx<R>,
         focus_ring: bool,
+        collection_switch_workspace: Option<(&Workspace<W>, f64)>,
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
         let _span = tracy_client::span!("Monitor::render_workspaces");
@@ -1869,7 +1875,10 @@ impl<W: LayoutElement> Monitor<W> {
         // rendering for maximized GTK windows.
         //
         // FIXME: use proper bounds after fixing the Crop element.
-        let crop_bounds = if self.workspace_switch.is_some() || self.overview_progress.is_some() {
+        let crop_bounds = if self.workspace_switch.is_some()
+            || self.overview_progress.is_some()
+            || self.collection_switch_active
+        {
             Rectangle::new(
                 Point::from((-i32::MAX / 2, 0)),
                 Size::from((i32::MAX, height)),
@@ -1903,11 +1912,14 @@ impl<W: LayoutElement> Monitor<W> {
         // that overflow would cover the margins and side columns. Clip in final output pixels,
         // after the normal workspace transform, so shader source coordinates and damage use the
         // same rounding as the workspace background. Keep ordinary workspace switching unchanged.
-        let clip_to_workspace =
-            self.options.layout.collections.enabled && self.overview_progress.is_some();
+        let clip_to_workspace = self.options.layout.collections.enabled
+            && self.overview_progress.is_some()
+            && !self.collection_switch_active;
 
         for (ws, geo) in self.workspaces_with_render_geo() {
-            let viewport = if clip_to_workspace {
+            let viewport = if self.collection_switch_active {
+                Some(Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale))
+            } else if clip_to_workspace {
                 let background = MonitorInnerRenderElement::SolidColor(ws.render_background());
                 let background = scale_relocate(geo, background).geometry(scale.into());
                 let Some(viewport) = background.intersection(geo.to_physical_precise_round(scale))
@@ -1954,6 +1966,57 @@ impl<W: LayoutElement> Monitor<W> {
 
             ws.render_scrolling(ctx.r(), xray_pos, focus_ring, push!());
         }
+
+        if let Some((workspace, x_offset)) = collection_switch_workspace {
+            self.render_collection_switch_workspace(
+                ctx.r(),
+                workspace,
+                x_offset,
+                focus_ring,
+                push,
+            );
+        }
+    }
+
+    fn render_collection_switch_workspace<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        workspace: &Workspace<W>,
+        x_offset: f64,
+        focus_ring: bool,
+        push: &mut dyn FnMut(MonitorRenderElement<R>),
+    ) {
+        let scale = self.scale.fractional_scale();
+        let viewport = Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale);
+        let height = viewport.size.h;
+        let source_crop = Rectangle::new(
+            Point::from((-i32::MAX / 2, 0)),
+            Size::from((i32::MAX, height)),
+        );
+        let offset = Point::from((x_offset, 0.)).to_physical_precise_round(scale);
+        let xray_pos = XrayPos::new(Point::from((x_offset, 0.)), 1.);
+
+        let mut push_element = |element: WorkspaceRenderElement<R>| {
+            let Some(element) = CropRenderElement::from_element(element, scale, source_crop) else {
+                return;
+            };
+            let element = MonitorInnerRenderElement::Workspace(element);
+            let element = RescaleRenderElement::from_element(element, Point::default(), 1.);
+            let element = RelocateRenderElement::from_element(element, offset, Relocate::Relative);
+            if let Some(element) = CropRenderElement::from_element(element, scale, viewport) {
+                push(MonitorRenderElement::ViewportClipped(element));
+            }
+        };
+
+        let background = MonitorInnerRenderElement::SolidColor(workspace.render_background());
+        let background = RescaleRenderElement::from_element(background, Point::default(), 1.);
+        let background = RelocateRenderElement::from_element(background, offset, Relocate::Relative);
+        if let Some(background) = CropRenderElement::from_element(background, scale, viewport) {
+            push(MonitorRenderElement::ViewportClipped(background));
+        }
+
+        workspace.render_floating(ctx.r(), xray_pos, focus_ring, &mut push_element);
+        workspace.render_scrolling(ctx.r(), xray_pos, focus_ring, &mut push_element);
     }
 
     pub fn render_workspace_shadows<R: NiriRenderer>(

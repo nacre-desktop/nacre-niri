@@ -378,4 +378,13 @@ mod collections_tests {
         }
         assert_eq!(replicated.collections, collections);
     }
+
+    #[test]
+    fn collection_activation_passes_through_state_replication_pipeline() {
+        let mut state = EventStreamState::default();
+        assert!(matches!(
+            EventStreamStatePart::apply(&mut state, Event::CollectionActivated { id: 17 }),
+            Some(Event::CollectionActivated { id: 17 })
+        ));
+    }
 }

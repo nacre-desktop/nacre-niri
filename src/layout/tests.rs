@@ -479,6 +479,12 @@ enum Op {
     },
     RemoveOutput(#[proptest(strategy = "1..=5usize")] usize),
     CreateCollection(#[proptest(strategy = "prop::option::of(1..=5usize)")] Option<usize>),
+    RenameCollection {
+        #[proptest(strategy = "1..=5u8")]
+        reference: u8,
+        #[proptest(strategy = "prop::option::of(1..=5usize)")]
+        name: Option<usize>,
+    },
     FocusCollection(#[proptest(strategy = "1..=5u8")] u8),
     FocusCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
     FocusCollectionById(#[proptest(strategy = "0..=4usize")] usize),
@@ -888,6 +894,12 @@ impl Op {
         match self {
             Op::CreateCollection(name) => {
                 layout.create_collection(name.map(|id| format!("collection{id}")));
+            }
+            Op::RenameCollection { reference, name } => {
+                layout.set_collection_name(
+                    &WorkspaceReference::Index(reference),
+                    name.map(|id| format!("desk{id}")),
+                );
             }
             Op::FocusCollection(index) => {
                 layout.focus_collection(&WorkspaceReference::Index(index));

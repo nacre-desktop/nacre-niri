@@ -353,6 +353,8 @@ pub struct Layout<W: LayoutElement> {
     /// Configured workspaces awaiting their first matching output at startup.
     collection_pending_workspaces: Vec<WorkspaceId>,
     collection_overview: collection_overview::Overview,
+    /// Full-size horizontal switch between the active collection and its adjacent desk.
+    collection_switch: Option<CollectionSwitchTransition>,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -576,6 +578,34 @@ struct OverviewGesture {
     value: f64,
 }
 
+#[derive(Debug)]
+struct CollectionSwitchTransition {
+    output: Output,
+    current_id: u64,
+    other_id: Option<u64>,
+    other_offset_delta: f64,
+    side: f64,
+    offset: CollectionSwitchOffset,
+}
+
+#[derive(Debug)]
+enum CollectionSwitchOffset {
+    Gesture { base: f64, tracker: SwipeTracker },
+    Animation(Animation),
+}
+
+impl CollectionSwitchTransition {
+    fn offset(&self) -> f64 {
+        let offset = match &self.offset {
+            CollectionSwitchOffset::Gesture { base, tracker } => {
+                *base + tracker.pos() * output_size(&self.output).w / 300.
+            }
+            CollectionSwitchOffset::Animation(animation) => animation.value(),
+        };
+        offset.clamp(-output_size(&self.output).w, output_size(&self.output).w)
+    }
+}
+
 impl SizingMode {
     #[must_use]
     pub fn is_normal(&self) -> bool {
@@ -721,6 +751,7 @@ impl<W: LayoutElement> Layout<W> {
             collection_returns: HashMap::new(),
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
+            collection_switch: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -762,6 +793,7 @@ impl<W: LayoutElement> Layout<W> {
             collection_returns: HashMap::new(),
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
+            collection_switch: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -1821,6 +1853,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn should_trigger_focus_follows_mouse_on(&self, window: &W::Id) -> bool {
+        if self.collection_switch.is_some() {
+            return false;
+        }
         if self.is_window_hidden(window) {
             return false;
         }
@@ -3436,6 +3471,13 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
+        if let Some(transition) = &self.collection_switch {
+            if output.is_none_or(|output| *output == transition.output)
+                && matches!(&transition.offset, CollectionSwitchOffset::Animation(animation) if !animation.is_done())
+            {
+                return true;
+            }
+        }
         if self.overview_open
             && self
                 .collections
@@ -3486,6 +3528,37 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
+        self.update_collection_switch_render_state();
+        let switch_workspace_id = self.collection_switch.as_ref().and_then(|transition| {
+            transition.other_id.and_then(|id| {
+                self.collection_active_workspace(id)
+            })
+        });
+        if let Some(id) = switch_workspace_id {
+            let mut prepared = false;
+            for workspace in self
+                .collections
+                .iter_mut()
+                .flat_map(|collection| collection.workspaces.iter_mut())
+            {
+                if workspace.id() == id {
+                    workspace.update_render_elements(false);
+                    prepared = true;
+                }
+            }
+            if !prepared {
+                if let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set {
+                    for workspace in monitors
+                        .iter_mut()
+                        .flat_map(|monitor| monitor.workspaces.iter_mut())
+                    {
+                        if workspace.id() == id {
+                            workspace.update_render_elements(false);
+                        }
+                    }
+                }
+            }
+        }
         let overview_open = self.overview_open;
         if self.collection_overview_is_open() {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only

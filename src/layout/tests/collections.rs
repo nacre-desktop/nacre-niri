@@ -487,3 +487,21 @@ proptest! {
         check_ops_on_layout(&mut layout, ops);
     }
 }
+
+#[test]
+fn collection_rename_persists_empty_named_collection_and_rejects_duplicates() {
+    let mut options = Options::default();
+    options.layout.collections.enabled = true;
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    Op::AddOutput(1).apply(&mut layout);
+    let created = layout.create_collection(Some("  research  ".into()));
+    assert_eq!(
+        layout.collections().iter().find(|c| c.id == created).unwrap().name.as_deref(),
+        Some("research")
+    );
+    assert!(layout.set_collection_name(&WorkspaceReference::Id(created), Some("work".into())));
+    assert!(!layout.set_collection_name(&WorkspaceReference::Index(1), Some("work".into())));
+    assert!(layout.set_collection_name(&WorkspaceReference::Id(created), Some("  ".into())));
+    assert!(layout.collections().iter().any(|c| c.id == created));
+    layout.verify_invariants();
+}

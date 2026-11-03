@@ -374,6 +374,9 @@ pub struct Niri {
     pub(crate) edge_trigger_last_motion: Option<(Point<f64, Logical>, Instant)>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
+    pub gesture_swipe_collection_cumulative: Option<(f64, f64)>,
+    pub gesture_swipe_collection_output: Option<Output>,
+    pub gesture_swipe_collection_mode: Option<CollectionSwipeMode>,
     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
     pub vertical_wheel_tracker: ScrollTracker,
     pub horizontal_wheel_tracker: ScrollTracker,
@@ -418,6 +421,12 @@ pub struct Niri {
 
     #[cfg(feature = "xdp-gnome-screencast")]
     pub casting: Screencasting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollectionSwipeMode {
+    Recognizing,
+    Switching,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2602,6 +2611,9 @@ impl Niri {
             edge_trigger_last_motion: None,
             tablet_cursor_location: None,
             gesture_swipe_3f_cumulative: None,
+            gesture_swipe_collection_cumulative: None,
+            gesture_swipe_collection_output: None,
+            gesture_swipe_collection_mode: None,
             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
             vertical_wheel_tracker: ScrollTracker::new(120),
             horizontal_wheel_tracker: ScrollTracker::new(120),
@@ -4443,7 +4455,10 @@ impl Niri {
                         push(elem.into())
                     });
             }
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            let switch_workspace = self.layout.collection_switch_render_workspace(output);
+            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+                push(elem.into())
+            });
 
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
@@ -4500,7 +4515,10 @@ impl Niri {
                         push(elem.into())
                     });
             }
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            let switch_workspace = self.layout.collection_switch_render_workspace(output);
+            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+                push(elem.into())
+            });
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 // The render element namespace. This will be set to the workspace index for

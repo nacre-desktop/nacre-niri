@@ -1519,6 +1519,12 @@ impl State {
                 self.niri.layer_shell_on_demand_focus = None;
                 self.niri.queue_redraw_all();
             }
+            Action::SetCollectionName(reference, name) => {
+                if self.niri.layout.set_collection_name(&reference, name) {
+                    self.niri.queue_redraw_all();
+                    self.niri.ipc_refresh_layout();
+                }
+            }
             Action::MoveWindowToCollectionNext => {
                 self.niri.layout.move_window_to_collection_next();
                 self.maybe_warp_cursor_to_focus();
@@ -3851,11 +3857,35 @@ impl State {
             // We handled this event.
             return;
         } else if event.fingers() == 4 {
+            let config = self.niri.config.borrow().gestures.collection_switch;
+            if config.on
+                && config.has_supported_finger_count()
+                && config.fingers == event.fingers() as u8
+                && !self.niri.layout.is_overview_open()
+            {
+                self.niri.gesture_swipe_collection_cumulative = Some((0., 0.));
+                self.niri.gesture_swipe_collection_output = self.niri.output_under_cursor().cloned();
+                self.niri.gesture_swipe_collection_mode = Some(crate::niri::CollectionSwipeMode::Recognizing);
+                return;
+            }
+
             self.niri.layout.overview_gesture_begin();
             self.niri.queue_redraw_all();
 
             // We handled this event.
             return;
+        } else {
+            let config = self.niri.config.borrow().gestures.collection_switch;
+            if config.on
+                && config.has_supported_finger_count()
+                && config.fingers == event.fingers() as u8
+                && !self.niri.layout.is_overview_open()
+            {
+                self.niri.gesture_swipe_collection_cumulative = Some((0., 0.));
+                self.niri.gesture_swipe_collection_output = self.niri.output_under_cursor().cloned();
+                self.niri.gesture_swipe_collection_mode = Some(crate::niri::CollectionSwipeMode::Recognizing);
+                return;
+            }
         }
 
         let serial = SERIAL_COUNTER.next_serial();
@@ -3899,6 +3929,72 @@ impl State {
                 delta_x = -delta_x;
                 delta_y = -delta_y;
             }
+        }
+
+        if let Some(crate::niri::CollectionSwipeMode::Recognizing) =
+            self.niri.gesture_swipe_collection_mode
+        {
+            let Some((sum_x, sum_y)) = self.niri.gesture_swipe_collection_cumulative.as_mut()
+            else {
+                self.niri.gesture_swipe_collection_mode = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            };
+            *sum_x += delta_x;
+            *sum_y += uninverted_delta_y;
+            if sum_x * sum_x + sum_y * sum_y < 16. * 16. {
+                return;
+            }
+            let (sum_x, sum_y) = (*sum_x, *sum_y);
+            self.niri.gesture_swipe_collection_cumulative = None;
+            if sum_x.abs() > sum_y.abs() {
+                let Some(output) = self.niri.gesture_swipe_collection_output.clone() else {
+                    self.niri.gesture_swipe_collection_mode = None;
+                    return;
+                };
+                if !self.niri.layout.collection_switch_gesture_begin(&output) {
+                    self.niri.gesture_swipe_collection_mode = None;
+                    self.niri.gesture_swipe_collection_output = None;
+                    return;
+                }
+                self.niri.gesture_swipe_collection_mode =
+                    Some(crate::niri::CollectionSwipeMode::Switching);
+                if let Some(output) = self
+                    .niri
+                    .layout
+                    .collection_switch_gesture_update(sum_x, Duration::from_micros(event.time()))
+                {
+                    self.niri.queue_redraw(&output);
+                }
+                return;
+            }
+
+            self.niri.gesture_swipe_collection_mode = None;
+            self.niri.gesture_swipe_collection_output = None;
+            self.niri.layout.overview_gesture_begin();
+            if self
+                .niri
+                .layout
+                .overview_gesture_update(-sum_y, Duration::from_micros(event.time()))
+                .is_some_and(|redraw| redraw)
+            {
+                self.niri.queue_redraw_all();
+            }
+            return;
+        }
+
+        if matches!(
+            self.niri.gesture_swipe_collection_mode,
+            Some(crate::niri::CollectionSwipeMode::Switching)
+        ) {
+            if let Some(output) = self
+                .niri
+                .layout
+                .collection_switch_gesture_update(delta_x, Duration::from_micros(event.time()))
+            {
+                self.niri.queue_redraw(&output);
+            }
+            return;
         }
 
         let is_overview_open = self.niri.layout.is_overview_open();
@@ -4005,6 +4101,27 @@ impl State {
 
     fn on_gesture_swipe_end<I: InputBackend>(&mut self, event: I::GestureSwipeEndEvent) {
         self.niri.gesture_swipe_3f_cumulative = None;
+
+        match self.niri.gesture_swipe_collection_mode.take() {
+            Some(crate::niri::CollectionSwipeMode::Switching) => {
+                if let Some(output) = self
+                    .niri
+                    .layout
+                    .collection_switch_gesture_end(event.cancelled())
+                {
+                    self.niri.queue_redraw(&output);
+                }
+                self.niri.gesture_swipe_collection_cumulative = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            }
+            Some(crate::niri::CollectionSwipeMode::Recognizing) => {
+                self.niri.gesture_swipe_collection_cumulative = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            }
+            None => {}
+        }
 
         let mut handled = false;
         let res = self.niri.layout.workspace_switch_gesture_end(Some(true));

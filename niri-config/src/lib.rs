@@ -690,6 +690,20 @@ mod tests {
     }
 
     #[test]
+    fn decodes_collection_rename_action() {
+        let config = do_parse(
+            r#"binds { Mod+Shift+N { set-collection-name "work" "research"; } }"#,
+        );
+        assert_eq!(
+            config.binds.0[0].action,
+            Action::SetCollectionName(
+                WorkspaceReference::Name("work".into()),
+                Some("research".into())
+            )
+        );
+    }
+
+    #[test]
     fn nacre_overview_hover_defaults_on_and_can_be_disabled() {
         assert!(do_parse("").nacre.overview_hover);
         assert!(do_parse("nacre { overview-hover; }").nacre.overview_hover);
@@ -1865,6 +1879,7 @@ mod tests {
                     delay_ms: 100,
                     max_speed: 1500.0,
                 },
+                collection_switch: gestures::CollectionSwitch::default(),
                 hot_corners: HotCorners {
                     off: false,
                     top_left: false,

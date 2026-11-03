@@ -465,6 +465,9 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::CollectionsChanged { collections } => {
                         println!("Collections changed: {collections:?}");
                     }
+                    Event::CollectionActivated { id } => {
+                        println!("Collection activated: {id}");
+                    }
                     Event::WorkspaceUrgencyChanged { id, urgent } => {
                         println!("Workspace {id}: urgency changed to {urgent}");
                     }
