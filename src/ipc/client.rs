@@ -517,6 +517,13 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::NacreOverviewHoverChanged { id } => {
                         println!("Overview hovered window changed: {id:?}");
                     }
+                    Event::EdgeTriggered {
+                        output,
+                        edge,
+                        position,
+                    } => {
+                        println!("Edge triggered on {output} {edge:?} at {position:?}");
+                    }
                     Event::ConfigLoaded { failed } => {
                         let status = if failed {
                             "with an error"

@@ -6,7 +6,6 @@ use calloop::timer::{TimeoutAction, Timer};
 use niri_config::OutputName;
 use niri_ipc::Edge;
 use smithay::output::Output;
-use smithay::reexports::calloop::RegistrationToken;
 use smithay::utils::{Logical, Point};
 
 use crate::niri::Niri;
@@ -187,12 +186,13 @@ mod tests {
                 .then(|| select_edge(size, [x, y], enabled))
                 .flatten();
             if let Some(edge) = edge {
-                prop_assert!(enabled[match edge {
+                let index = match edge {
                     Edge::Left => 0,
                     Edge::Right => 1,
                     Edge::Top => 2,
                     Edge::Bottom => 3,
-                }]);
+                };
+                prop_assert!(enabled[index]);
                 prop_assert!(is_inside_edge(logical_size, [x, y], edge));
             }
             let _ = inward_delta(Edge::Left, [x, y]);
