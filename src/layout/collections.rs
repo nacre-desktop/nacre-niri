@@ -4,6 +4,7 @@
 //! keeps the stable collection identity separate from an output name so it survives hotplug.
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use super::workspace::{OutputId, Workspace, WorkspaceId};
 use super::LayoutElement;
@@ -25,6 +26,8 @@ pub(super) struct Collection<W: LayoutElement> {
     pub persistent: bool,
     /// Whether persistence comes from a runtime-created or renamed desk.
     pub user_named: bool,
+    /// Config declaration that originally created this collection, if any.
+    pub configured_name: Option<String>,
 }
 
 impl<W: LayoutElement> Collection<W> {
@@ -38,6 +41,7 @@ impl<W: LayoutElement> Collection<W> {
             active_workspace: None,
             persistent,
             user_named: false,
+            configured_name: None,
         }
     }
 
@@ -51,10 +55,15 @@ impl<W: LayoutElement> Collection<W> {
             niri_config::WorkspaceReference::Index(index) => {
                 *index != 0 && usize::from(*index) == idx + 1
             }
-            niri_config::WorkspaceReference::Name(name) => self
-                .name
-                .as_deref()
-                .is_some_and(|candidate| candidate == name),
+            niri_config::WorkspaceReference::Name(name) => {
+                self.name
+                    .as_deref()
+                    .is_some_and(|candidate| candidate == name)
+                    || self
+                        .configured_name
+                        .as_deref()
+                        .is_some_and(|candidate| candidate == name)
+            }
         }
     }
 }
@@ -62,9 +71,14 @@ impl<W: LayoutElement> Collection<W> {
 use niri_config::{LayoutPart, WorkspaceReference};
 use smithay::output::Output;
 
-use super::monitor::{Monitor, MonitorAddWindowTarget};
+use super::monitor::{Monitor, MonitorAddWindowTarget, WORKSPACE_GESTURE_MOVEMENT};
 use super::workspace::WorkspaceAddWindowTarget;
-use super::{output_size, ActivateWindow, Layout, MonitorSet};
+use super::{
+    output_size, ActivateWindow, CollectionSwitchOffset, CollectionSwitchTransition, Layout,
+    MonitorSet,
+};
+use crate::animation::Animation;
+use crate::input::swipe_tracker::SwipeTracker;
 use crate::utils::transaction::Transaction;
 
 impl<W: LayoutElement> Layout<W> {
@@ -153,7 +167,7 @@ impl<W: LayoutElement> Layout<W> {
         if let Some(existing) = name.as_ref().and_then(|name| {
             self.collections
                 .iter()
-                .find(|c| c.name.as_ref() == Some(name))
+                .find(|c| c.name.as_ref() == Some(name) || c.configured_name.as_ref() == Some(name))
         }) {
             let id = existing.id;
             self.focus_collection(&WorkspaceReference::Id(id));
@@ -177,7 +191,9 @@ impl<W: LayoutElement> Layout<W> {
         if !self.options.layout.collections.enabled {
             return false;
         }
-        let name = name.map(|name| name.trim().to_owned()).filter(|name| !name.is_empty());
+        let name = name
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty());
         let Some(index) = self
             .collections
             .iter()
@@ -188,21 +204,24 @@ impl<W: LayoutElement> Layout<W> {
             return false;
         };
         if name.as_ref().is_some_and(|name| {
-            self.collections
-                .iter()
-                .enumerate()
-                .any(|(i, collection)| i != index && collection.name.as_ref() == Some(name))
+            self.collections.iter().enumerate().any(|(i, collection)| {
+                i != index
+                    && (collection.name.as_ref() == Some(name)
+                        || collection.configured_name.as_ref() == Some(name))
+            })
         }) {
             return false;
         }
         let collection = &mut self.collections[index];
         collection.user_named = name.is_some();
         collection.persistent = collection.user_named
+            || collection.configured_name.is_some()
             || collection
                 .name
                 .as_ref()
                 .is_some_and(|old| self.options.layout.collections.names.contains(old));
         collection.name = name;
+        self.clean_up_collections();
         true
     }
 
@@ -210,17 +229,30 @@ impl<W: LayoutElement> Layout<W> {
     pub(super) fn configure_collections(&mut self) {
         let names = self.options.layout.collections.names.clone();
         for c in &mut self.collections {
-            c.persistent = c.user_named
-                || c.name.as_ref().is_some_and(|name| names.contains(name));
+            if let Some(configured_name) = &c.configured_name {
+                if names.contains(configured_name) {
+                    c.persistent = true;
+                } else {
+                    c.configured_name = None;
+                    c.persistent = c.user_named;
+                }
+            } else {
+                c.persistent =
+                    c.user_named || c.name.as_ref().is_some_and(|name| names.contains(name));
+                if c.name.as_ref().is_some_and(|name| names.contains(name)) {
+                    c.configured_name = c.name.clone();
+                }
+            }
         }
         if self.options.layout.collections.enabled {
             for name in names {
-                if !self
-                    .collections
-                    .iter()
-                    .any(|c| c.name.as_ref() == Some(&name))
-                {
-                    self.new_collection(Some(name), None, true);
+                if !self.collections.iter().any(|c| {
+                    c.name.as_ref() == Some(&name) || c.configured_name.as_ref() == Some(&name)
+                }) {
+                    let id = self.new_collection(Some(name.clone()), None, true);
+                    if let Some(collection) = self.collections.iter_mut().find(|c| c.id == id) {
+                        collection.configured_name = Some(name);
+                    }
                 }
             }
         }
@@ -682,11 +714,7 @@ impl<W: LayoutElement> Layout<W> {
         self.focus_collection_on_output(&output, reference);
     }
 
-    pub fn focus_collection_on_output(
-        &mut self,
-        output: &Output,
-        reference: &WorkspaceReference,
-    ) {
+    pub fn focus_collection_on_output(&mut self, output: &Output, reference: &WorkspaceReference) {
         if !self.options.layout.collections.enabled {
             return;
         }
@@ -738,14 +766,11 @@ impl<W: LayoutElement> Layout<W> {
         Some(self.collections[(idx + if next { 1 } else { len - 1 }) % len].id)
     }
 
-    fn adjacent_collection_from(&self, current: u64, next: bool) -> Option<u64> {
-        let idx = self.collections.iter().position(|collection| collection.id == current)?;
-        let len = self.collections.len();
-        (len > 1).then(|| self.collections[(idx + if next { 1 } else { len - 1 }) % len].id)
-    }
-
     pub fn collection_switch_gesture_begin(&mut self, output: &Output) -> bool {
-        if !self.options.layout.collections.enabled || self.overview_open {
+        if !self.options.layout.collections.enabled
+            || self.overview_open
+            || self.collections.len() < 2
+        {
             return false;
         }
         let Some(current_id) = self
@@ -787,6 +812,15 @@ impl<W: LayoutElement> Layout<W> {
         true
     }
 
+    pub fn collection_switch_gesture_available(&self, output: &Output) -> bool {
+        self.options.layout.collections.enabled
+            && !self.overview_open
+            && self.collections.len() > 1
+            && self
+                .monitor_for_output(output)
+                .is_some_and(|monitor| monitor.collection_id.is_some())
+    }
+
     pub fn collection_switch_gesture_update(
         &mut self,
         delta_x: f64,
@@ -799,7 +833,7 @@ impl<W: LayoutElement> Layout<W> {
         tracker.push(delta_x, timestamp);
         let movement = tracker.pos();
         let width = output_size(&transition.output).w;
-        let offset = (*base + movement * width / 300.).clamp(-width, width);
+        let offset = (*base + movement * width / WORKSPACE_GESTURE_MOVEMENT).clamp(-width, width);
         if offset.abs() >= 1. {
             let next = offset < 0.;
             let side = if next { 1. } else { -1. };
@@ -809,7 +843,8 @@ impl<W: LayoutElement> Layout<W> {
                 .position(|collection| collection.id == transition.current_id);
             transition.other_id = index.and_then(|index| {
                 let len = self.collections.len();
-                (len > 1).then(|| self.collections[(index + if next { 1 } else { len - 1 }) % len].id)
+                (len > 1)
+                    .then(|| self.collections[(index + if next { 1 } else { len - 1 }) % len].id)
             });
             transition.side = side;
             transition.other_offset_delta = side * width;
@@ -832,7 +867,8 @@ impl<W: LayoutElement> Layout<W> {
         tracker.push(0., self.clock.now_unadjusted());
         let output = transition.output.clone();
         let width = output_size(&output).w;
-        let projected = (base + tracker.projected_end_pos() * width / 300.).clamp(-width, width);
+        let projected = (base + tracker.projected_end_pos() * width / WORKSPACE_GESTURE_MOVEMENT)
+            .clamp(-width, width);
         let commit = !cancelled
             && transition.other_id.is_some()
             && ((transition.side > 0. && projected <= -width * 0.45)
@@ -848,7 +884,7 @@ impl<W: LayoutElement> Layout<W> {
                 self.clock.clone(),
                 offset + transition.side * width,
                 0.,
-                tracker.velocity() * width / 300.,
+                tracker.velocity() * width / WORKSPACE_GESTURE_MOVEMENT,
                 self.options.animations.workspace_switch.0,
             ));
         } else {
@@ -857,7 +893,7 @@ impl<W: LayoutElement> Layout<W> {
                 self.clock.clone(),
                 offset,
                 0.,
-                tracker.velocity() * width / 300.,
+                tracker.velocity() * width / WORKSPACE_GESTURE_MOVEMENT,
                 self.options.animations.workspace_switch.0,
             ));
         }
@@ -873,6 +909,16 @@ impl<W: LayoutElement> Layout<W> {
         Some(output)
     }
 
+    pub fn cancel_collection_switch(&mut self) -> Option<Output> {
+        let transition = self.collection_switch.take()?;
+        let output = transition.output;
+        if let Some(monitor) = self.monitor_for_output_mut(&output) {
+            monitor.collection_switch_offset_x = 0.;
+            monitor.collection_switch_active = false;
+        }
+        Some(output)
+    }
+
     pub fn collection_switch_render_workspace(
         &self,
         output: &Output,
@@ -883,8 +929,13 @@ impl<W: LayoutElement> Layout<W> {
         }
         let id = transition.other_id?;
         let workspace_id = self.collection_active_workspace(id)?;
-        let workspace = self.collection_workspaces(id).find(|ws| ws.id() == workspace_id)?;
-        Some((workspace, transition.offset() + transition.other_offset_delta))
+        let workspace = self
+            .collection_workspaces(id)
+            .find(|ws| ws.id() == workspace_id)?;
+        Some((
+            workspace,
+            transition.offset() + transition.other_offset_delta,
+        ))
     }
 
     pub(super) fn update_collection_switch_render_state(&mut self) {
@@ -1026,5 +1077,28 @@ impl<W: LayoutElement> Layout<W> {
                         .is_some_and(|home| outputs.iter().any(|output| home.matches(output))))
                 || c.workspaces.iter().any(|ws| ws.has_windows())
         });
+        let remove_transition = self.collection_switch.as_ref().is_some_and(|transition| {
+            !self
+                .monitors()
+                .any(|monitor| monitor.output() == &transition.output)
+                || !self
+                    .collections
+                    .iter()
+                    .any(|collection| collection.id == transition.current_id)
+                || transition.other_id.is_some_and(|other| {
+                    !self
+                        .collections
+                        .iter()
+                        .any(|collection| collection.id == other)
+                })
+        });
+        if remove_transition {
+            if let Some(transition) = self.collection_switch.take() {
+                if let Some(monitor) = self.monitor_for_output_mut(&transition.output) {
+                    monitor.collection_switch_active = false;
+                    monitor.collection_switch_offset_x = 0.;
+                }
+            }
+        }
     }
 }

@@ -69,7 +69,11 @@ binds {
     Mod+Ctrl+Left { focus-collection-previous; }
     Mod+Ctrl+1 { focus-collection "work"; }
     Mod+Ctrl+N { create-collection; }
+    Mod+Ctrl+Shift+N { set-collection-name "work" "research"; }
     Mod+Ctrl+Shift+Right { move-window-to-collection-next; }
+}
+gestures {
+    collection-switch { fingers 4; }
 }
 ```
 
@@ -91,6 +95,9 @@ events continue to expose hidden windows; collection membership is obtained from
 workspace IDs. Clients that need collection updates request the Nacre-Niri extension
 with `niri msg event-stream --collections`; the default event stream omits collection
 events so stock Niri 26.04 clients can still parse the stream.
+`CollectionActivated { id }` identifies the newly shown collection. Clients that
+also need overview hover metadata request `NacreOverviewHoverStreamWithCollections`;
+the combined request is accepted only when both native features are enabled.
 Showing a collection changes the standard workspace snapshot: newly shown
 workspaces have their output and active/focused flags, while hidden workspaces
 have no output and are inactive and unfocused. Stock clients do not need the
@@ -101,9 +108,13 @@ collection event extension to observe those changes.
 A shown collection is retained, even when empty. A hidden collection with no windows
 on any workspace is removed, whether detached or user-created, unless declared in
 config. A connected output's automatically created home desk remains available for
-rotation while that output is connected. An action-created name alone does not
-imply persistence. Empty trailing
+rotation while that output is connected. Runtime-created or renamed collections
+with a non-empty name remain persistent while empty. Clearing the name makes an
+otherwise empty hidden collection eligible for cleanup. Config-declared names
+remain persistent and take precedence when configuration reloads. Empty trailing
 workspaces continue to follow upstream workspace rules within each shown stack.
+The named collection and workspace stack state file, routing rules, and restore
+limits are documented in [collection persistence](collection-persistence.md).
 Removal runs after window close/move and during refresh; invalid saved return IDs
 fall back to an available collection.
 

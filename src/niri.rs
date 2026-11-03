@@ -1450,6 +1450,18 @@ impl State {
 
         self.niri.clear_edge_trigger();
         self.niri.edge_trigger_last_motion = None;
+        let collection_gesture = config.gestures.collection_switch;
+        if !collection_gesture.on
+            || !collection_gesture.has_supported_finger_count()
+            || !config.layout.collections.enabled
+        {
+            if let Some(output) = self.niri.layout.cancel_collection_switch() {
+                self.niri.queue_redraw(&output);
+            }
+            self.niri.gesture_swipe_collection_mode = None;
+            self.niri.gesture_swipe_collection_cumulative = None;
+            self.niri.gesture_swipe_collection_output = None;
+        }
         if !crate::edge_triggers::event_source_available(&config) {
             if let Some(server) = &self.niri.ipc_server {
                 server.disconnect_edge_trigger_clients();

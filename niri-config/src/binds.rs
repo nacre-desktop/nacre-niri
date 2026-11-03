@@ -535,10 +535,9 @@ impl From<niri_ipc::Action> for Action {
                 Self::FocusCollection(WorkspaceReference::from(reference))
             }
             niri_ipc::Action::CreateCollection { name } => Self::CreateCollection(name),
-            niri_ipc::Action::SetCollectionName { reference, name } => Self::SetCollectionName(
-                WorkspaceReference::from(reference),
-                name,
-            ),
+            niri_ipc::Action::SetCollectionName { reference, name } => {
+                Self::SetCollectionName(WorkspaceReference::from(reference), name)
+            }
             niri_ipc::Action::MoveWindowToCollectionNext {} => Self::MoveWindowToCollectionNext,
             niri_ipc::Action::MoveWindowToCollectionPrevious {} => {
                 Self::MoveWindowToCollectionPrevious

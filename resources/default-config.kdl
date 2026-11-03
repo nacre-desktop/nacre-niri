@@ -71,6 +71,14 @@ input {
     focus-follows-mouse max-scroll-amount="0%"
 }
 
+gestures {
+    collection-switch {
+        // Horizontal swipes with this many fingers move between desks. Vertical four-finger
+        // swipes continue to control the overview. Only 4 and 5 are supported.
+        fingers 4
+    }
+}
+
 // You can configure outputs by their name, which you can find
 // by running `niri msg outputs` while inside a niri instance.
 // The built-in laptop monitor is usually called "eDP-1".

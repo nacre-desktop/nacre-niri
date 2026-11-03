@@ -34,7 +34,7 @@ use crate::utils::{
 };
 
 /// Amount of touchpad movement to scroll the height of one workspace.
-const WORKSPACE_GESTURE_MOVEMENT: f64 = 300.;
+pub(super) const WORKSPACE_GESTURE_MOVEMENT: f64 = 300.;
 
 const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
     stiffness: 0.5,
@@ -1660,6 +1660,7 @@ impl<W: LayoutElement> Monitor<W> {
         let static_offset = static_offset
             .to_physical_precise_round(scale)
             .to_logical(scale);
+        let collection_switch_offset_x = self.collection_switch_offset_x;
 
         let first_ws_y = -self.workspace_render_idx() * ws_height_with_gap;
         let first_ws_y = round_logical_in_physical(scale, first_ws_y);
@@ -1667,7 +1668,7 @@ impl<W: LayoutElement> Monitor<W> {
         // Return position for one-past-last workspace too.
         (0..=self.workspaces.len()).map(move |idx| {
             let y = first_ws_y + idx as f64 * ws_height_with_gap;
-            let loc = Point::from((self.collection_switch_offset_x, y)) + static_offset;
+            let loc = Point::from((collection_switch_offset_x, y)) + static_offset;
 
             // Even though all components that go into loc are rounded to physical pixels, the
             // floating point addition may lose precision. This can result for example in the
@@ -1918,7 +1919,9 @@ impl<W: LayoutElement> Monitor<W> {
 
         for (ws, geo) in self.workspaces_with_render_geo() {
             let viewport = if self.collection_switch_active {
-                Some(Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale))
+                let output_bounds = Rectangle::from_size(output_size(&self.output))
+                    .to_physical_precise_round(scale);
+                output_bounds.intersection(geo.to_physical_precise_round(scale))
             } else if clip_to_workspace {
                 let background = MonitorInnerRenderElement::SolidColor(ws.render_background());
                 let background = scale_relocate(geo, background).geometry(scale.into());
@@ -1968,13 +1971,7 @@ impl<W: LayoutElement> Monitor<W> {
         }
 
         if let Some((workspace, x_offset)) = collection_switch_workspace {
-            self.render_collection_switch_workspace(
-                ctx.r(),
-                workspace,
-                x_offset,
-                focus_ring,
-                push,
-            );
+            self.render_collection_switch_workspace(ctx.r(), workspace, x_offset, focus_ring, push);
         }
     }
 
@@ -1987,36 +1984,55 @@ impl<W: LayoutElement> Monitor<W> {
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
         let scale = self.scale.fractional_scale();
-        let viewport = Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale);
+        let output_bounds =
+            Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale);
+        let workspace_bounds = Rectangle::new(
+            Point::from((x_offset, 0.)).to_physical_precise_round(scale),
+            output_size(&self.output).to_physical_precise_round(scale),
+        );
+        let Some(viewport) = output_bounds.intersection(workspace_bounds) else {
+            return;
+        };
         let height = viewport.size.h;
         let source_crop = Rectangle::new(
             Point::from((-i32::MAX / 2, 0)),
             Size::from((i32::MAX, height)),
         );
-        let offset = Point::from((x_offset, 0.)).to_physical_precise_round(scale);
-        let xray_pos = XrayPos::new(Point::from((x_offset, 0.)), 1.);
+        let source_size = workspace.view_size();
+        let destination_size = output_size(&self.output);
+        let fitted_scale =
+            (destination_size.w / source_size.w).max(destination_size.h / source_size.h);
+        let fitted_offset = Point::from((
+            x_offset + (destination_size.w - source_size.w * fitted_scale) / 2.,
+            (destination_size.h - source_size.h * fitted_scale) / 2.,
+        ));
+        let offset = fitted_offset.to_physical_precise_round(scale);
+        let xray_pos = XrayPos::new(fitted_offset, fitted_scale);
 
         let mut push_element = |element: WorkspaceRenderElement<R>| {
             let Some(element) = CropRenderElement::from_element(element, scale, source_crop) else {
                 return;
             };
             let element = MonitorInnerRenderElement::Workspace(element);
-            let element = RescaleRenderElement::from_element(element, Point::default(), 1.);
+            let element =
+                RescaleRenderElement::from_element(element, Point::default(), fitted_scale);
             let element = RelocateRenderElement::from_element(element, offset, Relocate::Relative);
             if let Some(element) = CropRenderElement::from_element(element, scale, viewport) {
                 push(MonitorRenderElement::ViewportClipped(element));
             }
         };
 
+        workspace.render_floating(ctx.r(), xray_pos, focus_ring, &mut push_element);
+        workspace.render_scrolling(ctx.r(), xray_pos, focus_ring, &mut push_element);
+
         let background = MonitorInnerRenderElement::SolidColor(workspace.render_background());
-        let background = RescaleRenderElement::from_element(background, Point::default(), 1.);
-        let background = RelocateRenderElement::from_element(background, offset, Relocate::Relative);
+        let background =
+            RescaleRenderElement::from_element(background, Point::default(), fitted_scale);
+        let background =
+            RelocateRenderElement::from_element(background, offset, Relocate::Relative);
         if let Some(background) = CropRenderElement::from_element(background, scale, viewport) {
             push(MonitorRenderElement::ViewportClipped(background));
         }
-
-        workspace.render_floating(ctx.r(), xray_pos, focus_ring, &mut push_element);
-        workspace.render_scrolling(ctx.r(), xray_pos, focus_ring, &mut push_element);
     }
 
     pub fn render_workspace_shadows<R: NiriRenderer>(

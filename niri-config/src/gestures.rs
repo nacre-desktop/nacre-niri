@@ -41,7 +41,10 @@ pub struct CollectionSwitch {
 
 impl Default for CollectionSwitch {
     fn default() -> Self {
-        Self { on: true, fingers: 4 }
+        Self {
+            on: true,
+            fingers: 4,
+        }
     }
 }
 

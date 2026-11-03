@@ -54,7 +54,7 @@ use workspace::{WorkspaceAddWindowTarget, WorkspaceId};
 
 pub use self::collection_overview::CollectionOverviewRenderElement;
 pub use self::monitor::MonitorRenderElement;
-use self::monitor::{Monitor, WorkspaceSwitch};
+use self::monitor::{Monitor, WorkspaceSwitch, WORKSPACE_GESTURE_MOVEMENT};
 use self::workspace::{OutputId, Workspace};
 use crate::animation::{Animation, Clock};
 use crate::input::swipe_tracker::SwipeTracker;
@@ -598,7 +598,7 @@ impl CollectionSwitchTransition {
     fn offset(&self) -> f64 {
         let offset = match &self.offset {
             CollectionSwitchOffset::Gesture { base, tracker } => {
-                *base + tracker.pos() * output_size(&self.output).w / 300.
+                *base + tracker.pos() * output_size(&self.output).w / WORKSPACE_GESTURE_MOVEMENT
             }
             CollectionSwitchOffset::Animation(animation) => animation.value(),
         };
@@ -3530,9 +3530,9 @@ impl<W: LayoutElement> Layout<W> {
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
         self.update_collection_switch_render_state();
         let switch_workspace_id = self.collection_switch.as_ref().and_then(|transition| {
-            transition.other_id.and_then(|id| {
-                self.collection_active_workspace(id)
-            })
+            transition
+                .other_id
+                .and_then(|id| self.collection_active_workspace(id))
         });
         if let Some(id) = switch_workspace_id {
             let mut prepared = false;

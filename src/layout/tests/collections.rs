@@ -21,6 +21,116 @@ fn add_window(layout: &mut Layout<TestWindow>, id: usize) {
 }
 
 #[test]
+fn collection_swipe_tracks_fraction_of_output_width_and_cancel_keeps_source() {
+    for width in [1280, 1920] {
+        let mut layout = enabled_layout();
+        Op::AddOutput(1).apply(&mut layout);
+        let output = layout.outputs().next().unwrap().clone();
+        output.change_current_state(
+            Some(Mode {
+                size: Size::from((width, 720)),
+                refresh: 60_000,
+            }),
+            None,
+            None,
+            None,
+        );
+        layout.update_output_size(&output);
+        let source = shown(&layout, "output1");
+        let target = layout.create_collection(Some("desk".into()));
+        assert_ne!(source, target);
+
+        assert!(layout.collection_switch_gesture_begin(&output));
+        assert_eq!(
+            layout.collection_switch_gesture_update(-150., Duration::from_millis(10)),
+            Some(output.clone())
+        );
+        assert!(
+            (layout
+                .monitor_for_output(&output)
+                .unwrap()
+                .collection_switch_offset_x
+                + f64::from(width) / 2.)
+                .abs()
+                < 0.01
+        );
+        let (_, incoming_x) = layout
+            .collection_switch_render_workspace(&output)
+            .expect("adjacent desk is rendered during the gesture");
+        assert!((incoming_x - f64::from(width) / 2.).abs() < 0.01);
+
+        layout.collection_switch_gesture_end(true);
+        assert_eq!(shown(&layout, "output1"), target);
+        assert!(layout.collection_switch_render_workspace(&output).is_some());
+        layout.verify_invariants();
+    }
+}
+
+#[test]
+fn collection_swipe_to_a_collection_shown_elsewhere_leases_only_on_commit() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    Op::AddOutput(2).apply(&mut layout);
+    let output1 = layout
+        .outputs()
+        .find(|output| output.name() == "output1")
+        .unwrap()
+        .clone();
+    let source = shown(&layout, "output1");
+    let target = shown(&layout, "output2");
+
+    assert!(layout.collection_switch_gesture_begin(&output1));
+    layout.collection_switch_gesture_update(-180., Duration::from_millis(10));
+    assert_eq!(shown(&layout, "output1"), source);
+    assert_eq!(shown(&layout, "output2"), target);
+    layout.collection_switch_gesture_end(true);
+    assert_eq!(shown(&layout, "output1"), source);
+    assert_eq!(shown(&layout, "output2"), target);
+
+    assert!(layout.collection_switch_gesture_begin(&output1));
+    layout.collection_switch_gesture_update(-180., Duration::from_millis(20));
+    layout.collection_switch_gesture_end(false);
+    assert_eq!(shown(&layout, "output1"), target);
+    assert_eq!(shown(&layout, "output2"), source);
+    layout.verify_invariants();
+}
+
+#[test]
+fn collection_swipe_retarget_and_hotplug_clear_transient_state() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
+    layout.create_collection(Some("desk".into()));
+
+    assert!(layout.collection_switch_gesture_begin(&output));
+    layout.collection_switch_gesture_update(-180., Duration::ZERO);
+    layout.collection_switch_gesture_end(false);
+    assert!(layout.collection_switch_render_workspace(&output).is_some());
+
+    // Starting a new gesture catches the in-flight settling animation and keeps the other desk
+    // available for drawing while the new finger delta retargets the transition.
+    assert!(layout.collection_switch_gesture_begin(&output));
+    layout.collection_switch_gesture_update(30., Duration::from_millis(10));
+    assert!(layout.collection_switch_render_workspace(&output).is_some());
+
+    layout.remove_output(&output);
+    assert!(layout.collection_switch_render_workspace(&output).is_none());
+    assert!(layout
+        .monitors()
+        .all(|monitor| !monitor.collection_switch_active));
+    layout.verify_invariants();
+}
+
+#[test]
+fn one_collection_does_not_start_a_horizontal_transition() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
+    assert!(!layout.collection_switch_gesture_available(&output));
+    assert!(!layout.collection_switch_gesture_begin(&output));
+}
+
+#[test]
 fn unplug_keeps_collection_detached() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
@@ -496,12 +606,62 @@ fn collection_rename_persists_empty_named_collection_and_rejects_duplicates() {
     Op::AddOutput(1).apply(&mut layout);
     let created = layout.create_collection(Some("  research  ".into()));
     assert_eq!(
-        layout.collections().iter().find(|c| c.id == created).unwrap().name.as_deref(),
+        layout
+            .collections()
+            .iter()
+            .find(|c| c.id == created)
+            .unwrap()
+            .name
+            .as_deref(),
         Some("research")
     );
     assert!(layout.set_collection_name(&WorkspaceReference::Id(created), Some("work".into())));
     assert!(!layout.set_collection_name(&WorkspaceReference::Index(1), Some("work".into())));
     assert!(layout.set_collection_name(&WorkspaceReference::Id(created), Some("  ".into())));
     assert!(layout.collections().iter().any(|c| c.id == created));
+    layout.verify_invariants();
+}
+
+#[test]
+fn renamed_config_collection_keeps_origin_and_runtime_name_without_duplicates() {
+    let mut config = Config::default();
+    config.layout.collections.names = vec!["work".into()];
+    let mut layout = Layout::new(Clock::with_time(Duration::ZERO), &config);
+    Op::AddOutput(1).apply(&mut layout);
+    let configured = layout
+        .collections()
+        .into_iter()
+        .find(|collection| collection.name.as_deref() == Some("work"))
+        .unwrap()
+        .id;
+
+    assert!(layout.set_collection_name(
+        &WorkspaceReference::Name("work".into()),
+        Some("research".into())
+    ));
+    layout.update_config(&config);
+    assert_eq!(
+        layout
+            .collections()
+            .iter()
+            .filter(|collection| collection.name.as_deref() == Some("research"))
+            .count(),
+        1
+    );
+    assert_eq!(layout.create_collection(Some("work".into())), configured);
+
+    let another = layout.create_collection(Some("personal".into()));
+    assert!(!layout.set_collection_name(&WorkspaceReference::Id(another), Some("work".into())));
+
+    config.layout.collections.names.clear();
+    layout.update_config(&config);
+    let renamed = layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == configured)
+        .unwrap();
+    assert_eq!(renamed.name.as_deref(), Some("research"));
+    assert!(renamed.persistent);
+    assert_eq!(renamed.configured_name, None);
     layout.verify_invariants();
 }

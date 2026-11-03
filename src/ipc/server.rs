@@ -856,18 +856,15 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let output = result.map_err(|_| String::from("error getting active output info"))?;
             Response::FocusedOutput(output)
         }
-        Request::EventStream
-        | Request::EventStreamWithCollections => Response::Handled,
+        Request::EventStream | Request::EventStreamWithCollections => Response::Handled,
         request @ (Request::NacreOverviewHoverStream
         | Request::NacreOverviewHoverStreamWithCollections) => {
             let (tx, rx) = async_channel::bounded(1);
             ctx.event_loop.insert_idle(move |state| {
                 let config = state.niri.config.borrow();
                 let enabled = config.nacre.overview_hover
-                    && (!matches!(
-                        request,
-                        Request::NacreOverviewHoverStreamWithCollections
-                    ) || config.layout.collections.enabled);
+                    && (!matches!(request, Request::NacreOverviewHoverStreamWithCollections)
+                        || config.layout.collections.enabled);
                 drop(config);
                 let id = if enabled
                     && state.niri.layout.is_overview_open()
