@@ -13,8 +13,8 @@ use crate::niri::Niri;
 /// Whether the native edge event source can emit any configured IPC events.
 ///
 /// Edges without an explicit spawn action default to IPC events, matching the
-/// runtime action selection below. Output edge definitions count independently
-/// of global definitions because they can add event actions or override them.
+/// runtime action selection below. Output overrides are merged with global definitions using the
+/// same path as the runtime edge selection.
 pub(crate) fn event_source_available(config: &niri_config::Config) -> bool {
     config.nacre.edge_triggers
         && (has_event_action(&config.edge_triggers)

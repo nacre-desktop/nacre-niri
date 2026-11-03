@@ -53,7 +53,10 @@ actions. Pointer grabs, confinement, and spatial wrapping suppress edge input.
 Reload and output geometry/removal cancel pending triggers. No lookup
 assumes that a workspace has a monitor.
 
-The `edge_triggers` capability reflects the native flag. Subscribe using JSON
+The `edge_triggers` capability requires the native flag and a configured enabled
+event-action edge. Empty or spawn-only configurations keep compatibility input
+sources active. Removing all event edges on reload disconnects edge subscribers.
+Subscribe using JSON
 `"NacreEdgeTriggerStream"`; after `{"Ok":"Handled"}`, the opt-in stream can
 contain `{"EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,600.0]}}`.
 Positions are output-local logical coordinates. Existing event streams never

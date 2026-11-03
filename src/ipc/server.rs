@@ -263,9 +263,9 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
+    use niri_config::Config;
     use niri_ipc::state::EventStreamState;
     use niri_ipc::Event;
-    use niri_config::Config;
 
     use super::{
         edge_trigger_stream_unavailable_error, event_stream_snapshot, EventStreamSender, IpcServer,
@@ -867,9 +867,11 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 let error = edge_trigger_stream_unavailable_error(&config);
                 let _ = tx.send_blocking(error);
             });
-            if let Some(error) = rx.recv().await.unwrap_or(Some(
-                "Nacre edge trigger events are unavailable",
-            )) {
+            if let Some(error) = rx
+                .recv()
+                .await
+                .unwrap_or(Some("Nacre edge trigger events are unavailable"))
+            {
                 return Err(String::from(error));
             }
             Response::Handled
