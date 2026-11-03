@@ -260,6 +260,43 @@ impl<W: LayoutElement> Layout<W> {
             .cloned()
     }
 
+    pub(super) fn release_scratchpad_overlay(&mut self, id: &W::Id) {
+        let output = self
+            .monitors()
+            .find(|monitor| {
+                monitor
+                    .pinned_workspace
+                    .tiles()
+                    .any(|tile| tile.window().id() == id && tile.scratchpad)
+            })
+            .map(|monitor| monitor.output.clone());
+        let Some(output) = output else { return };
+        let focused = self.focus().is_some_and(|window| window.id() == id);
+        let Some(mut removed) = self.remove_window(id, Transaction::new()) else {
+            return;
+        };
+        removed.tile.scratchpad = false;
+        self.scratchpad_cycle.retain(|candidate| candidate != id);
+        if let Some(monitor) = self.monitor_for_output_mut(&output) {
+            monitor.add_tile(
+                removed.tile,
+                MonitorAddWindowTarget::Auto,
+                if focused {
+                    ActivateWindow::Yes
+                } else {
+                    ActivateWindow::No
+                },
+                false,
+                removed.width,
+                removed.is_full_width,
+                true,
+            );
+            if focused {
+                monitor.pinned_is_active = false;
+            }
+        }
+    }
+
     pub(super) fn is_window_in_overlay(&self, id: &W::Id) -> bool {
         self.monitors()
             .any(|monitor| monitor.pinned_workspace.has_window(id))
@@ -292,6 +329,7 @@ impl<W: LayoutElement> Layout<W> {
         if self.scratchpad_active.as_ref() == Some(&id) {
             self.scratchpad_active = None;
         }
+        self.scratchpad_cycle.retain(|candidate| candidate != &id);
         let was_focused = self.focus().is_some_and(|window| window.id() == &id);
         if self.is_window_pinned(&id) {
             let focused_id = self.focus().map(|window| window.id().clone());

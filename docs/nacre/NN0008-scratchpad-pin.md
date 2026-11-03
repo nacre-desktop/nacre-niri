@@ -27,7 +27,9 @@ A dedicated detached workspace reuses the workspace storage and no-output
 lifecycle established by collections; it does not implement another tile layout.
 Hidden windows are excluded from ordinary workspace views and the recent-window
 switcher. The overview provides a scratchpad section. Window IPC exposes
-`is_hidden`; it remains false for ordinary detached collection windows.
+`is_hidden`; it remains false for ordinary detached collection windows. Moving a
+shown scratchpad window to a workspace/output or requesting tiled/fullscreen mode
+returns it to ordinary window use.
 
 ## Pinning
 

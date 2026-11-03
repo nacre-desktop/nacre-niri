@@ -389,3 +389,21 @@ fn explicitly_hiding_a_shown_window_makes_it_most_recent() {
     assert_eq!(layout.scratchpad_active, Some(2));
     layout.verify_invariants();
 }
+
+#[test]
+fn shown_scratchpad_can_return_to_an_ordinary_tiled_workspace() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.move_window_to_scratchpad(None);
+    layout.toggle_scratchpad();
+    layout.set_window_floating(None, false);
+    assert!(layout.scratchpad_active.is_none());
+    assert!(!layout.is_window_hidden(&1));
+    assert!(!layout.is_window_pinned(&1));
+    assert!(layout.active_workspace().unwrap().has_window(&1));
+    assert!(!layout.active_workspace().unwrap().is_floating(&1));
+    layout.toggle_scratchpad();
+    assert!(!layout.is_window_hidden(&1));
+    layout.verify_invariants();
+}

@@ -2605,6 +2605,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_to_workspace_up(&mut self, focus: bool) {
+        if let Some(id) = self.focus().map(|window| window.id().clone()) {
+            self.release_scratchpad_overlay(&id);
+        }
         if self
             .focus()
             .is_some_and(|win| self.is_window_in_overlay(win.id()))
@@ -2618,6 +2621,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn move_to_workspace_down(&mut self, focus: bool) {
+        if let Some(id) = self.focus().map(|window| window.id().clone()) {
+            self.release_scratchpad_overlay(&id);
+        }
         if self
             .focus()
             .is_some_and(|win| self.is_window_in_overlay(win.id()))
@@ -2639,6 +2645,9 @@ impl<W: LayoutElement> Layout<W> {
         let target = window
             .cloned()
             .or_else(|| self.focus().map(|win| win.id().clone()));
+        if let Some(id) = &target {
+            self.release_scratchpad_overlay(id);
+        }
         if target.as_ref().is_some_and(|id| {
             self.is_window_in_overlay(id) || self.is_window_hidden(id) || self.is_window_pinned(id)
         }) {
@@ -3906,6 +3915,9 @@ impl<W: LayoutElement> Layout<W> {
         let target = window
             .cloned()
             .or_else(|| self.focus().map(|win| win.id().clone()));
+        if let Some(id) = &target {
+            self.release_scratchpad_overlay(id);
+        }
         if target.as_ref().is_some_and(|id| {
             self.is_window_hidden(id) || self.is_window_in_overlay(id) || self.is_window_pinned(id)
         }) {
@@ -3941,6 +3953,11 @@ impl<W: LayoutElement> Layout<W> {
         let target = window
             .cloned()
             .or_else(|| self.focus().map(|win| win.id().clone()));
+        if !floating {
+            if let Some(id) = &target {
+                self.release_scratchpad_overlay(id);
+            }
+        }
         if target.as_ref().is_some_and(|id| {
             self.is_window_hidden(id) || self.is_window_in_overlay(id) || self.is_window_pinned(id)
         }) {
@@ -4051,6 +4068,9 @@ impl<W: LayoutElement> Layout<W> {
         let target = window
             .cloned()
             .or_else(|| self.focus().map(|win| win.id().clone()));
+        if let Some(id) = &target {
+            self.release_scratchpad_overlay(id);
+        }
         if target.as_ref().is_some_and(|id| {
             self.is_window_in_overlay(id) || self.is_window_hidden(id) || self.is_window_pinned(id)
         }) {
@@ -4309,6 +4329,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_fullscreen(&mut self, id: &W::Id, is_fullscreen: bool) {
+        if is_fullscreen {
+            self.release_scratchpad_overlay(id);
+        }
         // Check if this is a request to unset the windowed fullscreen state.
         if !is_fullscreen {
             let mut handled = false;
@@ -4343,6 +4366,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_fullscreen(&mut self, id: &W::Id) {
+        self.release_scratchpad_overlay(id);
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
                 return;
@@ -4363,6 +4387,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_windowed_fullscreen(&mut self, id: &W::Id) {
+        self.release_scratchpad_overlay(id);
         if self.is_window_in_overlay(id) || self.is_window_pinned(id) {
             return;
         }
@@ -4386,6 +4411,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_maximized(&mut self, id: &W::Id, maximize: bool) {
+        if maximize {
+            self.release_scratchpad_overlay(id);
+        }
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
                 return;
@@ -4406,6 +4434,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn toggle_maximized(&mut self, id: &W::Id) {
+        self.release_scratchpad_overlay(id);
         if let Some(InteractiveMoveState::Moving(move_)) = &self.interactive_move {
             if move_.tile.window().id() == id {
                 return;
