@@ -77,6 +77,12 @@ gestures {
 }
 ```
 
+Collection switching is enabled by default and supports four or five fingers. Set
+`collection-switch { off; }` to disable it; three-finger gestures remain reserved
+for niri's existing overview/workspace gestures. Horizontal four-finger swipes
+switch desks on the pointer's output, while vertical swipes continue to open the
+overview.
+
 `create-collection` accepts an optional name and shows the new collection.
 `focus-collection` and `move-window-to-collection` accept a one-based index or name;
 IPC references additionally support stable IDs. Next/previous wrap in collection
@@ -111,7 +117,11 @@ config. A connected output's automatically created home desk remains available f
 rotation while that output is connected. Runtime-created or renamed collections
 with a non-empty name remain persistent while empty. Clearing the name makes an
 otherwise empty hidden collection eligible for cleanup. Config-declared names
-remain persistent and take precedence when configuration reloads. Empty trailing
+remain persistent and reconcile by their original configured name. Renaming a
+declared collection changes its runtime name without replacing that configured
+identity, so reloads preserve the runtime name and do not create a duplicate.
+Removing a declaration drops an unchanged config-only collection, while a renamed
+collection remains user-named and persistent. Empty trailing
 workspaces continue to follow upstream workspace rules within each shown stack.
 The named collection and workspace stack state file, routing rules, and restore
 limits are documented in [collection persistence](collection-persistence.md).
