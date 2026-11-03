@@ -363,7 +363,7 @@ impl CompositorHandler for State {
                 // Popup placement depends on window size which might have changed.
                 self.update_reactive_popups(&window);
 
-                if self.niri.layout.collection_overview_is_open() {
+                if self.niri.layout.collection_overview_is_open() && output.is_none() {
                     self.niri.queue_redraw_all();
                 } else if let Some(output) = output {
                     self.niri.queue_redraw(&output);
@@ -385,7 +385,7 @@ impl CompositorHandler for State {
                 .window_mru_ui
                 .update_window(&self.niri.layout, mapped.id());
             self.niri.layout.update_window(&window, None);
-            if self.niri.layout.collection_overview_is_open() {
+            if self.niri.layout.collection_overview_is_open() && output.is_none() {
                 self.niri.queue_redraw_all();
             } else if let Some(output) = output {
                 self.niri.queue_redraw(&output);
@@ -397,8 +397,16 @@ impl CompositorHandler for State {
         // This might be a popup.
         self.popups_handle_commit(surface);
         if let Some(popup) = self.niri.popups.find_popup(surface) {
+            // Popup commits also change the owning workspace's overview preview.
+            let root = self.niri.find_root_shell_surface(surface);
+            if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
+                let window = mapped.window.clone();
+                self.niri.layout.update_window(&window, None);
+            }
             if let Some(output) = self.output_for_popup(&popup) {
                 self.niri.queue_redraw(&output.clone());
+            } else if self.niri.layout.collection_overview_is_open() {
+                self.niri.queue_redraw_all();
             }
             return;
         }

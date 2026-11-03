@@ -39,13 +39,17 @@ workspace-to-output actions; collection restoration uses collection identity.
 
 ## Overview
 
-Each output's overview contains all collections, including detached and virtual
-collections. The current collection stays centered. Other columns alternate right
-and left; preview zoom decreases as needed to fit all columns. Each column has a
-small name/index label. Workspaces remain vertical within their collection.
-One geometry function supplies column bounds and preview scale to both rendering
-and hit testing. Workspace positions are relative to the collection's active
-workspace. Pointer selection resolves a workspace ID together with its collection;
+Each output's overview contains its own shown collection and hidden collections,
+including detached and virtual collections. A collection currently shown on another
+connected output appears only on that output. The current collection stays centered
+and uses the native monitor overview path, including its workspace animation and
+hover camera. Hidden columns alternate right and left in the remaining side space;
+they do not shrink the current collection. Each column has a small name/index label.
+Workspaces remain vertical within their collection.
+
+Hidden workspace windows, backgrounds, and shadows share one preview transform for
+rendering and hit testing. Their positions are relative to the collection's saved
+active workspace. Pointer selection resolves a workspace ID together with its collection;
 activation first shows that collection on the clicked output, then focuses the
 workspace through the existing overview close path. Dragging resolves the same
 column/workspace target and uses the existing tile insertion machinery.
