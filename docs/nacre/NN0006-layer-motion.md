@@ -91,7 +91,11 @@ and exit lifetime; B0175 requires the open pose before presentation. The
 protocol and Nacre-niri server are implemented and verified. Bead keeps cold
 revealing opens that reshape rounded bodies or gradient rims on its CPU fallback;
 plain slides and closes can use compositor motion. Therefore the main 120 Hz
-goal is not yet met. No before/after client CPU measurement was made.
+goal is not yet met. Bead's separate synthetic 120 Hz, scale-1.0 fixture
+measured client CPU falling from 4.336 ms to 0.00188 ms per refresh for a
+1572×1071 surface with 240 rounded primitives; see B0218. This is not a live
+laptop measurement at scale 1.5. No live laptop before/after measurement was
+made.
 
 Full CI passed on source commit `c14f43ba` in the task-owned dev-1 container:
 format, workspace tests, config validation, clippy, feature checks, randomized
