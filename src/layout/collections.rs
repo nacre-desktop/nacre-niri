@@ -286,6 +286,27 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        for collection in &mut self.collections {
+            if !nonpersistent_ids.contains(&collection.id) {
+                continue;
+            }
+            let active = collection.active_workspace;
+            let last = collection.workspaces.last().map(Workspace::id);
+            collection.workspaces.retain(|workspace| {
+                workspace.has_workspace_contents()
+                    || Some(workspace.id()) == active
+                    || Some(workspace.id()) == last
+            });
+        }
+        for monitor in self.monitors_mut() {
+            if monitor.workspace_switch.is_none()
+                && monitor
+                    .collection_id
+                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+            {
+                monitor.clean_up_workspaces();
+            }
+        }
     }
 
     pub(super) fn transition_collections(&mut self, enabled: bool) {
