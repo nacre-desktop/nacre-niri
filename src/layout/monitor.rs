@@ -7,6 +7,7 @@ use niri_config::{CornerRadius, LayoutPart};
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
 };
+use smithay::backend::renderer::element::Element;
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
@@ -197,8 +198,15 @@ niri_render_elements! {
     }
 }
 
-pub type MonitorRenderElement<R> =
+pub type MonitorRawRenderElement<R> =
     RelocateRenderElement<RescaleRenderElement<MonitorInnerRenderElement<R>>>;
+
+niri_render_elements! {
+    MonitorRenderElement<R> => {
+        Normal = MonitorRawRenderElement<R>,
+        ViewportClipped = CropRenderElement<MonitorRawRenderElement<R>>,
+    }
+}
 
 impl WorkspaceSwitch {
     pub fn current_idx(&self) -> f64 {
@@ -1696,7 +1704,7 @@ impl<W: LayoutElement> Monitor<W> {
                 let elem = RescaleRenderElement::from_element(elem, Point::default(), 1.);
                 let elem =
                     RelocateRenderElement::from_element(elem, Point::default(), Relocate::Relative);
-                push(elem);
+                push(elem.into());
             });
     }
 
@@ -1752,7 +1760,26 @@ impl<W: LayoutElement> Monitor<W> {
             )
         };
 
+        // Scrolling windows normally extend beyond the monitor viewport. In collection overview,
+        // that overflow would cover the margins and side columns. Clip in final output pixels,
+        // after the normal workspace transform, so shader source coordinates and damage use the
+        // same rounding as the workspace background. Keep ordinary workspace switching unchanged.
+        let clip_to_workspace = self.options.layout.collections.enabled
+            && self.overview_progress.is_some();
+
         for (ws, geo) in self.workspaces_with_render_geo() {
+            let viewport = if clip_to_workspace {
+                let background = MonitorInnerRenderElement::SolidColor(ws.render_background());
+                let background = scale_relocate(geo, background).geometry(scale.into());
+                let Some(viewport) = background.intersection(geo.to_physical_precise_round(scale))
+                else {
+                    continue;
+                };
+                Some(viewport)
+            } else {
+                None
+            };
+
             // Macro instead of closure because ws and insert hint have different elem types.
             macro_rules! push {
                 () => {{
@@ -1760,7 +1787,14 @@ impl<W: LayoutElement> Monitor<W> {
                         let elem = CropRenderElement::from_element(elem, scale, crop_bounds);
                         if let Some(elem) = elem {
                             let elem = MonitorInnerRenderElement::from(elem);
-                            push(scale_relocate(geo, elem));
+                            let elem = scale_relocate(geo, elem);
+                            if let Some(viewport) = viewport {
+                                if let Some(elem) = CropRenderElement::from_element(elem, scale, viewport) {
+                                    push(MonitorRenderElement::ViewportClipped(elem));
+                                }
+                            } else {
+                                push(MonitorRenderElement::Normal(elem));
+                            }
                         }
                     }
                 }};
@@ -1806,7 +1840,7 @@ impl<W: LayoutElement> Monitor<W> {
                     geo.loc.to_physical_precise_round(scale),
                     Relocate::Relative,
                 );
-                push(elem);
+                push(elem.into());
             });
         }
     }
