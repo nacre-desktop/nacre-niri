@@ -744,7 +744,10 @@ mod edge_trigger_runtime_tests {
             niri.event_loop.remove(token);
         }
         niri.fire_edge_trigger(generation, position);
-        assert!(matches!(events.try_recv(), Ok(niri_ipc::Event::EdgeTriggered { .. })));
+        assert!(matches!(
+            events.try_recv(),
+            Ok(niri_ipc::Event::EdgeTriggered { .. })
+        ));
 
         let leaving_position = position - Point::new(10., 0.);
         niri.update_edge_trigger(leaving_position, Point::new(-10., 0.));

@@ -59,6 +59,11 @@ contain `{"EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,600.0]}
 Positions are output-local logical coordinates. Existing event streams never
 receive the new event. Consumers must filter the edge event from ordinary stream
 snapshots/events, and restore their compatibility input source on disconnect.
+After a fired event action, leaving or cancelling that edge emits `EdgeLeft`
+with the same fields. Its position is relative to the previous output origin and
+can lie outside that output. Consumers use it to release panel hover ownership;
+they must also release ownership when the stream ends. Spawn actions and cancelled
+unfired dwell candidates do not emit `EdgeLeft`.
 Disabling the native flag on reload disconnects only edge subscribers. Consumers
 can query capabilities and reconnect after `ConfigLoaded` when the flag returns.
 The event reports a completed trigger; it does not expose pre-trigger dwell
