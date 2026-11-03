@@ -222,16 +222,19 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
         std::env::var_os("XDG_RUNTIME_DIR").expect("isolated XDG_RUNTIME_DIR is required");
     assert!(Path::new(&runtime).is_dir());
 
-    let mut config = Config::default();
-    config.xwayland_satellite.path = satellite_path.to_string_lossy().into_owned();
-    config.nacre.proportional_x11_widths = true;
-    config.outputs = niri_config::Outputs(vec![niri_config::Output {
-        name: "headless-1".to_owned(),
-        scale: Some(niri_config::FloatOrInt(1.5)),
-        ..Default::default()
-    }]);
+    let make_config = |enabled| {
+        let mut config = Config::default();
+        config.xwayland_satellite.path = satellite_path.to_string_lossy().into_owned();
+        config.nacre.proportional_x11_widths = enabled;
+        config.outputs = niri_config::Outputs(vec![niri_config::Output {
+            name: "headless-1".to_owned(),
+            scale: Some(niri_config::FloatOrInt(1.5)),
+            ..Default::default()
+        }]);
+        config
+    };
 
-    let mut fixture = Fixture::with_config(config);
+    let mut fixture = Fixture::with_config(make_config(true));
     fixture.add_output(1, (1920, 1080));
     crate::utils::xwayland::satellite::setup(fixture.niri_state());
     let display = fixture
@@ -283,7 +286,7 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
     fixture
         .niri()
         .layout
-        .set_window_width(Some(&window), niri_ipc::SizeChange::SetProportion(1.0));
+        .set_window_width(Some(&window), niri_ipc::SizeChange::SetProportion(100.0));
     let maximum_geometry = client.wait_for_width(&mut fixture, |width| width >= 1500);
     let maximum_width = maximum_geometry["width"].as_u64().unwrap();
     assert!(
@@ -317,11 +320,9 @@ fn managed_x11_minimum_width_policy_reaches_real_x11_client() {
     fixture
         .niri()
         .layout
-        .set_window_width(Some(&window), niri_ipc::SizeChange::SetProportion(0.5));
+        .set_window_width(Some(&window), niri_ipc::SizeChange::SetProportion(50.0));
     client.wait_for_width(&mut fixture, |width| width < 1500);
-    let mut disabled_config = fixture.niri().config.borrow().clone();
-    disabled_config.nacre.proportional_x11_widths = false;
-    fixture.niri_state().reload_config(Ok(disabled_config));
+    fixture.niri_state().reload_config(Ok(make_config(false)));
     let disabled_geometry = client.wait_for_width(&mut fixture, |width| width >= 1500);
     assert!(disabled_geometry["width"].as_u64().unwrap() >= 1500);
     assert_eq!(disabled_geometry["hints"], original_hints);
