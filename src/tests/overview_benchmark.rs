@@ -148,7 +148,7 @@ fn measure_opening_sweep(fixture: &mut Fixture) {
             draw[usize::from(output_idx - 1)].push(draw_ms);
         }
     }
-    for output_idx in [1, 2] {
+    for output_idx in [1u8, 2] {
         let idx = usize::from(output_idx - 1);
         assembly[idx].sort_by(f64::total_cmp);
         draw[idx].sort_by(f64::total_cmp);

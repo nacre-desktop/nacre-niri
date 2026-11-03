@@ -18,5 +18,19 @@ windows, background, and shadow. Collections shown on other connected outputs
 are excluded: the other monitor already presents them. Side columns occupy the
 space remaining beside the native overview, preserving its zoom and camera.
 
-Validation and measured performance are recorded in the task's private evidence
-and report. No installed compositor, live configuration, or live session is changed.
+The old render preparation visited every collection for every output and then
+prepared the output's normal workspaces again. Shown collections now prepare and
+render through their native monitor. Hidden workspace geometry and GLES snapshots
+are cached. Source commits, layout changes, urgency, animation, capture target,
+output scale, renderer context, and wallpaper damage invalidate the relevant cache.
+Snapshot placement also changes wallpaper sampling, so opening animation frames
+can rebuild snapshots; unchanged steady frames reuse them. Hidden snapshots follow
+surface commits with offscreen frame-callback throttling.
+
+The headless regression inspects final elements and output damage at quarter
+progress on 1920×1200 logical at scale 1.5 and 3440×1440 at scale 1.0. The standalone
+benchmark measures changing opening frames and steady frames separately, with
+element preparation/assembly separated from GLES drawing and synchronous readback.
+Readback adds overhead; these timings support comparison and do not measure physical
+display presentation. Results and exit codes belong in the task's private report.
+No installed compositor, live configuration, or live session is changed.
