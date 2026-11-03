@@ -330,6 +330,7 @@ fn disabling_overview_hover_clears_hover_camera_state() {
     layout.update_options(Options {
         nacre: niri_config::Nacre {
             overview_hover: false,
+            ..Default::default()
         },
         ..Default::default()
     });
