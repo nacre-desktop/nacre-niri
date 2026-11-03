@@ -156,12 +156,16 @@ impl MergeWith<OverviewPart> for Overview {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Nacre {
     pub overview_hover: bool,
+    pub scratchpad: bool,
+    pub window_pinning: bool,
 }
 
 impl Default for Nacre {
     fn default() -> Self {
         Self {
             overview_hover: true,
+            scratchpad: true,
+            window_pinning: true,
         }
     }
 }
@@ -170,11 +174,15 @@ impl Default for Nacre {
 pub struct NacrePart {
     #[knuffel(child)]
     pub overview_hover: Option<Flag>,
+    #[knuffel(child)]
+    pub scratchpad: Option<Flag>,
+    #[knuffel(child)]
+    pub window_pinning: Option<Flag>,
 }
 
 impl MergeWith<NacrePart> for Nacre {
     fn merge_with(&mut self, part: &NacrePart) {
-        merge!((self, part), overview_hover);
+        merge!((self, part), overview_hover, scratchpad, window_pinning);
     }
 }
 

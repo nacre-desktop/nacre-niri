@@ -3,6 +3,7 @@ use fixture::Fixture;
 mod client;
 mod collections;
 mod fixture;
+mod scratchpad_pin;
 mod server;
 
 mod animations;

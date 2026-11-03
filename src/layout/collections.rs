@@ -217,7 +217,9 @@ impl<W: LayoutElement> Layout<W> {
                             )
                         })
                         .collect();
-                    stacks.extend(monitors.into_iter().flat_map(|m| m.workspaces));
+                    for monitor in monitors {
+                        stacks.extend(monitor.into_workspaces());
+                    }
                     let mut assigned: Vec<Vec<Workspace<W>>> =
                         (0..outputs.len()).map(|_| Vec::new()).collect();
                     for ws in stacks.into_iter().filter(|ws| ws.has_windows_or_name()) {
@@ -317,6 +319,7 @@ impl<W: LayoutElement> Layout<W> {
             {
                 mon.add_workspace_top();
             }
+            mon.restore_overlay_windows();
             mon.clean_up_workspaces();
         }
         mon.collection_id = Some(id);
@@ -326,6 +329,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub(super) fn add_collection_output(&mut self, output: Output, layout: Option<LayoutPart>) {
+        let had_outputs = self.monitors().next().is_some();
         self.configure_collections();
         let name = output.name();
         let id = self
@@ -464,6 +468,38 @@ impl<W: LayoutElement> Layout<W> {
             .collect();
         self.collection_pending_workspaces
             .retain(|id| !assigned.contains(id));
+        if !had_outputs {
+            let detached: Vec<_> = self
+                .collections
+                .iter()
+                .flat_map(|collection| {
+                    collection.workspaces.iter().flat_map(|workspace| {
+                        workspace
+                            .tiles()
+                            .filter(|tile| tile.pinned || tile.scratchpad)
+                            .map(|tile| tile.window().id().clone())
+                    })
+                })
+                .collect();
+            for id in detached {
+                let Some(removed) = self.remove_window(&id, Transaction::new()) else {
+                    continue;
+                };
+                let scratchpad = removed.tile.scratchpad;
+                if let Some(monitor) = self.monitor_for_output_mut(&output) {
+                    monitor.pinned_workspace.add_overlay_tile(
+                        removed.tile,
+                        WorkspaceAddWindowTarget::Auto,
+                        ActivateWindow::No,
+                        removed.width,
+                        removed.is_full_width,
+                    );
+                }
+                if scratchpad {
+                    self.scratchpad_active = Some(id);
+                }
+            }
+        }
     }
 
     pub(super) fn remove_collection_output(&mut self, output: &Output) {
@@ -485,7 +521,28 @@ impl<W: LayoutElement> Layout<W> {
             .workspaces
             .get(mon.active_workspace_idx)
             .map(|ws| ws.id());
-        self.store_collection_stack(id, std::mem::take(&mut mon.workspaces), active);
+        // Output overlays follow the surviving output, independently of which collection
+        // happened to be shown on the disconnected monitor.
+        if !monitors.is_empty() {
+            let mut overlay = mon.take_pinned_workspace();
+            let target_idx = primary_idx.saturating_sub(usize::from(primary_idx >= idx));
+            let target = &mut monitors[target_idx];
+            let ids: Vec<_> = overlay
+                .windows()
+                .map(|window| window.id().clone())
+                .collect();
+            for id in ids {
+                let removed = overlay.remove_tile(&id, Transaction::new());
+                target.pinned_workspace.add_overlay_tile(
+                    removed.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                );
+            }
+        }
+        self.store_collection_stack(id, mon.into_collection_workspaces(), active);
         primary_idx = primary_idx.saturating_sub(usize::from(primary_idx >= idx));
         active_monitor_idx =
             active_monitor_idx.saturating_sub(usize::from(active_monitor_idx >= idx));
@@ -529,17 +586,23 @@ impl<W: LayoutElement> Layout<W> {
         }
         let mut stack = Vec::new();
         let mut active = None;
+        let mut pinned = None;
         if let Some(mon) = self.monitors_mut().find(|m| m.output_name() == output_name) {
             active = mon
                 .workspaces
                 .get(mon.active_workspace_idx)
                 .map(|ws| ws.id());
             stack = std::mem::take(&mut mon.workspaces);
+            pinned = Some((mon.take_pinned_workspace(), mon.pinned_is_active));
         }
         if let Some(old) = old_id {
             self.store_collection_stack(old, stack, active);
         }
-        let new_monitor = self.take_collection_monitor(id, output, layout);
+        let mut new_monitor = self.take_collection_monitor(id, output, layout);
+        if let Some((pinned, was_active)) = pinned {
+            new_monitor.set_pinned_workspace(pinned);
+            new_monitor.pinned_is_active = was_active;
+        }
         if let Some(mon) = self.monitors_mut().find(|m| m.output_name() == output_name) {
             *mon = new_monitor;
         }

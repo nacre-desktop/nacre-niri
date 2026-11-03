@@ -17,6 +17,7 @@ mod animations;
 mod collections;
 mod collections_extra;
 mod fullscreen;
+mod scratchpad_pin;
 
 impl<W: LayoutElement> Default for Layout<W> {
     fn default() -> Self {
@@ -525,6 +526,13 @@ enum Op {
         ws_name: usize,
     },
     CloseWindow(#[proptest(strategy = "1..=5usize")] usize),
+    MoveWindowToScratchpad(
+        #[proptest(strategy = "proptest::option::of(1..=5usize)")] Option<usize>,
+    ),
+    ToggleScratchpad,
+    ScratchpadShowWindow(#[proptest(strategy = "1..=5usize")] usize),
+    ToggleWindowPinned(#[proptest(strategy = "proptest::option::of(1..=5usize)")] Option<usize>),
+    QueryWindowPresentation(#[proptest(strategy = "1..=5usize")] usize),
     FullscreenWindow(#[proptest(strategy = "1..=5usize")] usize),
     SetFullscreenWindow {
         #[proptest(strategy = "1..=5usize")]
@@ -1148,6 +1156,22 @@ impl Op {
             }
             Op::CloseWindow(id) => {
                 layout.remove_window(&id, Transaction::new());
+            }
+            Op::MoveWindowToScratchpad(id) => {
+                let id = id.filter(|id| layout.has_window(id));
+                layout.move_window_to_scratchpad(id.as_ref());
+            }
+            Op::ToggleScratchpad => layout.toggle_scratchpad(),
+            Op::ScratchpadShowWindow(id) => layout.scratchpad_show_window(&id),
+            Op::ToggleWindowPinned(id) => {
+                let id = id.filter(|id| layout.has_window(id));
+                layout.toggle_window_pinned(id.as_ref());
+            }
+            Op::QueryWindowPresentation(id) => {
+                if layout.has_window(&id) {
+                    let _ = layout.popup_target_rect(&id);
+                    let _ = layout.should_trigger_focus_follows_mouse_on(&id);
+                }
             }
             Op::FullscreenWindow(id) => {
                 if !layout.has_window(&id) {
@@ -4089,6 +4113,35 @@ proptest! {
         options.layout.collections.enabled = false;
 
         check_ops_with_options(options, ops);
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: ProptestConfig::default().cases.max(128),
+        ..ProptestConfig::default()
+    })]
+
+    #[test]
+    fn scratchpad_and_pinning_operations_preserve_layout_invariants(
+        ops in prop::collection::vec(any::<Op>(), 0..32),
+    ) {
+        let mut options = Options::default();
+        options.layout.collections.enabled = true;
+        let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+        Op::AddOutput(1).apply(&mut layout);
+        for id in 1..=3 {
+            Op::AddWindow { params: TestWindowParams::new(id) }.apply(&mut layout);
+            layout.verify_invariants();
+        }
+        layout.toggle_window_pinned(Some(&1));
+        layout.move_window_to_scratchpad(Some(&2));
+        // Every case starts with a pin, a hidden scratchpad window, a detached
+        // populated collection and a normal window, rather than mostly empty state.
+        layout.create_collection(Some("property-desk".into()));
+        Op::AddWindow { params: TestWindowParams::new(4) }.apply(&mut layout);
+        layout.verify_invariants();
+        check_ops_on_layout(&mut layout, ops);
     }
 }
 

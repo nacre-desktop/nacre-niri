@@ -2147,6 +2147,49 @@ impl State {
                     }
                 }
             }
+            Action::MoveWindowToScratchpad => {
+                self.niri.layout.move_window_to_scratchpad(None);
+                self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+            Action::MoveWindowToScratchpadById(id) => {
+                let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.niri.layout.move_window_to_scratchpad(Some(&window));
+                    self.maybe_warp_cursor_to_focus();
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::ToggleScratchpad => {
+                self.niri.layout.toggle_scratchpad();
+                self.maybe_warp_cursor_to_focus();
+                self.niri.layer_shell_on_demand_focus = None;
+                self.niri.queue_redraw_all();
+            }
+            Action::ScratchpadShowWindow(id) => {
+                let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.niri.layout.scratchpad_show_window(&window);
+                    self.maybe_warp_cursor_to_focus();
+                    self.niri.layer_shell_on_demand_focus = None;
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::ToggleWindowPinned => {
+                self.niri.layout.toggle_window_pinned(None);
+                self.niri.queue_redraw_all();
+            }
+            Action::ToggleWindowPinnedById(id) => {
+                let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
+                let window = window.map(|(_, m)| m.window.clone());
+                if let Some(window) = window {
+                    self.niri.layout.toggle_window_pinned(Some(&window));
+                    self.niri.queue_redraw_all();
+                }
+            }
             Action::ToggleWindowFloating => {
                 self.niri.layout.toggle_window_floating(None);
                 // FIXME: granular

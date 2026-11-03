@@ -1815,7 +1815,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn windows_for_output(&self, output: &Output) -> impl Iterator<Item = &W> + '_ {
-        let overview = self.collection_overview_is_open();
+        let overview = self.overview_open;
         let moving_output = output.clone();
         let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &self.monitor_set else {
@@ -1832,8 +1832,8 @@ impl<W: LayoutElement> Layout<W> {
 
         let mon_windows = monitors
             .iter()
-            .filter(move |mon| mon.output == output)
-            .flat_map(|mon| mon.workspaces.iter().flat_map(|ws| ws.windows()));
+            .filter(move |mon| overview || mon.output == output)
+            .flat_map(|mon| mon.windows());
         let hidden_windows = self
             .collections
             .iter()
@@ -1841,11 +1841,15 @@ impl<W: LayoutElement> Layout<W> {
             .flat_map(|ws| ws.windows())
             .filter(move |_| overview);
 
-        moving_window.chain(mon_windows).chain(hidden_windows)
+        let scratchpad = self.scratchpad.windows().filter(move |_| overview);
+        moving_window
+            .chain(mon_windows)
+            .chain(hidden_windows)
+            .chain(scratchpad)
     }
 
     pub fn windows_for_output_mut(&mut self, output: &Output) -> impl Iterator<Item = &mut W> + '_ {
-        let overview = self.collection_overview_is_open();
+        let overview = self.overview_open;
         let moving_output = output.clone();
         let output = output.clone();
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
@@ -1862,8 +1866,8 @@ impl<W: LayoutElement> Layout<W> {
 
         let mon_windows = monitors
             .iter_mut()
-            .filter(move |mon| mon.output == output)
-            .flat_map(|mon| mon.workspaces.iter_mut().flat_map(|ws| ws.windows_mut()));
+            .filter(move |mon| overview || mon.output == output)
+            .flat_map(|mon| mon.windows_mut());
         let hidden_windows = self
             .collections
             .iter_mut()
@@ -1871,7 +1875,11 @@ impl<W: LayoutElement> Layout<W> {
             .flat_map(|ws| ws.windows_mut())
             .filter(move |_| overview);
 
-        moving_window.chain(mon_windows).chain(hidden_windows)
+        let scratchpad = self.scratchpad.windows_mut().filter(move |_| overview);
+        moving_window
+            .chain(mon_windows)
+            .chain(hidden_windows)
+            .chain(scratchpad)
     }
 
     pub fn with_windows(
@@ -3090,6 +3098,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
+        if self.overview_open && !self.collection_overview_is_open() {
+            self.scratchpad.update_render_elements(false);
+        }
         if self.collection_overview_is_open() {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
@@ -3097,7 +3108,7 @@ impl<W: LayoutElement> Layout<W> {
             overview.retain_sources(
                 self.collections.iter().flat_map(|collection| {
                     collection.workspaces.iter().map(|workspace| workspace.id())
-                }),
+                }).chain(std::iter::once(self.scratchpad.id())),
                 self.monitors().map(|monitor| monitor.output().clone()),
             );
             for collection in &mut self.collections {
@@ -3106,6 +3117,9 @@ impl<W: LayoutElement> Layout<W> {
                         ws.update_render_elements(false);
                     }
                 }
+            }
+            if overview.needs_prepare(self.scratchpad.id(), self.scratchpad.overview_revision()) {
+                self.scratchpad.update_render_elements(false);
             }
         }
         let _span = tracy_client::span!("Layout::update_render_elements");

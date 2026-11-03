@@ -581,23 +581,23 @@ impl WindowMru {
 
         let config = niri.config.borrow().recent_windows.previews;
         let mut thumbnails = Vec::new();
-        for (mon, ws_idx, ws) in niri.layout.workspaces() {
-            // Detached collections remain part of the layout's global workspace iterator, but
-            // the MRU UI is scoped to windows that can currently be shown on an output. In
-            // particular, do not assume every workspace belongs to a monitor while an output is
-            // active: hidden collections deliberately have no monitor.
+        for (mon, mapped) in niri.layout.windows() {
+            // Detached collections and scratchpad windows deliberately have no monitor.
+            // Use the global window iterator so output-owned pinned windows participate too.
             let Some(mon) = mon else {
                 continue;
             };
-            let on_current_output = mon.output() == output;
-            let on_current_workspace = on_current_output && mon.active_workspace_idx() == ws_idx;
-
-            for mapped in ws.windows() {
-                let mut thumbnail = Thumbnail::from_mapped(mapped, niri.clock.clone(), config);
-                thumbnail.on_current_output = on_current_output;
-                thumbnail.on_current_workspace = on_current_workspace;
-                thumbnails.push(thumbnail);
+            if niri.layout.is_window_hidden(&mapped.window) {
+                continue;
             }
+            let on_current_output = mon.output() == output;
+            let on_current_workspace = on_current_output
+                && (niri.layout.is_window_pinned(&mapped.window)
+                    || mon.active_workspace_ref().has_window(&mapped.window));
+            let mut thumbnail = Thumbnail::from_mapped(mapped, niri.clock.clone(), config);
+            thumbnail.on_current_output = on_current_output;
+            thumbnail.on_current_workspace = on_current_workspace;
+            thumbnails.push(thumbnail);
         }
 
         thumbnails

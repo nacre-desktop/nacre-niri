@@ -4400,6 +4400,11 @@ impl Niri {
                     .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {
                         push(elem.into())
                     });
+            } else {
+                self.layout
+                    .render_scratchpad_overview(ctx.r(), output, focus_ring, &mut |elem| {
+                        push(elem.into())
+                    });
             }
             mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
 
@@ -4449,6 +4454,11 @@ impl Niri {
             if self.layout.collection_overview_is_open() {
                 self.layout
                     .render_collection_overview(ctx.r(), output, focus_ring, &mut |elem| {
+                        push(elem.into())
+                    });
+            } else {
+                self.layout
+                    .render_scratchpad_overview(ctx.r(), output, focus_ring, &mut |elem| {
                         push(elem.into())
                     });
             }
