@@ -11,6 +11,7 @@ mod fullscreen;
 mod layer_shell;
 mod overview_benchmark;
 mod overview_geometry;
+mod overview_raster;
 mod remove_output;
 mod transactions;
 mod window_opening;
