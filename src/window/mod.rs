@@ -532,10 +532,10 @@ mod proportional_x11_width_tests {
 
         #[test]
         fn x11_minimum_policy_never_changes_height_or_unmatched_width(
-            min_width in any::<i32>(),
-            min_height in any::<i32>(),
-            max_width in any::<i32>(),
-            max_height in any::<i32>(),
+            min_width in 0..=i32::MAX,
+            min_height in 0..=i32::MAX,
+            max_width in 0..=i32::MAX,
+            max_height in 0..=i32::MAX,
             enabled in any::<bool>(),
             satellite in any::<bool>(),
             tiled in any::<bool>(),

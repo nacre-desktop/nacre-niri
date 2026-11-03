@@ -318,6 +318,10 @@ mod tests {
             Ok(Event::OverviewOpenedOrClosed { is_open: true })
         ));
         assert!(hover_rx.try_recv().is_err());
+        assert!(matches!(
+            edge_rx.try_recv(),
+            Ok(Event::OverviewOpenedOrClosed { is_open: true })
+        ));
         let Ok(Event::EdgeTriggered {
             output,
             edge,
