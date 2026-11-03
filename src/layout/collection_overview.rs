@@ -33,7 +33,6 @@ use crate::utils::output_size;
 #[derive(Debug, Default)]
 pub(super) struct Overview {
     labels: RefCell<HashMap<(u64, String, u64), TextureBuffer<GlesTexture>>>,
-    dirty_hidden_workspaces: RefCell<HashSet<WorkspaceId>>,
     preview_geometry: RefCell<HashMap<Vec<u64>, Vec<PreviewGeometry>>>,
     prepared_revisions: RefCell<HashMap<WorkspaceId, u64>>,
     textures: RefCell<Vec<PreviewTexture>>,
@@ -621,8 +620,7 @@ impl Overview {
 
     pub(super) fn needs_prepare(&self, workspace: WorkspaceId, revision: u64) -> bool {
         let previous = self.prepared_revisions.borrow_mut().insert(workspace, revision);
-        let dirty = self.dirty_hidden_workspaces.borrow_mut().remove(&workspace);
-        let needs = dirty || previous != Some(revision);
+        let needs = previous != Some(revision);
         #[cfg(test)]
         if needs { self.preparations.set(self.preparations.get() + 1); }
         needs
@@ -635,12 +633,10 @@ impl Overview {
         self.textures.borrow_mut().clear();
     }
 
-    pub(super) fn mark_hidden_workspace_dirty(&self, workspace: WorkspaceId) {
-        self.dirty_hidden_workspaces.borrow_mut().insert(workspace);
-    }
-
-    pub(super) fn mark_hidden_workspaces_dirty(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
-        self.dirty_hidden_workspaces.borrow_mut().extend(workspaces);
+    pub(super) fn retain_workspaces(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
+        let workspaces: HashSet<_> = workspaces.collect();
+        self.prepared_revisions.borrow_mut().retain(|id, _| workspaces.contains(id));
+        self.textures.borrow_mut().retain(|entry| workspaces.contains(&entry.key.workspace));
     }
 
     fn label<R: NiriRenderer>(

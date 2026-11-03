@@ -1322,7 +1322,6 @@ impl<W: LayoutElement> Layout<W> {
         for c in &mut self.collections {
             if let Some(ws) = c.workspaces.iter_mut().find(|ws| ws.has_window(window)) {
                 ws.update_window(window, serial);
-                self.collection_overview.mark_hidden_workspace_dirty(ws.id());
                 return;
             }
         }
@@ -3095,6 +3094,9 @@ impl<W: LayoutElement> Layout<W> {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
             let overview = &self.collection_overview;
+            overview.retain_workspaces(self.collections.iter().flat_map(|collection| {
+                collection.workspaces.iter().map(|workspace| workspace.id())
+            }));
             for collection in &mut self.collections {
                 for ws in &mut collection.workspaces {
                     if overview.needs_prepare(ws.id(), ws.overview_revision()) {
@@ -5013,17 +5015,6 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_overview(&mut self) {
         self.overview_open = !self.overview_open;
-
-        if self.overview_open {
-            let dirty_workspaces = self
-                .collections
-                .iter()
-                .flat_map(|collection| collection.workspaces.iter())
-                .map(|workspace| workspace.id())
-                .collect::<Vec<_>>();
-            self.collection_overview
-                .mark_hidden_workspaces_dirty(dirty_workspaces.into_iter());
-        }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());
         let to = if self.overview_open { 1. } else { 0. };
