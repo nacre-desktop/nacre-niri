@@ -196,6 +196,8 @@ fn next_to_overlay_windows_never_targets_a_missing_normal_workspace() {
         ActivateWindow::No,
     );
     assert!(layout.scratchpad.has_window(&3));
+    layout.toggle_scratchpad();
+    assert_eq!(layout.scratchpad_active, Some(3));
     layout.verify_invariants();
 }
 

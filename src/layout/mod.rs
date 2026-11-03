@@ -1065,6 +1065,7 @@ impl<W: LayoutElement> Layout<W> {
                     is_floating,
                 );
                 self.scratchpad.refresh(false, false);
+                self.scratchpad_cycle.push(id);
                 return None;
             }
             let mon_idx = self
