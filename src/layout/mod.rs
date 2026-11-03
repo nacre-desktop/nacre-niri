@@ -4816,10 +4816,6 @@ impl<W: LayoutElement> Layout<W> {
                     is_floating,
                 } = self.remove_window(window, Transaction::new()).unwrap();
 
-                // An interactive move drops the tile into an ordinary workspace, so it no longer
-                // belongs to either output overlay.
-                tile.pinned = false;
-                tile.scratchpad = false;
                 tile.stop_move_animations();
                 tile.interactive_move_offset = Point::from((0., 0.));
                 tile.window().output_enter(&output);
@@ -5001,6 +4997,40 @@ impl<W: LayoutElement> Layout<W> {
                 1.,
                 self.options.animations.window_movement.0,
             );
+        }
+
+        let scratchpad = move_
+            .tile
+            .scratchpad
+            .then(|| move_.tile.window().id().clone());
+        if move_.tile.pinned || move_.tile.scratchpad {
+            let output = self
+                .monitor_for_output(&move_.output)
+                .or_else(|| self.active_monitor_ref())
+                .map(|monitor| monitor.output.clone());
+            if let Some(output) = output {
+                let position = move_.tile_render_location(1.);
+                let monitor = self.monitor_for_output_mut(&output).unwrap();
+                move_.tile.floating_pos = Some(
+                    monitor
+                        .pinned_workspace
+                        .floating_logical_to_size_frac(position),
+                );
+                move_.tile.floating_window_size = move_.tile.window().expected_size();
+                monitor.pinned_workspace.add_overlay_tile(
+                    move_.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::Yes,
+                    move_.width,
+                    move_.is_full_width,
+                );
+                monitor.pinned_is_active = true;
+                self.focus_output(&output);
+                if let Some(id) = scratchpad {
+                    self.scratchpad_active = Some(id);
+                }
+                return;
+            }
         }
 
         // Dragging in the overview shouldn't switch the workspace and so on.
@@ -5201,6 +5231,9 @@ impl<W: LayoutElement> Layout<W> {
                     move_.is_floating,
                 );
             }
+        }
+        if let Some(id) = scratchpad {
+            self.scratchpad_active = Some(id);
         }
     }
 

@@ -86,11 +86,17 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        if let Some(super::InteractiveMoveState::Moving(moving)) = &mut self.interactive_move {
+            moving.tile.scratchpad = false;
+        }
         self.scratchpad_active = None;
         self.scratchpad_cycle.clear();
     }
 
     pub(super) fn disable_window_pinning(&mut self) {
+        if let Some(super::InteractiveMoveState::Moving(moving)) = &mut self.interactive_move {
+            moving.tile.pinned = false;
+        }
         for monitor in self.monitors_mut() {
             let pinned: Vec<_> = monitor
                 .pinned_workspace
@@ -378,15 +384,20 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn is_window_pinned(&self, id: &W::Id) -> bool {
-        self.monitors().any(|monitor| {
-            monitor
-                .pinned_workspace
-                .tiles()
-                .any(|tile| tile.window().id() == id && tile.pinned)
-        }) || self.workspaces().any(|(_, _, workspace)| {
-            workspace
-                .tiles()
-                .any(|tile| tile.window().id() == id && tile.pinned)
-        })
+        self.interactive_move
+            .as_ref()
+            .and_then(|state| state.moving())
+            .is_some_and(|moving| moving.tile.window().id() == id && moving.tile.pinned)
+            || self.monitors().any(|monitor| {
+                monitor
+                    .pinned_workspace
+                    .tiles()
+                    .any(|tile| tile.window().id() == id && tile.pinned)
+            })
+            || self.workspaces().any(|(_, _, workspace)| {
+                workspace
+                    .tiles()
+                    .any(|tile| tile.window().id() == id && tile.pinned)
+            })
     }
 }

@@ -37,8 +37,7 @@ stack, so switching workspace or collection does not hide them. An overlay moves
 to a surviving output on disconnect, or waits for the first output to return.
 Window IPC exposes
 `is_pinned`. Overlays stay floating; unpin before requesting tiled, fullscreen or
-maximized modes. Dragging a window back into the workspace removes its overlay
-state. The `open-pinned true` window rule applies this state on mapping,
+maximized modes. Moving an overlay to another output keeps its state. The `open-pinned true` window rule applies this state on mapping,
 including initial floating sizing, when the pinning capability is enabled.
 
 ## Nacre integration

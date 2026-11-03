@@ -321,3 +321,38 @@ fn pin_returns_after_last_output_disconnects_from_a_different_collection() {
         .has_window(&1));
     layout.verify_invariants();
 }
+
+#[test]
+fn dragging_a_pin_to_another_output_keeps_it_sticky() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    Op::AddOutput(2).apply(&mut layout);
+    Op::FocusOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    let first = output(&layout, 1);
+    let second = output(&layout, 2);
+    assert!(layout.interactive_move_begin(1, &first, (100., 100.).into()));
+    assert!(layout.interactive_move_update(
+        &1,
+        (100., 0.).into(),
+        second.clone(),
+        (200., 100.).into()
+    ));
+    assert!(layout.is_window_pinned(&1));
+    layout.interactive_move_end(&1);
+    assert!(layout.is_window_pinned(&1));
+    assert!(layout
+        .monitor_for_output(&second)
+        .unwrap()
+        .pinned_workspace
+        .has_window(&1));
+    layout.switch_workspace_down();
+    layout.create_collection(Some("after-drag".into()));
+    assert!(layout
+        .monitor_for_output(&second)
+        .unwrap()
+        .pinned_workspace
+        .has_window(&1));
+    layout.verify_invariants();
+}
