@@ -3094,9 +3094,12 @@ impl<W: LayoutElement> Layout<W> {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
             let overview = &self.collection_overview;
-            overview.retain_workspaces(self.collections.iter().flat_map(|collection| {
-                collection.workspaces.iter().map(|workspace| workspace.id())
-            }));
+            overview.retain_sources(
+                self.collections.iter().flat_map(|collection| {
+                    collection.workspaces.iter().map(|workspace| workspace.id())
+                }),
+                self.monitors().map(|monitor| monitor.output().clone()),
+            );
             for collection in &mut self.collections {
                 for ws in &mut collection.workspaces {
                     if overview.needs_prepare(ws.id(), ws.overview_revision()) {

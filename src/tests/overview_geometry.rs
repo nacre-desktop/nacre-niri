@@ -2,13 +2,14 @@ use std::time::Duration;
 
 use niri_config::animations::{Curve, EasingParams, Kind};
 use niri_config::Config;
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::Element as _;
-use smithay::utils::{Rectangle, Scale};
+use smithay::utils::{Rectangle, Scale, Transform};
 
 use super::Fixture;
 use crate::niri::{Niri, OutputRenderElements};
-use crate::render_helpers::{RenderCtx, RenderTarget};
+use crate::render_helpers::{render_to_vec as render_pixels, RenderCtx, RenderTarget};
 
 fn fixture() -> Fixture {
     fixture_with_workspace_shadow(true)
@@ -16,7 +17,7 @@ fn fixture() -> Fixture {
 
 fn fixture_with_workspace_shadow(off: bool) -> Fixture {
     let mut config = Config::parse_mem(
-        "output \"headless-1\" { scale 1.5 }\noutput \"headless-2\" { scale 1.0 }",
+        "output \"headless-1\" { scale 1.5; }\noutput \"headless-2\" { scale 1.0; }",
     )
     .unwrap();
     config.layout.collections.enabled = true;
@@ -73,6 +74,17 @@ fn output_elements(
     Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>>,
     f64,
 ) {
+    output_elements_for_target(fixture, output_idx, RenderTarget::Output)
+}
+
+fn output_elements_for_target(
+    fixture: &mut Fixture,
+    output_idx: u8,
+    target: RenderTarget,
+) -> (
+    Vec<OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>>,
+    f64,
+) {
     let output = fixture.niri_output(output_idx);
     fixture.niri().update_render_elements(Some(&output));
     let scale = output.current_scale().fractional_scale();
@@ -84,7 +96,7 @@ fn output_elements(
             niri.render_to_vec(
                 RenderCtx {
                     renderer,
-                    target: RenderTarget::Output,
+                    target,
                     xray: None,
                 },
                 &output,
@@ -119,15 +131,51 @@ fn cached_preview_bounds(
         .collect()
 }
 
-fn damage_intersects(
+fn damage_covers_preview(
     damage: &[Rectangle<i32, smithay::utils::Physical>],
     rects: &[Rectangle<i32, smithay::utils::Physical>],
 ) -> bool {
-    damage.iter().any(|damage| {
-        rects
-            .iter()
-            .any(|rect| damage.intersection(*rect).is_some())
-    })
+    rects
+        .iter()
+        .any(|rect| rect.subtract_rects(damage.iter().copied()).is_empty())
+}
+
+fn assert_red_preview_pixels(
+    fixture: &mut Fixture,
+    output_idx: u8,
+    elements: &[OutputRenderElements<smithay::backend::renderer::gles::GlesRenderer>],
+    previews: &[Rectangle<i32, smithay::utils::Physical>],
+) {
+    let output = fixture.niri_output(output_idx);
+    let size = output.current_mode().unwrap().size;
+    let scale = Scale::from(output.current_scale().fractional_scale());
+    let pixels = fixture
+        .niri_state()
+        .backend
+        .with_primary_renderer(|renderer| {
+            render_pixels(
+                renderer,
+                size,
+                scale,
+                Transform::Normal,
+                Fourcc::Abgr8888,
+                elements.iter().rev(),
+            )
+            .unwrap()
+        })
+        .unwrap();
+    assert!(
+        previews.iter().any(|rect| {
+            (rect.loc.y..rect.loc.y + rect.size.h).any(|y| {
+                (rect.loc.x..rect.loc.x + rect.size.w).any(|x| {
+                    let offset = (y as usize * size.w as usize + x as usize) * 4;
+                    let pixel = &pixels[offset..offset + 4];
+                    pixel[0] > 240 && pixel[1] < 10 && pixel[2] < 10 && pixel[3] > 240
+                })
+            })
+        }),
+        "output {output_idx} did not draw the updated hidden window inside its preview"
+    );
 }
 
 fn set_time(niri: &mut Niri, time: Duration) {
@@ -274,6 +322,19 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                 .map(|(workspace, _)| workspace.render_background().id().clone())
                 .collect();
             assert_unique_ids(&elements);
+            assert_eq!(
+                elements
+                    .iter()
+                    .filter(|element| matches!(
+                        element,
+                        OutputRenderElements::CollectionOverview(
+                            crate::layout::CollectionOverviewRenderElement::Label(_)
+                        )
+                    ))
+                    .count(),
+                2,
+                "each output has its own shown collection and one hidden side column"
+            );
             let signature = element_signature(&elements);
             let cached = fixture.niri().layout.collection_overview_cache_counts();
             let tracker_idx = usize::from(output_idx - 1);
@@ -346,12 +407,7 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                     }
                 }
             }
-            if millis == 0 {
-                assert!(
-                    frames.len() <= 1,
-                    "unexpected extra side collection on output {output_idx}"
-                );
-            } else {
+            if millis > 0 {
                 assert!(
                     !frames.is_empty(),
                     "no overview workspace backgrounds on output {output_idx}"
@@ -359,11 +415,6 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
                 assert!(
                     !contents.is_empty(),
                     "no overview window previews on output {output_idx}"
-                );
-                assert_eq!(
-                    frames.len(),
-                    1,
-                    "output {output_idx} should show only its hidden collection side column; collections shown on other connected outputs stay on those outputs"
                 );
             }
             assert_eq!(native_frames.len(), shown_workspace_count);
@@ -408,7 +459,15 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         let idx = usize::from(output_idx - 1);
         let (elements, _) = output_elements(&mut fixture, output_idx);
         let (damage, _) = damage_trackers[idx].damage_output(1, &elements).unwrap();
-        assert!(damage.is_some_and(|damage| damage_intersects(damage, &old_preview_bounds[idx])));
+        assert!(
+            damage.is_some_and(|damage| damage_covers_preview(damage, &old_preview_bounds[idx]))
+        );
+        assert_red_preview_pixels(
+            &mut fixture,
+            output_idx,
+            &elements,
+            &old_preview_bounds[idx],
+        );
     }
     let after_commit = fixture.niri().layout.collection_overview_cache_counts();
     assert!(after_commit.0 > before_commit.0);
@@ -433,9 +492,9 @@ fn overview_emits_consistent_workspace_and_window_geometry_on_both_outputs() {
         let new_bounds = cached_preview_bounds(&elements, scale);
         let (damage, _) = damage_trackers[idx].damage_output(1, &elements).unwrap();
         let damage = damage.expect("collection move should damage the output");
-        assert!(damage_intersects(&damage, &old_preview_bounds[idx]));
+        assert!(damage_covers_preview(&damage, &old_preview_bounds[idx]));
         assert!(!new_bounds.is_empty());
-        assert!(damage_intersects(&damage, &new_bounds));
+        assert!(damage_covers_preview(&damage, &new_bounds));
     }
 }
 
@@ -488,10 +547,62 @@ fn overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
                 }
             }
             if millis > 0 {
-                assert_eq!(previews.len(), 1);
-                assert_eq!(shadows.len(), 1);
-                assert!(contains(shadows[0], previews[0]));
+                assert!(!previews.is_empty());
+                assert_eq!(previews.len(), shadows.len());
+                for preview in previews {
+                    assert!(shadows.iter().any(|shadow| contains(*shadow, preview)));
+                }
             }
         }
     }
+}
+
+#[test]
+fn many_hidden_previews_remain_cached_across_outputs_and_capture_targets() {
+    let mut fixture = fixture();
+    let client = fixture.add_client();
+    let output1 = fixture.niri_output(1);
+    fixture.niri().layout.focus_output(&output1);
+    let shown = fixture
+        .niri()
+        .layout
+        .collection_for_output(&output1)
+        .unwrap();
+    for _ in 0..6 {
+        fixture.niri().layout.create_collection(None);
+        create_window(&mut fixture, client, 700, 500);
+        fixture
+            .niri()
+            .layout
+            .focus_collection(&niri_config::WorkspaceReference::Id(shown));
+    }
+    fixture.niri_complete_animations();
+    fixture.niri().layout.open_overview();
+    fixture.niri_complete_animations();
+    let targets = [
+        RenderTarget::Output,
+        RenderTarget::Screencast,
+        RenderTarget::ScreenCapture,
+    ];
+    for target in targets {
+        for output in [1, 2] {
+            let _ = output_elements_for_target(&mut fixture, output, target);
+        }
+    }
+    let warmed = fixture.niri().layout.collection_overview_cache_counts();
+    // Six hidden stacks each retain a populated and trailing empty workspace: 72
+    // visible snapshots across the two outputs and three capture targets.
+    assert!(
+        warmed.1 > 64,
+        "fixture must exercise more than 64 cached snapshots: {warmed:?}"
+    );
+    for target in targets {
+        for output in [2, 1] {
+            let _ = output_elements_for_target(&mut fixture, output, target);
+        }
+    }
+    assert_eq!(
+        warmed,
+        fixture.niri().layout.collection_overview_cache_counts()
+    );
 }

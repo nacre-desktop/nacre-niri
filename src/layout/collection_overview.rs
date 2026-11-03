@@ -672,10 +672,8 @@ impl Overview {
                 && entry.key.target == key.target
                 && entry.key.workspace == key.workspace)
         });
-        // Bound retained textures across removed outputs/workspaces and GL context replacement.
-        if textures.len() >= 64 {
-            textures.clear();
-        }
+        // One entry per live output/target/workspace. Clearing by entry count would thrash
+        // every steady frame when many small hidden previews are visible.
         textures.push(PreviewTexture {
             key,
             buffer: buffer.clone(),
@@ -705,14 +703,19 @@ impl Overview {
         self.textures.borrow_mut().clear();
     }
 
-    pub(super) fn retain_workspaces(&self, workspaces: impl Iterator<Item = WorkspaceId>) {
+    pub(super) fn retain_sources(
+        &self,
+        workspaces: impl Iterator<Item = WorkspaceId>,
+        outputs: impl Iterator<Item = Output>,
+    ) {
         let workspaces: HashSet<_> = workspaces.collect();
+        let outputs: HashSet<_> = outputs.collect();
         self.prepared_revisions
             .borrow_mut()
             .retain(|id, _| workspaces.contains(id));
-        self.textures
-            .borrow_mut()
-            .retain(|entry| workspaces.contains(&entry.key.workspace));
+        self.textures.borrow_mut().retain(|entry| {
+            workspaces.contains(&entry.key.workspace) && outputs.contains(&entry.key.output)
+        });
     }
 
     fn label<R: NiriRenderer>(
@@ -839,6 +842,9 @@ pub(super) fn columns(
                     left_width,
                 )
             };
+            // Keep round-off at the outermost side columns inside the output bounds.
+            let x = x.clamp(0., size.w);
+            let width = width.clamp(0., size.w - x);
             ColumnGeometry {
                 id,
                 bounds: Rectangle::new(Point::from((x, 0.)), Size::from((width, size.h))),

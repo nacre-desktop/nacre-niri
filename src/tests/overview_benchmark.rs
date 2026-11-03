@@ -11,7 +11,7 @@ use crate::render_helpers::{render_to_vec as render_pixels, RenderCtx, RenderTar
 
 fn fixture() -> Fixture {
     let mut config = Config::parse_mem(
-        "output \"headless-1\" { scale 1.5 }\noutput \"headless-2\" { scale 1.0 }",
+        "output \"headless-1\" { scale 1.5; }\noutput \"headless-2\" { scale 1.0; }",
     )
     .unwrap();
     config.layout.collections.enabled = true;

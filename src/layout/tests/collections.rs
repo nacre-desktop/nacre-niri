@@ -222,6 +222,9 @@ fn overview_hit_testing_selects_detached_column() {
     let target = layout.collection_active_workspace(other).unwrap();
     layout.focus_collection(&WorkspaceReference::Id(first));
     layout.open_overview();
+    layout.clock.set_complete_instantly(true);
+    layout.advance_animations();
+    layout.clock.set_complete_instantly(false);
     let output = layout.active_output().unwrap().clone();
     // Hidden previews participate in presentation feedback and frame callbacks, while their
     // actual workspace output remains detached.
@@ -354,6 +357,9 @@ fn overview_drag_moves_window_into_hidden_collection() {
     let target = layout.collection_active_workspace(other).unwrap();
     layout.focus_collection(&WorkspaceReference::Id(first));
     layout.open_overview();
+    layout.clock.set_complete_instantly(true);
+    layout.advance_animations();
+    layout.clock.set_complete_instantly(false);
     let output = layout.active_output().unwrap().clone();
     let columns = super::super::collection_overview::columns(
         layout.collections().iter().map(|c| c.id),
