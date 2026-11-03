@@ -24,6 +24,7 @@ fn window(config: Config) -> (Fixture, ClientId, WlSurface) {
     f.double_roundtrip(client);
     let server = crate::ipc::server::IpcServer::start(&f.niri().event_loop, None).unwrap();
     f.niri().ipc_server = Some(server);
+    f.niri_state().ipc_keyboard_layouts_changed();
     f.niri_state().ipc_refresh_layout();
     (f, client, surface)
 }

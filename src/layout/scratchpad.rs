@@ -1,3 +1,4 @@
+use super::monitor::MonitorAddWindowTarget;
 use super::workspace::WorkspaceAddWindowTarget;
 use super::{ActivateWindow, Layout, LayoutElement};
 use crate::utils::transaction::Transaction;
@@ -8,11 +9,12 @@ impl<W: LayoutElement> Layout<W> {
         removed: super::RemovedTile<W>,
         is_floating: bool,
     ) {
-        if let Some(workspace) = self.active_workspace_mut() {
-            workspace.add_tile(
+        if let Some(monitor) = self.active_monitor() {
+            monitor.add_tile(
                 removed.tile,
-                WorkspaceAddWindowTarget::Auto,
+                MonitorAddWindowTarget::Auto,
                 ActivateWindow::No,
+                false,
                 removed.width,
                 removed.is_full_width,
                 is_floating,
@@ -63,10 +65,11 @@ impl<W: LayoutElement> Layout<W> {
                 let mut tile = removed.tile;
                 tile.scratchpad = false;
                 tile.pinned = false;
-                monitor.active_workspace().add_tile(
+                monitor.add_tile(
                     tile,
-                    WorkspaceAddWindowTarget::Auto,
+                    MonitorAddWindowTarget::Auto,
                     ActivateWindow::No,
+                    false,
                     removed.width,
                     removed.is_full_width,
                     true,
@@ -102,10 +105,11 @@ impl<W: LayoutElement> Layout<W> {
                 let mut tile = removed.tile;
                 tile.pinned = false;
                 tile.scratchpad = false;
-                monitor.active_workspace().add_tile(
+                monitor.add_tile(
                     tile,
-                    WorkspaceAddWindowTarget::Auto,
+                    MonitorAddWindowTarget::Auto,
                     ActivateWindow::No,
+                    false,
                     removed.width,
                     removed.is_full_width,
                     true,
@@ -302,14 +306,15 @@ impl<W: LayoutElement> Layout<W> {
             removed.tile.scratchpad = false;
             let (output, was_overlay_focused) = output_and_active.unwrap();
             if let Some(monitor) = self.monitors_mut().find(|monitor| monitor.output == output) {
-                monitor.active_workspace().add_tile(
+                monitor.add_tile(
                     removed.tile,
-                    WorkspaceAddWindowTarget::Auto,
+                    MonitorAddWindowTarget::Auto,
                     if was_focused {
                         ActivateWindow::Yes
                     } else {
                         ActivateWindow::No
                     },
+                    false,
                     removed.width,
                     removed.is_full_width,
                     true,
@@ -368,7 +373,6 @@ impl<W: LayoutElement> Layout<W> {
                 removed.width,
                 removed.is_full_width,
             );
-            monitor.pinned_workspace.center_window(Some(&id));
             monitor.pinned_is_active = was_focused || overlay_was_focused;
         }
     }

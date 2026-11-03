@@ -240,7 +240,7 @@ fn fullscreen_scratchpad_and_open_pinned_windows_remain_visible() {
     );
     let monitor = layout.monitors().next().unwrap();
     assert!(monitor.pinned_workspace.has_window(&2));
-    assert!(!monitor.pinned_workspace.is_floating(&2));
+    assert!(monitor.pinned_workspace.is_floating(&2));
     layout.verify_invariants();
 }
 
@@ -284,5 +284,40 @@ fn keyboard_focus_can_leave_and_return_to_the_output_overlay() {
     assert_eq!(layout.focus().unwrap().id(), &1);
     layout.switch_focus_floating_tiling();
     assert_eq!(layout.focus().unwrap().id(), &2);
+    layout.verify_invariants();
+}
+
+#[test]
+fn unpinning_into_the_last_workspace_keeps_an_empty_tail() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    layout.create_collection(Some("other".into()));
+    add_window(&mut layout, 2);
+    layout.switch_workspace_down();
+    layout.toggle_window_pinned(Some(&1));
+    assert!(layout.has_window(&1));
+    assert!(!layout.is_window_pinned(&1));
+    layout.verify_invariants();
+}
+
+#[test]
+fn pin_returns_after_last_output_disconnects_from_a_different_collection() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.toggle_window_pinned(Some(&1));
+    layout.create_collection(Some("other".into()));
+    let disconnected = output(&layout, 1);
+    layout.remove_output(&disconnected);
+    assert!(layout.has_window(&1));
+    Op::AddOutput(2).apply(&mut layout);
+    assert!(layout
+        .monitors()
+        .next()
+        .unwrap()
+        .pinned_workspace
+        .has_window(&1));
     layout.verify_invariants();
 }

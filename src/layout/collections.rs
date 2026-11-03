@@ -328,6 +328,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub(super) fn add_collection_output(&mut self, output: Output, layout: Option<LayoutPart>) {
+        let had_outputs = self.monitors().next().is_some();
         self.configure_collections();
         let name = output.name();
         let id = self
@@ -466,6 +467,38 @@ impl<W: LayoutElement> Layout<W> {
             .collect();
         self.collection_pending_workspaces
             .retain(|id| !assigned.contains(id));
+        if !had_outputs {
+            let detached: Vec<_> = self
+                .collections
+                .iter()
+                .flat_map(|collection| {
+                    collection.workspaces.iter().flat_map(|workspace| {
+                        workspace
+                            .tiles()
+                            .filter(|tile| tile.pinned || tile.scratchpad)
+                            .map(|tile| tile.window().id().clone())
+                    })
+                })
+                .collect();
+            for id in detached {
+                let Some(removed) = self.remove_window(&id, Transaction::new()) else {
+                    continue;
+                };
+                let scratchpad = removed.tile.scratchpad;
+                if let Some(monitor) = self.monitor_for_output_mut(&output) {
+                    monitor.pinned_workspace.add_overlay_tile(
+                        removed.tile,
+                        WorkspaceAddWindowTarget::Auto,
+                        ActivateWindow::No,
+                        removed.width,
+                        removed.is_full_width,
+                    );
+                }
+                if scratchpad {
+                    self.scratchpad_active = Some(id);
+                }
+            }
+        }
     }
 
     pub(super) fn remove_collection_output(&mut self, output: &Output) {
@@ -481,12 +514,33 @@ impl<W: LayoutElement> Layout<W> {
             .iter()
             .position(|m| m.output() == output)
             .expect("unknown output");
-        let mon = monitors.remove(idx);
+        let mut mon = monitors.remove(idx);
         let id = mon.collection_id.unwrap();
         let active = mon
             .workspaces
             .get(mon.active_workspace_idx)
             .map(|ws| ws.id());
+        // Output overlays follow the surviving output, independently of which collection
+        // happened to be shown on the disconnected monitor.
+        if !monitors.is_empty() {
+            let mut overlay = mon.take_pinned_workspace();
+            let target_idx = primary_idx.saturating_sub(usize::from(primary_idx >= idx));
+            let target = &mut monitors[target_idx];
+            let ids: Vec<_> = overlay
+                .windows()
+                .map(|window| window.id().clone())
+                .collect();
+            for id in ids {
+                let removed = overlay.remove_tile(&id, Transaction::new());
+                target.pinned_workspace.add_overlay_tile(
+                    removed.tile,
+                    WorkspaceAddWindowTarget::Auto,
+                    ActivateWindow::No,
+                    removed.width,
+                    removed.is_full_width,
+                );
+            }
+        }
         self.store_collection_stack(id, mon.into_workspaces(), active);
         primary_idx = primary_idx.saturating_sub(usize::from(primary_idx >= idx));
         active_monitor_idx =
