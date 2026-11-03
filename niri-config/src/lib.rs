@@ -83,6 +83,7 @@ pub struct Config {
     pub blur: Blur,
     pub gestures: Gestures,
     pub overview: Overview,
+    pub edge_triggers: EdgeTriggers,
     pub nacre: Nacre,
     pub environment: Environment,
     pub xwayland_satellite: XwaylandSatellite,
@@ -166,6 +167,7 @@ where
                     | "window-rule"
                     | "layer-rule"
                     | "workspace"
+                    | "edge-triggers"
                     | "include"
             ) && !seen.insert(name)
             {
@@ -201,6 +203,7 @@ where
                 "blur" => m_merge!(blur),
                 "gestures" => m_merge!(gestures),
                 "overview" => m_merge!(overview),
+                "edge-triggers" => m_merge!(edge_triggers),
                 "nacre" => m_merge!(nacre),
                 "xwayland-satellite" => m_merge!(xwayland_satellite),
                 "switch-events" => m_merge!(switch_events),
@@ -702,6 +705,60 @@ mod tests {
         assert!(do_parse("").nacre.proportional_x11_widths);
         assert!(do_parse("nacre { proportional-x11-widths; }").nacre.proportional_x11_widths);
         assert!(!do_parse("nacre { proportional-x11-widths false; }").nacre.proportional_x11_widths);
+    }
+
+    #[test]
+    fn nacre_edge_triggers_default_on_and_can_be_disabled() {
+        assert!(do_parse("").nacre.edge_triggers);
+        assert!(do_parse("nacre { edge-triggers; }").nacre.edge_triggers);
+        assert!(!do_parse("nacre { edge-triggers false; }").nacre.edge_triggers);
+    }
+
+    #[test]
+    fn edge_triggers_parse_global_policy_and_output_overrides() {
+        let config = do_parse(
+            r#"
+            edge-triggers {
+                left {
+                    action { event; }
+                    dwell-time-ms 250
+                    pressure 12
+                    velocity 600
+                }
+                right { action { spawn "nacre-panel" "right"; } }
+            }
+            output "DP-1" {
+                edge-triggers {
+                    left { off; }
+                    bottom { action { event; } }
+                }
+            }
+            nacre { edge-triggers false; }
+            "#,
+        );
+
+        assert!(!config.nacre.edge_triggers);
+        let left = config.edge_triggers.left.as_ref().unwrap();
+        assert_eq!(left.dwell_time_ms, Some(250));
+        assert_eq!(left.pressure.map(|v| v.0), Some(12.0));
+        assert_eq!(left.velocity.map(|v| v.0), Some(600.0));
+        assert!(matches!(left.action.as_ref(), Some(EdgeTriggerAction::Event)));
+        assert!(matches!(
+            config.edge_triggers.right.as_ref().unwrap().action.as_ref(),
+            Some(EdgeTriggerAction::Spawn(_))
+        ));
+        let output = config.outputs.find(&OutputName {
+            connector: "DP-1".into(),
+            make: None,
+            model: None,
+            serial: None,
+        }).unwrap();
+        let overrides = output.edge_triggers.as_ref().unwrap();
+        assert!(overrides.left.as_ref().unwrap().off);
+        assert!(matches!(
+            overrides.bottom.as_ref().unwrap().action.as_ref(),
+            Some(EdgeTriggerAction::Event)
+        ));
     }
 
     #[test]
@@ -1277,6 +1334,7 @@ mod tests {
                                 bottom_right: true,
                             },
                         ),
+                        edge_triggers: None,
                         layout: None,
                     },
                     Output {
@@ -1303,6 +1361,7 @@ mod tests {
                         background_color: None,
                         backdrop_color: None,
                         hot_corners: None,
+                        edge_triggers: None,
                         layout: None,
                     },
                     Output {
@@ -1332,6 +1391,7 @@ mod tests {
                         background_color: None,
                         backdrop_color: None,
                         hot_corners: None,
+                        edge_triggers: None,
                         layout: None,
                     },
                 ],
@@ -1776,9 +1836,16 @@ mod tests {
                     },
                 },
             },
+            edge_triggers: EdgeTriggers {
+                left: None,
+                right: None,
+                top: None,
+                bottom: None,
+            },
             nacre: Nacre {
                 overview_hover: true,
                 proportional_x11_widths: true,
+                edge_triggers: true,
             },
             environment: Environment(
                 [

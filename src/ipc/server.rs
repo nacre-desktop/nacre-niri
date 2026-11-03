@@ -68,6 +68,7 @@ struct EventStreamClient {
 
 struct EventStreamSender {
     overview_hover: bool,
+    edge_triggers: bool,
     events: Sender<Event>,
     disconnect: Sender<()>,
     include_collections: bool,
@@ -122,6 +123,7 @@ impl IpcServer {
         let mut to_remove = Vec::new();
         for (idx, stream) in streams.iter_mut().enumerate() {
             if (matches!(event, Event::NacreOverviewHoverChanged { .. }) && !stream.overview_hover)
+                || (matches!(event, Event::EdgeTriggered { .. }) && !stream.edge_triggers)
                 || !stream_event_allowed(&event, stream.include_collections)
             {
                 continue;
@@ -173,6 +175,7 @@ impl IpcServer {
         let (disconnect, _disconnect_receiver) = async_channel::bounded(1);
         self.event_streams.borrow_mut().push(EventStreamSender {
             overview_hover: false,
+            edge_triggers: false,
             events,
             disconnect,
             include_collections: false,
@@ -191,6 +194,14 @@ impl IpcServer {
         if self.overview_hover.replace(id) != id {
             self.send_event(Event::NacreOverviewHoverChanged { id });
         }
+    }
+
+    pub fn edge_triggered(&self, output: String, edge: niri_ipc::Edge, position: [f64; 2]) {
+        self.send_event(Event::EdgeTriggered {
+            output,
+            edge,
+            position,
+        });
     }
 }
 
@@ -238,28 +249,40 @@ mod tests {
         let (legacy_tx, legacy_rx) = async_channel::bounded(4);
         let (extension_tx, extension_rx) = async_channel::bounded(4);
         let (hover_tx, hover_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(4);
         let (legacy_disconnect, _) = async_channel::bounded(1);
         let (extension_disconnect, _) = async_channel::bounded(1);
         let (hover_disconnect, _) = async_channel::bounded(1);
+        let (edge_disconnect, _) = async_channel::bounded(1);
         let server = IpcServer {
             socket_path: None,
             event_streams: Rc::new(RefCell::new(vec![
                 super::EventStreamSender {
                     overview_hover: false,
+                    edge_triggers: false,
                     events: legacy_tx,
                     disconnect: legacy_disconnect,
                     include_collections: false,
                 },
                 super::EventStreamSender {
                     overview_hover: false,
+                    edge_triggers: false,
                     events: extension_tx,
                     disconnect: extension_disconnect,
                     include_collections: true,
                 },
                 super::EventStreamSender {
                     overview_hover: true,
+                    edge_triggers: false,
                     events: hover_tx,
                     disconnect: hover_disconnect,
+                    include_collections: false,
+                },
+                super::EventStreamSender {
+                    overview_hover: false,
+                    edge_triggers: true,
+                    events: edge_tx,
+                    disconnect: edge_disconnect,
                     include_collections: false,
                 },
             ])),
@@ -271,6 +294,7 @@ mod tests {
         });
         server.update_overview_hover(Some(7));
         server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
+        server.edge_triggered(String::from("DP-1"), niri_ipc::Edge::Left, [0., 20.]);
 
         assert!(matches!(
             legacy_rx.try_recv(),
@@ -294,6 +318,18 @@ mod tests {
             Ok(Event::OverviewOpenedOrClosed { is_open: true })
         ));
         assert!(hover_rx.try_recv().is_err());
+        let Ok(Event::EdgeTriggered {
+            output,
+            edge,
+            position,
+        }) = edge_rx.try_recv()
+        else {
+            panic!("opt-in edge stream did not receive the edge event");
+        };
+        assert_eq!(output, "DP-1");
+        assert_eq!(edge, niri_ipc::Edge::Left);
+        assert_eq!(position, [0.0, 20.0]);
+        assert!(edge_rx.try_recv().is_err());
     }
 }
 
@@ -369,11 +405,13 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             .map_err(|err| err.to_string());
         let requested_error = matches!(request, Ok(Request::ReturnError));
         let requested_hover = matches!(request, Ok(Request::NacreOverviewHoverStream));
+        let requested_edges = matches!(request, Ok(Request::NacreEdgeTriggerStream));
         let requested_event_stream = matches!(
             request,
             Ok(Request::EventStream
                 | Request::EventStreamWithCollections
-                | Request::NacreOverviewHoverStream)
+                | Request::NacreOverviewHoverStream
+                | Request::NacreEdgeTriggerStream)
         );
         let include_collections = matches!(request, Ok(Request::EventStreamWithCollections));
 
@@ -434,6 +472,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
                 }
                 let sender = EventStreamSender {
                     overview_hover: requested_hover,
+                    edge_triggers: requested_edges,
                     events: events_tx,
                     disconnect: disconnect_tx,
                     include_collections,
@@ -458,6 +497,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     workspace_collections: config.layout.collections.enabled,
                     proportional_x11_widths: false,
                     overview_hover: config.nacre.overview_hover,
+                    edge_triggers: config.nacre.edge_triggers,
                 });
             });
             let capabilities = rx
@@ -688,6 +728,17 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             });
             if !rx.recv().await.unwrap_or(false) {
                 return Err(String::from("Nacre overview hover is disabled"));
+            }
+            Response::Handled
+        }
+        Request::NacreEdgeTriggerStream => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let enabled = state.niri.config.borrow().nacre.edge_triggers;
+                let _ = tx.send_blocking(enabled);
+            });
+            if !rx.recv().await.unwrap_or(false) {
+                return Err(String::from("Nacre edge triggers are disabled"));
             }
             Response::Handled
         }
@@ -1223,12 +1274,14 @@ mod nacre_hover_tests {
         server.event_streams.borrow_mut().extend([
             EventStreamSender {
                 overview_hover: false,
+                edge_triggers: false,
                 events: regular_tx,
                 disconnect: regular_disconnect,
                 include_collections: false,
             },
             EventStreamSender {
                 overview_hover: true,
+                edge_triggers: false,
                 events: hover_tx,
                 disconnect: hover_disconnect,
                 include_collections: false,

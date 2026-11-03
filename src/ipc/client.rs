@@ -587,6 +587,7 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                 capabilities.proportional_x11_widths
             );
             println!("Overview hover: {}", capabilities.overview_hover);
+            println!("Edge triggers: {}", capabilities.edge_triggers);
         }
         Msg::Casts => {
             let Response::Casts(mut casts) = response else {

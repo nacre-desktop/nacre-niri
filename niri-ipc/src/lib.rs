@@ -121,6 +121,11 @@ pub enum Request {
     EventStream,
     /// Start an event stream that includes overview preview hover changes.
     NacreOverviewHoverStream,
+    /// Start a regular event stream that opts in to native screen-edge trigger events.
+    ///
+    /// The initial standard state snapshot is sent first. `EdgeTriggered` events are delivered
+    /// only to clients using this request, preserving compatibility with older event clients.
+    NacreEdgeTriggerStream,
     /// Start an event stream including Nacre-Niri workspace collection events.
     ///
     /// Use this extension when communicating with a compositor that supports it. The standard
@@ -197,6 +202,23 @@ pub struct NacreCapabilities {
     pub proportional_x11_widths: bool,
     /// Pointer hover metadata for overview previews is enabled.
     pub overview_hover: bool,
+    /// Native screen-edge triggers are enabled.
+    #[serde(default)]
+    pub edge_triggers: bool,
+}
+
+/// Screen edge that activated a configured edge trigger.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum Edge {
+    /// Left output edge.
+    Left,
+    /// Right output edge.
+    Right,
+    /// Top output edge.
+    Top,
+    /// Bottom output edge.
+    Bottom,
 }
 
 /// Overview information.
@@ -1755,6 +1777,15 @@ pub enum Event {
         /// Window ID, or `None` when no preview window is hovered.
         id: Option<u64>,
     },
+    /// A configured screen edge was triggered after its dwell and pressure requirements passed.
+    EdgeTriggered {
+        /// Stable output connector name.
+        output: String,
+        /// Triggered output edge.
+        edge: Edge,
+        /// Pointer position in output-local logical coordinates.
+        position: [f64; 2],
+    },
     /// The configuration was reloaded.
     ///
     /// You will always receive this event when connecting to the event stream, indicating the last
@@ -2203,10 +2234,23 @@ mod tests {
             workspace_collections: true,
             proportional_x11_widths: false,
             overview_hover: true,
+            edge_triggers: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"edge_triggers":true}}}"#,
         );
+        assert_eq!(
+            serde_json::to_string(&Request::NacreEdgeTriggerStream).unwrap(),
+            "\"NacreEdgeTriggerStream\""
+        );
+        let event = Event::EdgeTriggered {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [0.0, 10.0],
+        };
+        assert!(serde_json::to_string(&event)
+            .unwrap()
+            .contains(r#""EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,10.0]}"#));
     }
 }

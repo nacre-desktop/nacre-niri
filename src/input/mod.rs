@@ -2582,6 +2582,7 @@ impl State {
         }
 
         let under = self.niri.contents_under(new_pos);
+        self.niri.update_edge_trigger(new_pos, event.delta());
 
         // Handle confined pointer.
         if let Some((focus_surface, region)) = pointer_confined {
@@ -2719,6 +2720,8 @@ impl State {
         }
 
         let under = self.niri.contents_under(pos);
+        let old_pos = pointer.current_location();
+        self.niri.update_edge_trigger(pos, pos - old_pos);
 
         self.niri.handle_focus_follows_mouse(&under, pos);
 
