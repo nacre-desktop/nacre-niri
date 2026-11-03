@@ -270,8 +270,11 @@ impl Niri {
     fn edge_trigger_is_suppressed(&self, output: &Output) -> bool {
         let monitor = self.layout.monitor_for_output(output);
         let inactive_output = monitor.is_none();
-        let fullscreen = monitor
-            .is_some_and(|monitor| monitor.active_workspace_ref().is_active_pending_fullscreen());
+        let fullscreen = monitor.is_some_and(|monitor| {
+            monitor
+                .active_workspace_ref()
+                .is_active_pending_fullscreen()
+        });
         let pointer_grabbed = self
             .seat
             .get_pointer()
