@@ -888,8 +888,19 @@ impl XdgShellHandler for State {
     }
 
     fn popup_destroyed(&mut self, surface: PopupSurface) {
-        if let Some(output) = self.output_for_popup(&PopupKind::Xdg(surface)) {
+        let popup = PopupKind::Xdg(surface);
+        if let Ok(root) = find_popup_root_surface(&popup) {
+            if root.is_alive() {
+                if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
+                    let window = mapped.window.clone();
+                    self.niri.layout.update_window(&window, None);
+                }
+            }
+        }
+        if let Some(output) = self.output_for_popup(&popup) {
             self.niri.queue_redraw(&output.clone());
+        } else if self.niri.layout.collection_overview_is_open() {
+            self.niri.queue_redraw_all();
         }
     }
 

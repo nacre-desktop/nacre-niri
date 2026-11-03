@@ -399,9 +399,11 @@ impl CompositorHandler for State {
         if let Some(popup) = self.niri.popups.find_popup(surface) {
             // Popup commits also change the owning workspace's overview preview.
             let root = self.niri.find_root_shell_surface(surface);
-            if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
-                let window = mapped.window.clone();
-                self.niri.layout.update_window(&window, None);
+            if root.is_alive() {
+                if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
+                    let window = mapped.window.clone();
+                    self.niri.layout.update_window(&window, None);
+                }
             }
             if let Some(output) = self.output_for_popup(&popup) {
                 self.niri.queue_redraw(&output.clone());
