@@ -367,6 +367,7 @@ fn closing_the_active_overlay_focuses_the_remaining_overlay() {
         add_window(&mut layout, id);
         layout.toggle_window_pinned(Some(&id));
     }
+    layout.activate_window(&2);
     assert_eq!(layout.focus().unwrap().id(), &2);
     layout.remove_window(&2, Transaction::new()).unwrap();
     assert_eq!(layout.focus().unwrap().id(), &1);
@@ -425,7 +426,9 @@ fn pinned_overlay_can_be_resized_interactively() {
 
 #[test]
 fn popup_bounds_and_pointer_focus_handle_overlay_and_hidden_windows() {
-    let mut layout = Layout::default();
+    let mut options = Options::default();
+    options.layout.collections.enabled = true;
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
     Op::AddOutput(1).apply(&mut layout);
     add_window(&mut layout, 1);
     layout.toggle_window_pinned(Some(&1));
