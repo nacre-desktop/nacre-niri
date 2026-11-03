@@ -1067,12 +1067,12 @@ impl<W: LayoutElement> Layout<W> {
                 self.scratchpad.refresh(false, false);
                 return None;
             }
-            if let Some(mon_idx) = self
+            let mon_idx = self
                 .monitors()
                 .enumerate()
                 .find(|(_, monitor)| monitor.pinned_workspace.has_window(next))
-                .map(|(idx, _)| idx)
-            {
+                .map(|(idx, _)| idx);
+            if let Some(mon_idx) = mon_idx {
                 let MonitorSet::Normal {
                     monitors,
                     active_monitor_idx,
