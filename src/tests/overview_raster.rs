@@ -287,11 +287,13 @@ fn egl_scratchpad_overview_uses_cached_transformed_preview_with_and_without_coll
             fixture.niri().advance_animations();
             output.compare(&mut fixture, 1, &format!("scratchpad {collections} {millis}ms"));
         }
-        let (_, builds) = fixture.niri().layout.collection_overview_cache_counts();
+        let (preparations, builds) = fixture.niri().layout.collection_overview_cache_counts();
         assert!(builds > 0, "scratchpad preview did not use the shared texture cache");
         output.compare(&mut fixture, 1, "steady scratchpad cache");
-        let (_, steady_builds) = fixture.niri().layout.collection_overview_cache_counts();
+        let (steady_preparations, steady_builds) =
+            fixture.niri().layout.collection_overview_cache_counts();
         assert_eq!(steady_builds, builds, "steady scratchpad frame rebuilt its texture");
+        assert_eq!(steady_preparations, preparations, "steady scratchpad frame re-prepared its workspace");
         assert!(output.saw_partial_damage, "scratchpad preview never caused partial damage");
     }
 }

@@ -2094,7 +2094,7 @@ impl<W: LayoutElement> Layout<W> {
 
         let mon_windows = monitors
             .iter()
-            .filter(move |mon| overview || mon.output == output)
+            .filter(move |mon| mon.output == output)
             .flat_map(|mon| mon.windows());
         let hidden_windows = self
             .collections
@@ -2128,7 +2128,7 @@ impl<W: LayoutElement> Layout<W> {
 
         let mon_windows = monitors
             .iter_mut()
-            .filter(move |mon| overview || mon.output == output)
+            .filter(move |mon| mon.output == output)
             .flat_map(|mon| mon.windows_mut());
         let hidden_windows = self
             .collections
@@ -3479,9 +3479,7 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn update_render_elements(&mut self, output: Option<&Output>) {
-        if self.overview_open && !self.collection_overview_is_open() {
-            self.scratchpad.update_render_elements(false);
-        }
+        let overview_open = self.overview_open;
         if self.collection_overview_is_open() {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
@@ -3499,6 +3497,15 @@ impl<W: LayoutElement> Layout<W> {
                     }
                 }
             }
+            if overview.needs_prepare(self.scratchpad.id(), self.scratchpad.overview_revision()) {
+                self.scratchpad.update_render_elements(false);
+            }
+        } else if overview_open {
+            let overview = &self.collection_overview;
+            overview.retain_sources(
+                std::iter::once(self.scratchpad.id()),
+                self.monitors().map(|monitor| monitor.output().clone()),
+            );
             if overview.needs_prepare(self.scratchpad.id(), self.scratchpad.overview_revision()) {
                 self.scratchpad.update_render_elements(false);
             }
