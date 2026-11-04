@@ -1278,7 +1278,7 @@ fn reveal_headless_gles_cost_benchmark() {
                     .expect("upload reveal sample to GLES");
                     let element = crate::render_helpers::texture::TextureRenderElement::from_texture_buffer(
                         buffer,
-                        Point::from((_crop.x as f64, _crop.y as f64)),
+                        Point::from((crop.x as f64, crop.y as f64)),
                         plane_pose.opacity as f32,
                         None,
                         None,
@@ -1320,25 +1320,27 @@ fn reveal_headless_gles_cost_benchmark() {
                                     clip.h as f64,
                                 ))
                             })
-                        })
-                        .expect("route content intersects the viewport and sampled clips");
-                    let content = CropRenderElement::from_element(
-                        content,
-                        Scale::from(case.scale),
-                        physical_cover(content_clip, case.scale),
-                    )
-                    .expect("crop content to the sampled plane and reveal clips");
+                        });
                     let contour = CropRenderElement::from_element(
                         element,
                         Scale::from(case.scale),
                         physical_cover(viewport, case.scale),
                     )
                     .expect("crop reveal contour to the layer viewport");
-                    let elements: [CropRenderElement<
+                    let mut elements: Vec<CropRenderElement<
                         crate::render_helpers::texture::TextureRenderElement<
                             smithay::backend::renderer::gles::GlesTexture,
                         >,
-                    >; 2] = [contour, content];
+                    >> = vec![contour];
+                    if let Some(content_clip) = content_clip {
+                        if let Some(content) = CropRenderElement::from_element(
+                            content,
+                            Scale::from(case.scale),
+                            physical_cover(content_clip, case.scale),
+                        ) {
+                            elements.push(content);
+                        }
+                    }
                     let (texture, sync) = render_helpers::render_to_texture(
                         renderer,
                         Size::from((case.atlas_width as i32, case.atlas_height as i32)),
