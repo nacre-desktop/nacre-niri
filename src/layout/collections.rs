@@ -492,19 +492,15 @@ impl<W: LayoutElement> Layout<W> {
         // Actual recent use outranks an unused configured startup desk when restoring a
         // monitor after all outputs were removed.
         let recent_hidden_id = if home_id.is_none() {
-            self.collection_recent_use
-                .iter()
-                .rev()
-                .copied()
-                .find(|id| {
-                    !self
-                        .monitors()
-                        .any(|monitor| monitor.collection_id == Some(*id))
-                        && self
-                            .collections
-                            .iter()
-                            .any(|collection| collection.id == *id)
-                })
+            self.collection_recent_use.iter().rev().copied().find(|id| {
+                !self
+                    .monitors()
+                    .any(|monitor| monitor.collection_id == Some(*id))
+                    && self
+                        .collections
+                        .iter()
+                        .any(|collection| collection.id == *id)
+            })
         } else {
             None
         };
@@ -520,23 +516,21 @@ impl<W: LayoutElement> Layout<W> {
         } else {
             None
         };
-        let fallback_hidden_id = if home_id.is_none()
-            && recent_hidden_id.is_none()
-            && initial_config_id.is_none()
-        {
-            self.collections
-                .iter()
-                .find(|collection| {
-                    !self
-                        .monitors()
-                        .any(|monitor| monitor.collection_id == Some(collection.id))
-                })
-                .map(|collection| collection.id)
-        } else {
-            None
-        };
-        let reused = home_id.is_none()
-            && (recent_hidden_id.is_some() || fallback_hidden_id.is_some());
+        let fallback_hidden_id =
+            if home_id.is_none() && recent_hidden_id.is_none() && initial_config_id.is_none() {
+                self.collections
+                    .iter()
+                    .find(|collection| {
+                        !self
+                            .monitors()
+                            .any(|monitor| monitor.collection_id == Some(collection.id))
+                    })
+                    .map(|collection| collection.id)
+            } else {
+                None
+            };
+        let reused =
+            home_id.is_none() && (recent_hidden_id.is_some() || fallback_hidden_id.is_some());
         let id = home_id
             .or(recent_hidden_id)
             .or(initial_config_id)
