@@ -95,6 +95,7 @@ pub mod closing_window;
 mod collection_overview;
 pub(crate) mod collection_persistence;
 pub mod collections;
+mod monitor_actions;
 pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
