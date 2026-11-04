@@ -78,9 +78,11 @@ fn workspace_set_rotation_preserves_hidden_desks_pins_selection_and_collection_i
     populate(&mut layout, 3);
     layout.toggle_window_pinned(Some(&1));
     // Leave a populated hidden collection, independent of the shown ring.
+    let original = monitor(&layout, 1).collection_id.unwrap();
     let hidden = layout.create_collection(Some("hidden".into()));
     Op::AddWindow { params: TestWindowParams::new(4) }.apply(&mut layout);
-    layout.focus_collection_previous();
+    layout.focus_collection(&WorkspaceReference::Id(original));
+    assert!(!layout.monitors().any(|monitor| monitor.collection_id == Some(hidden)));
     Op::CompleteAnimations.apply(&mut layout);
     let hidden_stack: Vec<_> = layout.collection_workspaces(hidden).map(Workspace::id).collect();
     let before: Vec<_> = (1..=3).map(|id| (monitor(&layout, id).collection_id, selected(&layout, id).0)).collect();
