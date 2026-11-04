@@ -269,3 +269,83 @@ fn configured_workspaces_route_to_their_first_outputs_without_splitting_on_replu
         .windows_for_output(&restored)
         .any(|window| *window.id() == 2));
 }
+
+#[test]
+fn unconfiguring_persisted_empty_collection_during_workspace_switch_collapses_boundaries() {
+    // Include the property harness setup: output2 remains connected before the shrunken
+    // sequence adds output1. Keep the no-rotation control alongside the regression.
+    for rotate in [false, true] {
+        let mut options = Options::default();
+        options.layout.collections.names = vec!["collection2".into(), "collection3".into()];
+        let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+        check_ops_on_layout(
+            &mut layout,
+            [
+                Op::AddOutput(1),
+                Op::AddWindow {
+                    params: TestWindowParams::new(1),
+                },
+                Op::CreateCollection(Some(9)),
+                Op::CreateCollection(Some(3)),
+                Op::AddOutput(2),
+                Op::RemoveOutput(1),
+                Op::RestoreCollectionState,
+                Op::AddScaledOutput {
+                    id: 1,
+                    scale: 1.,
+                    layout_config: Some(Box::new(niri_config::LayoutPart {
+                        empty_workspace_above_first: Some(Flag(true)),
+                        ..Default::default()
+                    })),
+                },
+                Op::AddWindow {
+                    params: TestWindowParams::new(1),
+                },
+                Op::FocusColumnOrMonitorLeft(1),
+                Op::FocusCollectionById(1),
+                Op::SwitchPresetColumnWidth,
+                Op::MoveWindowToCollectionRelative(false),
+                Op::FocusCollection(1),
+            ],
+        );
+        if rotate {
+            Op::RotateWorkspaceSets(false).apply(&mut layout);
+            layout.verify_invariants();
+        }
+        Op::FocusWorkspaceAutoBackAndForth(1).apply(&mut layout);
+        layout.verify_invariants();
+        assert_eq!(layout.outputs().count(), 2);
+        if rotate {
+            assert!(layout.monitors().any(|monitor| {
+                monitor.options.layout.empty_workspace_above_first
+                    && monitor.workspaces.len() == 2
+                    && monitor.workspace_switch.is_some()
+                    && monitor
+                        .workspaces
+                        .iter()
+                        .all(|workspace| !workspace.has_workspace_contents())
+                    && monitor
+                        .workspaces
+                        .iter()
+                        .any(Workspace::collection_persistent)
+            }));
+        }
+        let focused_output = layout.active_output().cloned();
+        check_ops_on_layout(
+            &mut layout,
+            [Op::UpdateConfig {
+                layout_config: Box::default(),
+            }],
+        );
+        assert_eq!(layout.active_output(), focused_output.as_ref());
+        assert!(layout.has_window(&1));
+        if rotate {
+            let above_first = layout
+                .monitors()
+                .find(|monitor| monitor.options.layout.empty_workspace_above_first)
+                .unwrap();
+            assert_eq!(above_first.workspaces.len(), 1);
+            assert!(above_first.workspace_switch.is_none());
+        }
+    }
+}

@@ -299,11 +299,25 @@ impl<W: LayoutElement> Layout<W> {
             });
         }
         for monitor in self.monitors_mut() {
-            if monitor.workspace_switch.is_none()
-                && monitor
-                    .collection_id
-                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+            if !monitor
+                .collection_id
+                .is_some_and(|id| nonpersistent_ids.contains(&id))
             {
+                continue;
+            }
+            // Removing persisted retention can leave only the two empty boundary rows. They
+            // must collapse even during a workspace switch: unlike ordinary empty rows in an
+            // animation, this pair is valid only while one of its slots is retained.
+            if monitor.options.layout.empty_workspace_above_first
+                && monitor.workspaces.len() == 2
+                && monitor
+                    .workspaces
+                    .iter()
+                    .all(|workspace| !workspace.has_workspace_contents())
+            {
+                monitor.workspace_switch = None;
+            }
+            if monitor.workspace_switch.is_none() {
                 monitor.clean_up_workspaces();
             }
         }
