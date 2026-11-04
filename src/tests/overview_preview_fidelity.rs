@@ -141,13 +141,11 @@ fn row_runs(
     runs
 }
 
-fn assert_pattern_spacing(
+fn pattern_centers(
     pixels: &[u8],
     size: smithay::utils::Size<i32, smithay::utils::Physical>,
     bounds: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
-    expected: f64,
-) {
-    let mut found = None;
+) -> Option<Vec<(f64, f64)>> {
     let x_start = bounds.loc.x.max(0) as usize;
     let x_end = (bounds.loc.x + bounds.size.w).min(size.w).max(0) as usize;
     let y_start = bounds.loc.y.max(0) as usize;
@@ -160,27 +158,34 @@ fn assert_pattern_spacing(
                 .enumerate()
                 .all(|(index, run)| run.2 == index)
             {
-                found = Some(
+                return Some(
                     sequence
                         .iter()
-                        .map(|run| (run.0 + run.1) as f64 / 2.)
+                        .map(|run| ((run.0 + run.1) as f64 / 2., y as f64))
                         .collect::<Vec<_>>(),
                 );
-                break;
             }
         }
-        if found.is_some() {
-            break;
-        }
     }
-    let centers = found.expect("four colored subsurface stripes visible in hidden preview");
+    None
+}
+
+fn assert_pattern_spacing(
+    pixels: &[u8],
+    size: smithay::utils::Size<i32, smithay::utils::Physical>,
+    bounds: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+    expected: f64,
+) -> Vec<(f64, f64)> {
+    let centers = pattern_centers(pixels, size, bounds)
+        .expect("four colored subsurface stripes visible in hidden preview");
     for pair in centers.windows(2) {
-        let distance = pair[1] - pair[0];
+        let distance = pair[1].0 - pair[0].0;
         assert!(
             (distance - expected).abs() <= 3.,
             "preview stripe centers should follow target scale and zoom: expected {expected:.2}px, got {distance:.2}px"
         );
     }
+    centers
 }
 
 fn color_present_in_preview(
@@ -207,7 +212,7 @@ fn render_target_preview(
 ) -> (
     Vec<u8>,
     smithay::utils::Size<i32, smithay::utils::Physical>,
-    smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+    Vec<smithay::utils::Rectangle<i32, smithay::utils::Physical>>,
 ) {
     let target_output = fixture.niri_output(target_index);
     fixture.niri().update_render_elements(Some(&target_output));
@@ -232,15 +237,15 @@ fn render_target_preview(
             })
             .unwrap()
     };
-    let preview = elements
+    let previews = elements
         .iter()
-        .find_map(|element| match element {
+        .filter_map(|element| match element {
             OutputRenderElements::CollectionOverview(
                 CollectionOverviewRenderElement::CachedPreview(preview),
             ) => Some(preview.geometry(Scale::from(output_scale))),
             _ => None,
         })
-        .expect("other output's workspace is rendered as a cached preview");
+        .collect();
     let pixels = fixture
         .niri_state()
         .backend
@@ -256,7 +261,82 @@ fn render_target_preview(
             .unwrap()
         })
         .unwrap();
-    (pixels, size, preview)
+    (pixels, size, previews)
+}
+
+fn matching_preview(
+    pixels: &[u8],
+    size: smithay::utils::Size<i32, smithay::utils::Physical>,
+    previews: &[smithay::utils::Rectangle<i32, smithay::utils::Physical>],
+) -> smithay::utils::Rectangle<i32, smithay::utils::Physical> {
+    previews
+        .iter()
+        .copied()
+        .find(|preview| pattern_centers(pixels, size, *preview).is_some())
+        .expect("cached preview containing the patterned workspace")
+}
+
+fn color_center(
+    pixels: &[u8],
+    size: smithay::utils::Size<i32, smithay::utils::Physical>,
+    bounds: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+    color: [u8; 3],
+) -> Option<(f64, f64)> {
+    let mut min_x = i32::MAX;
+    let mut min_y = i32::MAX;
+    let mut max_x = i32::MIN;
+    let mut max_y = i32::MIN;
+    for y in bounds.loc.y.max(0)..(bounds.loc.y + bounds.size.h).min(size.h) {
+        for x in bounds.loc.x.max(0)..(bounds.loc.x + bounds.size.w).min(size.w) {
+            let offset = (y as usize * size.w as usize + x as usize) * 4;
+            let pixel = &pixels[offset..offset + 4];
+            if pixel[0].abs_diff(color[0]) < 5
+                && pixel[1].abs_diff(color[1]) < 5
+                && pixel[2].abs_diff(color[2]) < 5
+                && pixel[3] > 240
+            {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    (min_x <= max_x).then_some(((min_x + max_x) as f64 / 2., (min_y + max_y) as f64 / 2.))
+}
+
+fn color_near(
+    pixels: &[u8],
+    size: smithay::utils::Size<i32, smithay::utils::Physical>,
+    bounds: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
+    point: (f64, f64),
+    color: [u8; 3],
+) -> bool {
+    let x = point.0.round() as i32;
+    let y = point.1.round() as i32;
+    (-2..=2).any(|dy| {
+        (-2..=2).any(|dx| {
+            let x = x + dx;
+            let y = y + dy;
+            if x < bounds.loc.x
+                || y < bounds.loc.y
+                || x >= bounds.loc.x + bounds.size.w
+                || y >= bounds.loc.y + bounds.size.h
+                || x < 0
+                || y < 0
+                || x >= size.w
+                || y >= size.h
+            {
+                return false;
+            }
+            let offset = (y as usize * size.w as usize + x as usize) * 4;
+            let pixel = &pixels[offset..offset + 4];
+            pixel[0].abs_diff(color[0]) < 5
+                && pixel[1].abs_diff(color[1]) < 5
+                && pixel[2].abs_diff(color[2]) < 5
+                && pixel[3] > 240
+        })
+    })
 }
 
 #[test]
@@ -292,7 +372,8 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
 
         fixture.niri().layout.open_overview();
         fixture.niri_complete_animations();
-        let (pixels, size, preview) = render_target_preview(&mut fixture, target_index);
+        let (pixels, size, previews) = render_target_preview(&mut fixture, target_index);
+        let preview = matching_preview(&pixels, size, &previews);
         let source_width = source_output.current_mode().unwrap().size.w as f64 / source_scale;
         let expected_stride = STRIPE_STRIDE as f64 * preview.size.w as f64 / source_width;
         assert_pattern_spacing(&pixels, size, preview, expected_stride);
@@ -309,8 +390,10 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         fixture.niri_complete_animations();
         fixture.niri().layout.open_overview();
         fixture.niri_complete_animations();
-        let (reopened_pixels, reopened_size, reopened_preview) =
+        let (reopened_pixels, reopened_size, reopened_previews) =
             render_target_preview(&mut fixture, target_index);
+        let reopened_preview =
+            matching_preview(&reopened_pixels, reopened_size, &reopened_previews);
         let after_reopen = fixture.niri().layout.collection_overview_cache_counts();
         assert!(
             after_reopen.1 > built.1,
@@ -324,14 +407,28 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         );
 
         let moved_output = fixture.niri_output(target_index);
+        let moved_name = moved_output.name();
+        let moved_home_id = fixture
+            .niri()
+            .layout
+            .collections()
+            .into_iter()
+            .find(|collection| collection.output.as_deref() == Some(moved_name.as_str()))
+            .unwrap()
+            .id;
         fixture.niri().layout.focus_output(&moved_output);
         fixture
             .niri()
             .layout
             .focus_collection(&niri_config::WorkspaceReference::Id(hidden_collection));
+        fixture
+            .niri()
+            .layout
+            .focus_collection(&niri_config::WorkspaceReference::Id(moved_home_id));
         fixture.niri_complete_animations();
-        let (moved_pixels, moved_size, moved_preview) =
+        let (moved_pixels, moved_size, moved_previews) =
             render_target_preview(&mut fixture, source_index);
+        let moved_preview = matching_preview(&moved_pixels, moved_size, &moved_previews);
         let after_scale_change = fixture.niri().layout.collection_overview_cache_counts();
         assert!(
             after_scale_change.1 > after_reopen.1,
@@ -339,11 +436,15 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         );
         let moved_source_width = moved_output.current_mode().unwrap().size.w as f64
             / moved_output.current_scale().fractional_scale();
-        assert_pattern_spacing(
+        let moved_centers = assert_pattern_spacing(
             &moved_pixels,
             moved_size,
             moved_preview,
             STRIPE_STRIDE as f64 * moved_preview.size.w as f64 / moved_source_width,
+        );
+        let expected_moved_center = (
+            moved_centers[0].0 + (520. - 80.) * moved_preview.size.w as f64 / moved_source_width,
+            moved_centers[0].1,
         );
 
         let child = children[0].0.clone();
@@ -360,29 +461,48 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         child.commit();
         parent.commit();
         fixture.double_roundtrip(client);
-        let (changed_pixels, changed_size, changed_preview) =
+        let (changed_pixels, changed_size, changed_previews) =
             render_target_preview(&mut fixture, source_index);
         let after_commit = fixture.niri().layout.collection_overview_cache_counts();
         assert!(
             after_commit.1 > after_scale_change.1,
             "a committed surface rebuilds its preview texture"
         );
+        let changed_preview = changed_previews
+            .iter()
+            .copied()
+            .find(|preview| {
+                color_center(&changed_pixels, changed_size, *preview, MOVED_STRIPE_COLOR).is_some()
+            })
+            .expect("committed moved stripe appears in a cached preview");
+        let changed_center = color_center(
+            &changed_pixels,
+            changed_size,
+            changed_preview,
+            MOVED_STRIPE_COLOR,
+        )
+        .unwrap();
         assert!(
-            color_present_in_preview(
+            (changed_center.0 - expected_moved_center.0).abs() <= 2.
+                && (changed_center.1 - expected_moved_center.1).abs() <= 2.,
+            "moved color center {changed_center:?} should match {expected_moved_center:?}"
+        );
+        assert!(
+            !color_near(
                 &changed_pixels,
                 changed_size,
                 changed_preview,
-                MOVED_STRIPE_COLOR
+                moved_centers[0],
+                STRIPE_COLORS[0]
             ),
-            "the preview shows committed content at the moved subsurface position"
+            "the previous stripe position no longer shows its old color"
         );
 
         child.attach(None, 0, 0);
         child.commit();
         parent.commit();
         fixture.double_roundtrip(client);
-        let (unmapped_pixels, unmapped_size, unmapped_preview) =
-            render_target_preview(&mut fixture, source_index);
+        let (unmapped_pixels, unmapped_size, _) = render_target_preview(&mut fixture, source_index);
         let after_unmap = fixture.niri().layout.collection_overview_cache_counts();
         assert!(
             after_unmap.1 > after_commit.1,
@@ -392,7 +512,7 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
             !color_present_in_preview(
                 &unmapped_pixels,
                 unmapped_size,
-                unmapped_preview,
+                moved_preview,
                 MOVED_STRIPE_COLOR
             ),
             "an uncommitted old frame is not retained in the hidden preview"
