@@ -1,13 +1,14 @@
 use std::time::{Duration, Instant};
 
-use niri_config::animations::{Curve, EasingParams, Kind};
 use niri_config::Config;
+use niri_config::animations::{Curve, EasingParams, Kind};
 use smithay::backend::allocator::Fourcc;
 use smithay::utils::{Scale, Transform};
 
 use super::Fixture;
 use crate::niri::{Niri, OutputRenderElements};
 use crate::render_helpers::{render_to_vec as render_pixels, RenderCtx, RenderTarget};
+use smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 
 fn fixture() -> Fixture {
     let mut config = Config::parse_mem(
@@ -117,6 +118,29 @@ fn sample_frame(fixture: &mut Fixture, output_idx: u8) -> (f64, f64) {
     (assembly_ms, draw_start.elapsed().as_secs_f64() * 1000.)
 }
 
+fn populated_fixture() -> (Fixture, super::client::ClientId, ZwlrVirtualPointerV1) {
+    let mut fixture = fixture();
+    let client = fixture.add_client();
+    fixture.double_roundtrip(client);
+    for idx in 0..8 {
+        create_window(&mut fixture, client, 900 + idx * 10, 650 + idx * 5);
+        if idx < 7 {
+            fixture.niri().layout.switch_workspace_down();
+        }
+    }
+    for _ in 0..4 {
+        fixture.niri().layout.switch_workspace_up();
+    }
+    fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
+
+    let pointer = fixture.client(client).create_virtual_pointer("headless-1");
+    pointer.motion_absolute(1, 1440, 900, 2880, 1800);
+    pointer.frame();
+    fixture.double_roundtrip(client);
+    (fixture, client, pointer)
+}
+
 fn measure(fixture: &mut Fixture, output_idx: u8, label: &str) {
     for _ in 0..10 {
         let _ = sample_frame(fixture, output_idx);
@@ -154,10 +178,129 @@ fn measure_opening_sweep(fixture: &mut Fixture) {
         draw[idx].sort_by(f64::total_cmp);
         eprintln!(
             "overview output {output_idx} opening sweep (60 changing frames): assembly median={:.3} p95={:.3} ms; EGL draw+readback median={:.3} p95={:.3} ms",
-            assembly[idx][30],
-            assembly[idx][57],
-            draw[idx][30],
-            draw[idx][57]
+            assembly[idx][30], assembly[idx][57], draw[idx][30], draw[idx][57]
+        );
+    }
+}
+
+fn measure_scroll(
+    fixture: &mut Fixture,
+    client: super::client::ClientId,
+    pointer: &ZwlrVirtualPointerV1,
+    start_ms: u64,
+    frame_step_ms: u64,
+    label: &str,
+) -> (f64, f64, f64) {
+    use wayland_client::protocol::wl_pointer;
+
+    let before_workspace = fixture
+        .niri()
+        .layout
+        .active_workspace()
+        .unwrap()
+        .id()
+        .clone();
+    let event_start = Instant::now();
+    pointer.axis_source(wl_pointer::AxisSource::Wheel);
+    pointer.axis_discrete(
+        start_ms as u32 + 1,
+        wl_pointer::Axis::VerticalScroll,
+        15.0,
+        1,
+    );
+    pointer.frame();
+    fixture.client(client).connection.flush().unwrap();
+    fixture.roundtrip(client);
+    let event_ms = event_start.elapsed().as_secs_f64() * 1000.;
+    let after_workspace = fixture
+        .niri()
+        .layout
+        .active_workspace()
+        .unwrap()
+        .id()
+        .clone();
+    assert_ne!(
+        before_workspace, after_workspace,
+        "wheel event must switch to a different workspace"
+    );
+
+    let mut frames = Vec::with_capacity(61);
+    set_time(fixture.niri(), Duration::from_millis(start_ms + 1));
+    fixture.niri().advance_animations();
+    frames.push(sample_frame(fixture, 1));
+    for frame in 1..=60 {
+        set_time(
+            fixture.niri(),
+            Duration::from_millis(start_ms + 1 + frame * frame_step_ms),
+        );
+        fixture.niri().advance_animations();
+        let (assembly_ms, draw_ms) = sample_frame(fixture, 1);
+        frames.push((assembly_ms, draw_ms));
+    }
+    let worst = frames
+        .iter()
+        .map(|(assembly, draw)| assembly + draw)
+        .fold(0.0, f64::max);
+    let worst_assembly = frames
+        .iter()
+        .map(|(assembly, _)| *assembly)
+        .fold(0.0, f64::max);
+    let worst_draw = frames.iter().map(|(_, draw)| *draw).fold(0.0, f64::max);
+    eprintln!(
+        "overview {label} wheel scroll: event dispatch+roundtrip={event_ms:.3} ms; worst changing frame total={worst:.3} ms (assembly={:.3} ms, EGL draw+readback={:.3} ms)",
+        worst_assembly, worst_draw,
+    );
+    (worst, worst_assembly, worst_draw)
+}
+
+#[test]
+#[ignore = "headless first-versus-second overview wheel benchmark; run explicitly in CI"]
+fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
+    let (mut during_open, open_client, open_pointer) = populated_fixture();
+    during_open.niri().layout.open_overview();
+    for frame in 1..=4 {
+        set_time(during_open.niri(), Duration::from_millis(frame * 8));
+        during_open.niri().advance_animations();
+        let _ = sample_frame(&mut during_open, 1);
+    }
+    let _ = measure_scroll(
+        &mut during_open,
+        open_client,
+        &open_pointer,
+        32,
+        8,
+        "first during 120 Hz opening",
+    );
+
+    let (mut fixture, client, pointer) = populated_fixture();
+    fixture.niri().layout.open_overview();
+
+    // Finish the opening animation before measuring the first scroll. The loop
+    // renders all opening frames, matching the user's sequence of entering overview
+    // and then using the wheel, without consuming a scroll event as warm-up.
+    for frame in 1..=60 {
+        set_time(fixture.niri(), Duration::from_millis(frame * 1000 / 60));
+        fixture.niri().advance_animations();
+        let _ = sample_frame(&mut fixture, 1);
+    }
+
+    let (first, first_assembly, first_draw) =
+        measure_scroll(&mut fixture, client, &pointer, 1000, 1000 / 60, "first");
+    fixture.niri_complete_animations();
+    let (second, second_assembly, second_draw) =
+        measure_scroll(&mut fixture, client, &pointer, 2000, 1000 / 60, "second");
+    let margin = 1.0_f64.max(second * 0.2);
+    eprintln!(
+        "overview scroll comparison: total first/second={:.3}; assembly first/second={:.3}; EGL draw+readback first/second={:.3}; margin={margin:.3} ms; within-margin={}; software EGL draw+readback includes readback cost and is not GPU-only timing",
+        first / second.max(f64::EPSILON),
+        first_assembly / second_assembly.max(f64::EPSILON),
+        first_draw / second_draw.max(f64::EPSILON),
+        first <= second + margin,
+    );
+    if std::env::var_os("NACRE_NIRI_BENCHMARK_STRICT").is_some() {
+        assert!(
+            first <= second + margin,
+            "first scroll exceeded diagnostic margin"
         );
     }
 }
