@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use tiny_skia::{
-    FillRule, GradientStop, LineCap, LinearGradient, Paint, Path, PathBuilder, Pixmap, SpreadMode,
-    Stroke, Transform,
+    FillRule, GradientStop, LineCap, LinearGradient, Paint, Path, PathBuilder, Pixmap, PixmapPaint,
+    SpreadMode, Stroke, Transform,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -323,6 +323,7 @@ impl RevealDescriptor {
         if let Some(rim) = &self.rim {
             if rim.width > 0. && rim.opacity > 0. {
                 let path = path_from_svg_commands(&contour.rim)?;
+                let mut rim_pixmap = Pixmap::new(width, height)?;
                 let stops = (0..3)
                     .map(|i| {
                         GradientStop::new(
@@ -331,7 +332,7 @@ impl RevealDescriptor {
                                 rim.colors[i][0],
                                 rim.colors[i][1],
                                 rim.colors[i][2],
-                                (rim.colors[i][3] as f32 * rim.opacity).round() as u8,
+                                rim.colors[i][3],
                             ),
                         )
                     })
@@ -343,7 +344,7 @@ impl RevealDescriptor {
                 paint.shader =
                     LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())?;
                 paint.anti_alias = true;
-                pixmap.stroke_path(
+                rim_pixmap.stroke_path(
                     &path,
                     &paint,
                     &Stroke {
@@ -352,6 +353,17 @@ impl RevealDescriptor {
                         ..Stroke::default()
                     },
                     transform,
+                    None,
+                );
+                pixmap.draw_pixmap(
+                    0,
+                    0,
+                    rim_pixmap.as_ref(),
+                    &PixmapPaint {
+                        opacity: rim.opacity,
+                        ..Default::default()
+                    },
+                    Transform::identity(),
                     None,
                 );
             }
