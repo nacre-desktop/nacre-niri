@@ -187,6 +187,28 @@ fn new_output_reuses_most_recent_hidden_collection_before_creating_one() {
 }
 
 #[test]
+fn window_focus_updates_hidden_desk_mru_for_later_hotplug() {
+    let mut layout = collections_layout();
+    check_ops_on_layout(&mut layout, [Op::AddOutput(1), Op::AddOutput(2)]);
+    let output2 = output(&layout, 2);
+    let recent = layout.create_collection(Some("recent-focus".into()));
+    add_window(&mut layout, 90);
+
+    layout.focus_output(&output2);
+    layout.activate_window(&90);
+    layout.refresh(true);
+    assert_eq!(layout.collection_recent_use.last(), Some(&recent));
+
+    check_ops_on_layout(&mut layout, [Op::RemoveOutput(1)]);
+    check_ops_on_layout(&mut layout, [Op::AddOutput(3)]);
+    assert_eq!(layout.collection_for_output(&output(&layout, 3)), Some(recent));
+    assert_eq!(layout.collections.iter().find(|collection| collection.id == recent)
+        .unwrap().original_output, None);
+    assert_ne!(layout.collection_for_output(&output2), Some(recent));
+    layout.verify_invariants();
+}
+
+#[test]
 fn toggling_collections_with_all_outputs_removed_keeps_windows() {
     let mut layout = collections_layout();
     check_ops_on_layout(&mut layout, [Op::AddOutput(1)]);

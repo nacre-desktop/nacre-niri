@@ -5916,6 +5916,13 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn refresh(&mut self, is_active: bool) {
         let _span = tracy_client::span!("Layout::refresh");
+        let focused_collection = self.active_monitor_ref().and_then(|monitor| monitor.collection_id);
+        if let Some(id) = focused_collection {
+            if self.collection_recent_use.last() != Some(&id) {
+                self.collection_recent_use.retain(|recent| *recent != id);
+                self.collection_recent_use.push(id);
+            }
+        }
         self.scratchpad.refresh(false, false);
 
         for c in &mut self.collections {

@@ -659,8 +659,6 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         };
-        self.collection_recent_use.retain(|recent| *recent != id);
-        self.collection_recent_use.push(id);
         let assigned: Vec<_> = self
             .collection_workspaces(id)
             .filter(|ws| ws.original_output.matches(&output))
