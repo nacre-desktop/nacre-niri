@@ -329,8 +329,8 @@ fn hidden_incoming_collection_promotion_tracks_swipe_and_cannot_receive_hit_test
         .promoted_layers_for_output(&output)
         .iter()
         .any(|promotion| promotion.layer.wl_surface() == &root));
-    let promotion = &f.niri().layer_promote_manager_state.promoted[&root];
-    assert!(!f.niri().promotion_can_receive_input(promotion));
+    let promotion = f.niri().layer_promote_manager_state.promoted[&root].clone();
+    assert!(!f.niri().promotion_can_receive_input(&promotion));
     assert!(!f.niri().layer_promotion_can_receive_input(&root));
     let layer = f
         .niri()
