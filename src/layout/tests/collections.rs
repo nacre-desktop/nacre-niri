@@ -158,12 +158,9 @@ fn incoming_collection_fit_transform_matches_different_output_size_and_scale() {
     let (incoming, incoming_x) = layout
         .collection_switch_render_workspace(&output1)
         .expect("desk from the other output is available to preview");
-    let expected = super::super::collection_switch_fit(
-        output_size(&output1),
-        incoming.view_size(),
-        incoming_x,
-    );
-    assert!(expected.0 != 1.);
+    assert_eq!(incoming.view_size(), Size::from((900., 600.)));
+    assert_eq!(incoming_x, 160.);
+    let expected = (0.5, Point::from((135., 0.)));
     assert_eq!(
         layout.collection_switch_transform_for_workspace(&output1, incoming.id().get()),
         Some(expected)
@@ -172,7 +169,7 @@ fn incoming_collection_fit_transform_matches_different_output_size_and_scale() {
         .collection_switch_transform_for_workspace(&output1, outgoing_id)
         .expect("outgoing desk retains its swipe translation");
     assert_eq!(outgoing.0, 1.);
-    assert_eq!(outgoing.1.x, layout.monitor_for_output(&output1).unwrap().collection_switch_offset_x);
+    assert_eq!(outgoing.1.x, -240.);
     assert!(layout.collection_switch_involves_workspace(&output1, outgoing_id));
     assert!(layout.collection_switch_involves_workspace(&output1, incoming.id().get()));
 }

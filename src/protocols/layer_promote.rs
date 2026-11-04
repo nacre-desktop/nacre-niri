@@ -259,11 +259,11 @@ impl Niri {
         layers.sort_by_key(|p| std::cmp::Reverse(p.order));
         layers
     }
-    pub fn layer_promotion_visible(&self, surface: &WlSurface) -> bool {
+    pub fn layer_promotion_can_receive_input(&self, surface: &WlSurface) -> bool {
         self.layer_promote_manager_state
             .promoted
             .get(surface)
-            .is_none_or(|p| self.promotion_visible(p))
+            .is_none_or(|p| self.promotion_can_receive_input(p))
     }
     pub fn finish_layer_move(&mut self, surface: &WlSurface) {
         if let Some(p) = self.layer_promote_manager_state.promoted.get_mut(surface) {

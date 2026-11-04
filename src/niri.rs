@@ -1140,7 +1140,9 @@ impl State {
         if let Some(surface) = &self.niri.layer_shell_on_demand_focus {
             // Still alive and has on-demand interactivity.
             let mut good = surface.alive()
-                && self.niri.layer_promotion_visible(surface.wl_surface())
+                && self
+                    .niri
+                    .layer_promotion_can_receive_input(surface.wl_surface())
                 && (surface.cached_state().keyboard_interactivity
                     == wlr_layer::KeyboardInteractivity::OnDemand
                     || self
@@ -1181,7 +1183,7 @@ impl State {
             // Explicitly check for layer-shell popup grabs here, our keyboard focus will stay on
             // the root layer surface while it has grabs.
             let layer_grab = self.niri.popup_grab.as_ref().and_then(|g| {
-                if !self.niri.layer_promotion_visible(&g.root) {
+                if !self.niri.layer_promotion_can_receive_input(&g.root) {
                     return None;
                 }
                 layers

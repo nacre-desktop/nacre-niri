@@ -75,6 +75,8 @@ use crate::utils::{
     round_logical_in_physical_max1, ResizeEdge,
 };
 
+use crate::window::ResolvedWindowRules;
+
 /// Compute the same scale and offset used to fit a collection workspace into an output during a
 /// desk swipe. Promoted layer surfaces use this too so they travel with their owning workspace.
 pub(crate) fn collection_switch_fit(
@@ -89,7 +91,6 @@ pub(crate) fn collection_switch_fit(
     ));
     (scale, offset)
 }
-use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;
 mod collection_overview;

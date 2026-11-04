@@ -5,9 +5,11 @@ use niri_config::{Config, WorkspaceReference};
 use smithay::backend::allocator::Fourcc;
 use smithay::backend::input::ButtonState;
 use smithay::backend::renderer::damage::OutputDamageTracker;
-use smithay::backend::renderer::element::{Element as _, Id};
+use smithay::backend::renderer::element::{Element as _, Id, RenderElement};
+use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::{Bind as _, Color32F, ExportMem as _};
 use smithay::input::pointer::{ButtonEvent, MotionEvent};
+use smithay::output::Output;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
 use smithay::utils::{Point, SERIAL_COUNTER};
@@ -23,9 +25,27 @@ use crate::render_helpers::{copy_framebuffer, create_texture, RenderCtx, RenderT
 type ServerSurface = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 fn panel(f: &mut Fixture) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
+    panel_on_output(f, None, (u32::MAX / 2, 0, 0, u32::MAX / 2))
+}
+
+fn panel_with_color(
+    f: &mut Fixture,
+    color: (u32, u32, u32, u32),
+) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
+    panel_on_output(f, None, color)
+}
+
+fn panel_on_output(
+    f: &mut Fixture,
+    output_name: Option<&str>,
+    color: (u32, u32, u32, u32),
+) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
     let namespace = format!("promote-test-{}", f.state.clients.len());
     let id = f.add_client();
-    let layer = f.client(id).create_layer(None, Layer::Top, &namespace);
+    let output = output_name.map(|name| f.client(id).output(name));
+    let layer = f
+        .client(id)
+        .create_layer(output.as_ref(), Layer::Top, &namespace);
     let surface = layer.surface.clone();
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Top),
@@ -43,7 +63,7 @@ fn panel(f: &mut Fixture) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromo
     let layer = f.client(id).layer(&surface);
     let buffer = layer
         .spbm
-        .create_u32_rgba_buffer(u32::MAX / 2, 0, 0, u32::MAX / 2, &layer.qh, ());
+        .create_u32_rgba_buffer(color.0, color.1, color.2, color.3, &layer.qh, ());
     layer.surface.attach(Some(&buffer), 0, 0);
     layer.set_size(96, 72);
     layer.ack_last_and_commit();
@@ -57,6 +77,25 @@ fn panel(f: &mut Fixture) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromo
         .wl_surface()
         .clone();
     (id, surface, root, proxy)
+}
+
+fn raster_pixels<E: RenderElement<GlesRenderer>>(
+    renderer: &mut GlesRenderer,
+    output: &Output,
+    texture: &mut GlesTexture,
+    elements: &[E],
+) -> Vec<u8> {
+    let mut target = renderer.bind(texture).unwrap();
+    OutputDamageTracker::from_output(output)
+        .render_output(renderer, &mut target, 0, elements, Color32F::TRANSPARENT)
+        .unwrap();
+    let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+    renderer.map_texture(&mapping).unwrap().to_vec()
+}
+
+fn pixel_at(bytes: &[u8], width: usize, x: usize, y: usize) -> &[u8] {
+    let start = (y * width + x) * 4;
+    &bytes[start..start + 4]
 }
 fn commit(f: &mut Fixture, id: ClientId, surface: &WlSurface) {
     f.client(id).layer(surface).commit();
@@ -291,6 +330,17 @@ fn hidden_incoming_collection_promotion_tracks_swipe_and_cannot_receive_hit_test
         .any(|promotion| promotion.layer.wl_surface() == &root));
     let promotion = &f.niri().layer_promote_manager_state.promoted[&root];
     assert!(!f.niri().promotion_can_receive_input(promotion));
+    assert!(!f.niri().layer_promotion_can_receive_input(&root));
+    let layer = f
+        .niri()
+        .mapped_layer_surfaces
+        .keys()
+        .find(|layer| layer.wl_surface() == &root)
+        .unwrap()
+        .clone();
+    f.niri().layer_shell_on_demand_focus = Some(layer);
+    f.niri_state().update_keyboard_focus();
+    assert!(f.niri().layer_shell_on_demand_focus.is_none());
     assert_eq!(
         f.niri()
             .layout
@@ -302,6 +352,225 @@ fn hidden_incoming_collection_promotion_tracks_swipe_and_cannot_receive_hit_test
         .contents_under(Point::from((20., 20.)))
         .surface
         .is_none());
+}
+
+#[test]
+fn collection_swipe_raster_clips_fitted_promotions_and_repaints_old_pixels() {
+    let mut config = Config::parse_mem("output \"headless-1\" { scale 1.5; }").unwrap();
+    config.layout.collections.enabled = true;
+    let mut f = Fixture::with_config(config);
+    // The incoming desk is resident on a different, 1x output while the swipe output is 1.5x.
+    f.add_output(2, (900, 600));
+    let (incoming_client, incoming_surface, incoming_root, incoming_proxy) = panel_on_output(
+        &mut f,
+        Some("headless-2"),
+        (0, 0, u32::MAX / 2, u32::MAX / 2),
+    );
+    promote(&incoming_proxy, 1);
+    commit(&mut f, incoming_client, &incoming_surface);
+    let incoming_workspace = f.niri().layer_promote_manager_state.promoted[&incoming_root].workspace;
+
+    f.add_output(1, (600, 450));
+    let output = f.niri_output(1);
+    f.niri().layout.focus_output(&output);
+    let (source_client, source_surface, source_root, source_proxy) = panel_on_output(
+        &mut f,
+        Some("headless-1"),
+        (u32::MAX / 2, 0, 0, u32::MAX / 2),
+    );
+    promote(&source_proxy, 2);
+    commit(&mut f, source_client, &source_surface);
+    let source_origin = f
+        .niri()
+        .global_space
+        .output_geometry(&output)
+        .unwrap()
+        .loc
+        .to_f64()
+        + Point::from((360., 20.));
+    f.niri()
+        .move_promoted_layer(&source_root, source_origin, source_origin);
+
+    f.niri_state().backend.headless().add_renderer().unwrap();
+    let (mut retained, mut fresh, mut side) = f
+        .niri_state()
+        .backend
+        .with_primary_renderer(|renderer| {
+            (
+                create_texture(renderer, (600, 450).into(), Fourcc::Abgr8888).unwrap(),
+                create_texture(renderer, (600, 450).into(), Fourcc::Abgr8888).unwrap(),
+                create_texture(renderer, (600, 450).into(), Fourcc::Abgr8888).unwrap(),
+            )
+        })
+        .unwrap();
+    let mut damage = OutputDamageTracker::from_output(&output);
+    let source_id = Id::from_wayland_resource(&source_root);
+    let incoming_id = Id::from_wayland_resource(&incoming_root);
+    let mut baseline = Vec::new();
+
+    f.niri().update_render_elements(Some(&output));
+    {
+        let state = f.niri_state();
+        let niri = &state.niri;
+        state.backend.with_primary_renderer(|renderer| {
+            let elements = niri.render_to_vec(
+                RenderCtx {
+                    renderer,
+                    target: RenderTarget::Output,
+                    xray: None,
+                },
+                &output,
+                false,
+            );
+            let mut target = renderer.bind(&mut retained).unwrap();
+            damage
+                .render_output(renderer, &mut target, 0, &elements, Color32F::TRANSPARENT)
+                .unwrap();
+            let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+            baseline = renderer.map_texture(&mapping).unwrap().to_vec();
+        })
+        .unwrap();
+    }
+
+    assert!(f.niri().layout.collection_switch_gesture_begin(&output));
+    f.niri()
+        .layout
+        .collection_switch_gesture_update(-150., Duration::from_millis(10));
+    assert_eq!(
+        f.niri()
+            .layout
+            .collection_switch_render_workspace(&output)
+            .unwrap()
+            .0
+            .id()
+            .get(),
+        incoming_workspace
+    );
+    f.niri().update_render_elements(Some(&output));
+
+    let state = f.niri_state();
+    let niri = &state.niri;
+    state
+        .backend
+        .with_primary_renderer(|renderer| {
+            let elements = niri.render_to_vec(
+                RenderCtx {
+                    renderer,
+                    target: RenderTarget::Output,
+                    xray: None,
+                },
+                &output,
+                false,
+            );
+            assert!(elements.iter().any(|elem| elem.id() == &source_id));
+            assert!(elements.iter().any(|elem| elem.id() == &incoming_id));
+
+            let mut target = renderer.bind(&mut retained).unwrap();
+            damage
+                .render_output(renderer, &mut target, 1, &elements, Color32F::TRANSPARENT)
+                .unwrap();
+            let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+            let incremental = renderer.map_texture(&mapping).unwrap().to_vec();
+            drop(target);
+
+            let full = niri.render_to_vec(
+                RenderCtx {
+                    renderer,
+                    target: RenderTarget::Output,
+                    xray: None,
+                },
+                &output,
+                false,
+            );
+            let full_pixels = raster_pixels(renderer, &output, &mut fresh, &full);
+            assert_eq!(incremental, full_pixels, "incremental repaint differs from fresh raster");
+
+            let source_only: Vec<_> = niri
+                .render_to_vec(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        xray: None,
+                    },
+                    &output,
+                    false,
+                )
+                .into_iter()
+                .filter(|elem| elem.id() != &incoming_id)
+                .collect();
+            let source_pixels = raster_pixels(renderer, &output, &mut side, &source_only);
+
+            let incoming_only: Vec<_> = niri
+                .render_to_vec(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        xray: None,
+                    },
+                    &output,
+                    false,
+                )
+                .into_iter()
+                .filter(|elem| elem.id() != &source_id)
+                .collect();
+            let incoming_pixels = raster_pixels(renderer, &output, &mut side, &incoming_only);
+
+            let base: Vec<_> = niri
+                .render_to_vec(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        xray: None,
+                    },
+                    &output,
+                    false,
+                )
+                .into_iter()
+                .filter(|elem| elem.id() != &source_id && elem.id() != &incoming_id)
+                .collect();
+            let base_pixels = raster_pixels(renderer, &output, &mut side, &base);
+
+            // At 180 logical px only the outgoing red panel should remain; at 220 only
+            // the incoming blue panel should remain. Their desk boundary is x=200.
+            assert_eq!(
+                pixel_at(&incremental, 600, 270, 60),
+                pixel_at(&source_pixels, 600, 270, 60)
+            );
+            assert_ne!(
+                pixel_at(&incremental, 600, 270, 60),
+                pixel_at(&base_pixels, 600, 270, 60)
+            );
+            assert_eq!(
+                pixel_at(&incremental, 600, 330, 60),
+                pixel_at(&incoming_pixels, 600, 330, 60)
+            );
+            assert_ne!(
+                pixel_at(&incremental, 600, 330, 60),
+                pixel_at(&base_pixels, 600, 330, 60)
+            );
+            assert_ne!(
+                pixel_at(&incremental, 600, 270, 60),
+                pixel_at(&incremental, 600, 330, 60)
+            );
+            assert_eq!(
+                pixel_at(&source_pixels, 600, 330, 60),
+                pixel_at(&base_pixels, 600, 330, 60)
+            );
+            assert_eq!(
+                pixel_at(&incoming_pixels, 600, 270, 60),
+                pixel_at(&base_pixels, 600, 270, 60)
+            );
+            // The outgoing panel's pre-swipe location is cleared after the transition moves it.
+            assert_eq!(
+                pixel_at(&incremental, 600, 560, 60),
+                pixel_at(&base_pixels, 600, 560, 60)
+            );
+            assert_ne!(
+                pixel_at(&baseline, 600, 560, 60),
+                pixel_at(&base_pixels, 600, 560, 60)
+            );
+        })
+        .unwrap();
 }
 
 #[test]
