@@ -185,6 +185,10 @@ fn measure_scroll(
 ) -> (f64, f64, f64) {
     use wayland_client::protocol::wl_pointer;
 
+    // The manual render loop does not dispatch calloop. Service expired bind cooldown timers
+    // before enqueueing input, as the real compositor does between rendered frames.
+    fixture.state.server.dispatch();
+    assert!(fixture.niri().bind_cooldown_timers.is_empty());
     let before_workspace = fixture
         .niri()
         .layout
