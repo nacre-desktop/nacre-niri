@@ -126,8 +126,8 @@ pub enum Request {
     /// Start a regular event stream that opts in to native screen-edge trigger events.
     ///
     /// The initial standard state snapshot is sent first. `EdgeTriggered` and `EdgeLeft` events
-    /// pre-dwell cue and trigger events are delivered only to clients using this request, preserving compatibility with older
-    /// event clients.
+    /// pre-dwell cue and trigger events are delivered only to clients using this request,
+    /// preserving compatibility with older event clients.
     NacreEdgeTriggerStream,
     /// Start an event stream including Nacre-Niri workspace collection events.
     ///

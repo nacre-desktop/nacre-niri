@@ -680,7 +680,8 @@ nacre { overview-hover; proportional-x11-widths; edge-triggers; }
 // edge-triggers {
 //     cue
 //     left { action { event; }; trigger-distance 10; trigger-length 144; dwell-time-ms 250; pressure 0; velocity 0; }
-//     right { action { spawn "panel-command" "right"; }; }
+//     right { action { spawn "panel-command" "right"; }; trigger-length 144; }
+//     top { action { event; }; trigger-distance 50; trigger-length 208; }
 // }
 
 // Match the generated desktop's general window shadow and blur. Pearl windows

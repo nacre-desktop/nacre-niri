@@ -473,16 +473,51 @@ mod tests {
     #[test]
     fn configured_edge_spans_are_centered_half_open_and_clipped_to_small_outputs() {
         let size = [100., 80.];
-        assert!(!is_inside_edge_span(size, [0., 29.9], Edge::Left, Some(20.)));
+        assert!(!is_inside_edge_span(
+            size,
+            [0., 29.9],
+            Edge::Left,
+            Some(20.)
+        ));
         assert!(is_inside_edge_span(size, [0., 30.], Edge::Left, Some(20.)));
-        assert!(is_inside_edge_span(size, [99., 49.9], Edge::Right, Some(20.)));
-        assert!(!is_inside_edge_span(size, [99., 50.], Edge::Right, Some(20.)));
+        assert!(is_inside_edge_span(
+            size,
+            [99., 49.9],
+            Edge::Right,
+            Some(20.)
+        ));
+        assert!(!is_inside_edge_span(
+            size,
+            [99., 50.],
+            Edge::Right,
+            Some(20.)
+        ));
         assert!(!is_inside_edge_span(size, [29.9, 0.], Edge::Top, Some(40.)));
         assert!(is_inside_edge_span(size, [30., 0.], Edge::Top, Some(40.)));
-        assert!(is_inside_edge_span(size, [69.9, 79.], Edge::Bottom, Some(40.)));
-        assert!(!is_inside_edge_span(size, [70., 79.], Edge::Bottom, Some(40.)));
-        assert!(is_inside_edge_span([100., 12.], [0., 11.9], Edge::Left, Some(144.)));
-        assert!(!is_inside_edge_span([100., 12.], [0., 12.], Edge::Left, Some(144.)));
+        assert!(is_inside_edge_span(
+            size,
+            [69.9, 79.],
+            Edge::Bottom,
+            Some(40.)
+        ));
+        assert!(!is_inside_edge_span(
+            size,
+            [70., 79.],
+            Edge::Bottom,
+            Some(40.)
+        ));
+        assert!(is_inside_edge_span(
+            [100., 12.],
+            [0., 11.9],
+            Edge::Left,
+            Some(144.)
+        ));
+        assert!(!is_inside_edge_span(
+            [100., 12.],
+            [0., 12.],
+            Edge::Left,
+            Some(144.)
+        ));
         assert!(is_inside_edge_span(size, [0., 79.], Edge::Left, None));
     }
 
@@ -1169,40 +1204,62 @@ mod edge_trigger_runtime_tests {
         let outside = left_edge_position(&fixture, 1) + Point::new(5., 0.);
         enter_left_edge(fixture.niri(), outside);
         assert!(fixture.niri().edge_trigger_candidate.is_none());
-        assert!(events.try_recv().is_err(), "outside the centered lip must not approach");
+        assert!(
+            events.try_recv().is_err(),
+            "outside the centered lip must not approach"
+        );
 
         let center = left_edge_position(&fixture, 1) + Point::new(5., 490.);
         enter_left_edge(fixture.niri(), center);
-        let Ok(niri_ipc::Event::EdgeApproach { progress, position, .. }) = events.try_recv() else {
+        let Ok(niri_ipc::Event::EdgeApproach {
+            progress, position, ..
+        }) = events.try_recv()
+        else {
             panic!("entering the centered lip did not emit EdgeApproach");
         };
         assert_eq!(progress, 0.);
         assert_eq!(position, [5., 540.]);
-        let first_generation = fixture.niri().edge_trigger_candidate.as_ref().unwrap().generation;
+        let first_candidate = fixture.niri().edge_trigger_candidate.as_ref().unwrap();
+        let first_generation = first_candidate.generation;
+        let first_armed_at = first_candidate.armed_at.unwrap();
 
         let left_span = center + Point::new(0., -72.1);
         fixture
             .niri()
             .update_edge_trigger(left_span, Point::new(0., -72.1));
-        assert!(matches!(events.try_recv(), Ok(niri_ipc::Event::EdgeLeft { .. })));
+        assert!(matches!(
+            events.try_recv(),
+            Ok(niri_ipc::Event::EdgeLeft { .. })
+        ));
         assert!(fixture.niri().edge_trigger_candidate.is_none());
 
         let reentered = center + Point::new(0., -72.);
         enter_left_edge(fixture.niri(), reentered);
-        let Ok(niri_ipc::Event::EdgeApproach { progress, position, .. }) = events.try_recv() else {
+        let Ok(niri_ipc::Event::EdgeApproach {
+            progress, position, ..
+        }) = events.try_recv()
+        else {
             panic!("re-entering the centered lip did not start a fresh approach");
         };
         assert_eq!(progress, 0.);
         assert_eq!(position, [5., 468.]);
         let niri = fixture.niri();
         let candidate = niri.edge_trigger_candidate.as_ref().unwrap();
-        assert_ne!(candidate.generation, first_generation);
-        assert!(niri.edge_trigger_cue_tick(candidate.generation, reentered, false));
+        let reentry_generation = candidate.generation;
+        let reentry_armed_at = candidate.armed_at.unwrap();
+        assert_ne!(reentry_generation, first_generation);
+        assert!(reentry_armed_at > first_armed_at);
+        niri.edge_trigger_candidate.as_mut().unwrap().armed_at =
+            Some(Instant::now() - Duration::from_millis(10));
+        assert!(niri.edge_trigger_cue_tick(reentry_generation, reentered, false));
         let Ok(niri_ipc::Event::EdgeHover { progress, .. }) = events.try_recv() else {
             panic!("fresh candidate did not publish dwell progress");
         };
-        assert!(progress < 0.1);
-        assert!(events.try_recv().is_err(), "re-entry must not trigger immediately");
+        assert!((0.01..0.1).contains(&progress));
+        assert!(
+            events.try_recv().is_err(),
+            "re-entry must not trigger immediately"
+        );
     }
 
     fn attach_edge_events(fixture: &mut Fixture) -> async_channel::Receiver<niri_ipc::Event> {
