@@ -26,7 +26,12 @@ impl<W: LayoutElement> Layout<W> {
             return;
         }
         self.cancel_collection_switch();
-        let MonitorSet::Normal { monitors, active_monitor_idx, .. } = &mut self.monitor_set else {
+        let MonitorSet::Normal {
+            monitors,
+            active_monitor_idx,
+            ..
+        } = &mut self.monitor_set
+        else {
             return;
         };
         let position = ring.iter().position(|i| i == active_monitor_idx).unwrap();

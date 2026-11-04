@@ -95,11 +95,11 @@ pub mod closing_window;
 mod collection_overview;
 pub(crate) mod collection_persistence;
 pub mod collections;
-mod monitor_actions;
 pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
 pub mod monitor;
+mod monitor_actions;
 pub mod opening_window;
 mod scratchpad;
 pub mod scrolling;
@@ -3154,12 +3154,21 @@ impl<W: LayoutElement> Layout<W> {
             window_ids.push(window.id());
         }
         for (index, (id, source, _)) in self.scratchpad_origins.iter().enumerate() {
-            assert!(window_ids.contains(&id), "hidden-window origins cannot outlive a window");
             assert!(
-                self.scratchpad_origins[..index].iter().all(|(other, _, _)| other != id),
+                window_ids.contains(&id),
+                "hidden-window origins cannot outlive a window"
+            );
+            assert!(
+                self.scratchpad_origins[..index]
+                    .iter()
+                    .all(|(other, _, _)| other != id),
                 "a hidden window must have a single source"
             );
-            assert_ne!(*source, self.scratchpad.id(), "scratchpad cannot be its own source");
+            assert_ne!(
+                *source,
+                self.scratchpad.id(),
+                "scratchpad cannot be its own source"
+            );
         }
         let mut seen_workspace_id = HashSet::new();
         let mut seen_workspace_name = Vec::<String>::new();

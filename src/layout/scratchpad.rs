@@ -156,14 +156,21 @@ impl<W: LayoutElement> Layout<W> {
             .scratchpad_origins
             .iter()
             .find(|(window, _, _)| window == &id)
-            .filter(|_| self.scratchpad.has_window(&id) || self.scratchpad_active.as_ref() == Some(&id))
+            .filter(|_| {
+                self.scratchpad.has_window(&id) || self.scratchpad_active.as_ref() == Some(&id)
+            })
             .cloned()
             .or_else(|| {
                 self.workspaces()
                     .find(|(_, _, workspace)| workspace.has_window(&id))
-                    .map(|(_, _, workspace)| (id.clone(), workspace.id(), workspace.is_floating(&id)))
+                    .map(|(_, _, workspace)| {
+                        (id.clone(), workspace.id(), workspace.is_floating(&id))
+                    })
             })
-            .or_else(|| self.active_workspace().map(|workspace| (id.clone(), workspace.id(), true)));
+            .or_else(|| {
+                self.active_workspace()
+                    .map(|workspace| (id.clone(), workspace.id(), true))
+            });
         let Some(mut removed) = self.remove_window(&id, Transaction::new()) else {
             return;
         };
@@ -296,26 +303,38 @@ impl<W: LayoutElement> Layout<W> {
         if !self.scratchpad.has_window(id) {
             return;
         }
-        let origin = self.scratchpad_origins.iter().find(|(window, _, _)| window == id);
-        let target = origin
-            .and_then(|(_, source, _)| self.find_workspace_by_id(*source).map(|_| *source));
+        let origin = self
+            .scratchpad_origins
+            .iter()
+            .find(|(window, _, _)| window == id);
+        let target =
+            origin.and_then(|(_, source, _)| self.find_workspace_by_id(*source).map(|_| *source));
         let floating = origin.map(|(_, _, floating)| *floating);
         let mut removed = self.scratchpad.remove_tile(id, Transaction::new());
         removed.tile.scratchpad = false;
         removed.tile.pinned = false;
         self.scratchpad_cycle.retain(|candidate| candidate != id);
-        self.scratchpad_origins.retain(|(window, _, _)| window != id);
+        self.scratchpad_origins
+            .retain(|(window, _, _)| window != id);
         let is_floating = floating.unwrap_or(removed.is_floating);
         if let Some(target) = target {
             let output = self
                 .monitors()
-                .find(|monitor| monitor.workspaces.iter().any(|workspace| workspace.id() == target))
+                .find(|monitor| {
+                    monitor
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.id() == target)
+                })
                 .map(|monitor| monitor.output.clone());
             if let Some(output) = output {
                 let monitor = self.monitor_for_output_mut(&output).unwrap();
                 monitor.add_tile(
                     removed.tile,
-                    MonitorAddWindowTarget::Workspace { id: target, column_idx: None },
+                    MonitorAddWindowTarget::Workspace {
+                        id: target,
+                        column_idx: None,
+                    },
                     ActivateWindow::No,
                     false,
                     removed.width,
@@ -325,7 +344,10 @@ impl<W: LayoutElement> Layout<W> {
             } else {
                 // Detached collections and the no-output stack have no monitor. In particular,
                 // do not unwrap current_output() merely to restore an ordinary window.
-                let workspace = self.workspaces_mut().find(|workspace| workspace.id() == target).unwrap();
+                let workspace = self
+                    .workspaces_mut()
+                    .find(|workspace| workspace.id() == target)
+                    .unwrap();
                 workspace.add_tile(
                     removed.tile,
                     WorkspaceAddWindowTarget::Auto,
