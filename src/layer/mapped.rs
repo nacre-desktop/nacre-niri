@@ -923,6 +923,7 @@ impl MappedLayer {
             Kind::Unspecified,
         );
         if progress < 1. {
+            let mut clipped_open = None;
             let clip = reveal_edge_clip(
                 crop,
                 origin,
@@ -937,7 +938,7 @@ impl MappedLayer {
                 scale,
                 reveal_edge_clip_pixels(clip, location, scale),
             ) {
-                push(element.into());
+                clipped_open = Some(element);
             }
             let band_location = if vertical {
                 location + Point::from((crop.x as f64, origin as f64 + start as f64 / scale.x))
@@ -953,6 +954,12 @@ impl MappedLayer {
                 Kind::Unspecified,
             );
             push(band_element.into());
+            if let Some(open_element) = clipped_open {
+                // Elements are emitted front-to-back and the output renderer reverses them.
+                // Emit band first so the clipped full-open art is drawn before an overlapping
+                // band pixel, matching Bead's paint order at fractional physical scales.
+                push(open_element.into());
+            }
         } else {
             push(open_element.into());
         }
