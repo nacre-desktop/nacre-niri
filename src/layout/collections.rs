@@ -489,16 +489,9 @@ impl<W: LayoutElement> Layout<W> {
                     || c.original_output.as_deref() == Some(&name)
             })
             .map(|c| c.id);
-        // The first configured collection can serve as the first monitor's desk.
-        let initial_config_id = if home_id.is_none() && self.monitors().next().is_none() {
-            self.collections
-                .iter()
-                .find(|c| c.original_output.is_none() && c.persistent)
-                .map(|c| c.id)
-        } else {
-            None
-        };
-        let recent_hidden_id = if home_id.is_none() && initial_config_id.is_none() {
+        // Actual recent use outranks an unused configured startup desk when restoring a
+        // monitor after all outputs were removed.
+        let recent_hidden_id = if home_id.is_none() {
             self.collection_recent_use
                 .iter()
                 .rev()
@@ -512,23 +505,42 @@ impl<W: LayoutElement> Layout<W> {
                             .iter()
                             .any(|collection| collection.id == *id)
                 })
-                .or_else(|| {
-                    self.collections
-                        .iter()
-                        .find(|collection| {
-                            !self
-                                .monitors()
-                                .any(|monitor| monitor.collection_id == Some(collection.id))
-                        })
-                        .map(|collection| collection.id)
-                })
         } else {
             None
         };
-        let reused = home_id.is_none() && initial_config_id.is_none() && recent_hidden_id.is_some();
+        // Preserve configured ordering and first-home assignment when there is no MRU desk.
+        let initial_config_id = if home_id.is_none()
+            && recent_hidden_id.is_none()
+            && self.monitors().next().is_none()
+        {
+            self.collections
+                .iter()
+                .find(|c| c.original_output.is_none() && c.persistent)
+                .map(|c| c.id)
+        } else {
+            None
+        };
+        let fallback_hidden_id = if home_id.is_none()
+            && recent_hidden_id.is_none()
+            && initial_config_id.is_none()
+        {
+            self.collections
+                .iter()
+                .find(|collection| {
+                    !self
+                        .monitors()
+                        .any(|monitor| monitor.collection_id == Some(collection.id))
+                })
+                .map(|collection| collection.id)
+        } else {
+            None
+        };
+        let reused = home_id.is_none()
+            && (recent_hidden_id.is_some() || fallback_hidden_id.is_some());
         let id = home_id
-            .or(initial_config_id)
             .or(recent_hidden_id)
+            .or(initial_config_id)
+            .or(fallback_hidden_id)
             .unwrap_or_else(|| self.new_collection(None, Some(name.clone()), false));
         // Only the initial configured workspaces retain upstream startup output routing.
         // Established collection stacks stay intact during subsequent hotplug.

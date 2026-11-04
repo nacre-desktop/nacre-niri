@@ -326,6 +326,69 @@ fn replug_after_connected_swap_restores_both_home_collections() {
 }
 
 #[test]
+fn first_output_uses_first_configured_collection_without_mru_history() {
+    let mut options = Options::default();
+    options.layout.collections.names = vec!["configured-first".into(), "configured-second".into()];
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    Op::AddOutput(1).apply(&mut layout);
+
+    let configured: Vec<_> = layout
+        .collections
+        .iter()
+        .filter(|collection| collection.configured_name.is_some())
+        .collect();
+    assert_eq!(configured.len(), 2);
+    assert_eq!(configured[0].name.as_deref(), Some("configured-first"));
+    assert_eq!(shown(&layout, "output1"), configured[0].id);
+    assert_eq!(configured[0].original_output.as_deref(), Some("output1"));
+    assert_eq!(configured[1].original_output, None);
+    layout.verify_invariants();
+}
+
+#[test]
+fn reconnect_after_all_outputs_removed_prefers_recent_hidden_desk_over_unused_config() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let recent = layout.create_collection(Some("recently-used".into()));
+    add_window(&mut layout, 91);
+
+    let mut options = Options::clone(&layout.options);
+    options.layout.collections.names = vec!["unused-config".into()];
+    layout.update_options(options);
+    let unused_config = layout
+        .collections
+        .iter()
+        .find(|collection| collection.configured_name.as_deref() == Some("unused-config"))
+        .unwrap()
+        .id;
+    assert!(layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == unused_config)
+        .unwrap()
+        .workspaces
+        .iter()
+        .all(|workspace| !workspace.has_windows()));
+
+    Op::RemoveOutput(1).apply(&mut layout);
+    assert_eq!(layout.collection_recent_use.last(), Some(&recent));
+    let collection_count = layout.collections.len();
+    Op::AddOutput(2).apply(&mut layout);
+
+    assert_eq!(shown(&layout, "output2"), recent);
+    assert_eq!(layout.collections.len(), collection_count);
+    assert!(layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == unused_config)
+        .unwrap()
+        .original_output
+        .is_none());
+    assert!(layout.has_window(&91));
+    layout.verify_invariants();
+}
+
+#[test]
 fn replug_after_focusing_current_borrowed_collection_does_not_duplicate_it() {
     let mut layout = enabled_layout();
     Op::AddOutput(5).apply(&mut layout);
