@@ -35,9 +35,12 @@ temporarily showing it, that output returns to its saved collection. When select
 a collection already displayed elsewhere, swap the displayed collections so every
 connected output continues to have a stack and no collection has two owners.
 When a newly connected output has no original collection, it reuses the most
-recently focused hidden collection before creating an empty one. Reuse does not
-change that collection's original-output identity; if no hidden collection exists,
-the output receives a new home collection.
+recently focused hidden collection. If no focus-history entry is available, it
+reuses another hidden collection in registry order, including an unused configured
+collection. The first output still receives the first unassigned configured
+collection when there is no recent use. A new empty collection is created only
+when no hidden collection is available. Reuse does not change the selected
+collection's original-output identity.
 Workspace-level original-output behavior remains available to upstream explicit
 workspace-to-output actions; collection restoration uses collection identity.
 
@@ -125,10 +128,9 @@ name or is declared in config. A connected output's automatically created home
 desk remains available for rotation while that output is connected. Runtime-created
 or renamed collections with a non-empty name remain persistent while empty.
 Clearing the name makes an otherwise empty hidden collection eligible for cleanup.
-Config-declared names
-remain persistent and reconcile by their original configured name. Renaming a
-declared collection changes its runtime name without replacing that configured
-identity, so reloads preserve the runtime name and do not create a duplicate.
+Config-declared names remain persistent and reconcile by their original configured
+name. Renaming a declared collection changes its runtime name without replacing
+that configured identity, so reloads preserve the runtime name and do not create a duplicate.
 Removing a declaration drops an unchanged config-only collection, while a renamed
 collection remains user-named and persistent. Empty trailing
 workspaces continue to follow upstream workspace rules within each shown stack.

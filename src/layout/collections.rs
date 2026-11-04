@@ -281,12 +281,27 @@ impl<W: LayoutElement> Layout<W> {
                     .collection_id
                     .is_some_and(|id| nonpersistent_ids.contains(&id))
                 {
+                    if monitor.workspace_switch.is_some() {
+                        // Keep the transient row-retention markers through the switch so an
+                        // in-flight workspace pair still satisfies the monitor invariant.
+                        continue;
+                    }
                     for workspace in &mut monitor.workspaces {
                         workspace.set_collection_persistent(false);
                     }
                 }
             }
         }
+        self.deferred_collection_retention_cleanup = self.monitors().any(|monitor| {
+            monitor.workspace_switch.is_some()
+                && monitor
+                    .collection_id
+                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+                && monitor
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.collection_persistent())
+        });
         for collection in &mut self.collections {
             if !nonpersistent_ids.contains(&collection.id) {
                 continue;
@@ -308,6 +323,31 @@ impl<W: LayoutElement> Layout<W> {
                 monitor.clean_up_workspaces();
             }
         }
+    }
+
+    pub(super) fn flush_deferred_collection_retention(&mut self) {
+        if !self.deferred_collection_retention_cleanup {
+            return;
+        }
+
+        let nonpersistent_ids: Vec<_> = self
+            .collections
+            .iter()
+            .filter(|collection| !collection.persistent)
+            .map(|collection| collection.id)
+            .collect();
+        let switch_ongoing = self.monitors().any(|monitor| {
+            monitor.workspace_switch.is_some()
+                && monitor
+                    .collection_id
+                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+        });
+        if switch_ongoing {
+            return;
+        }
+
+        self.deferred_collection_retention_cleanup = false;
+        self.clear_retention_for_nonpersistent_collections();
     }
 
     pub(super) fn transition_collections(&mut self, enabled: bool) {
@@ -704,6 +744,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        self.flush_deferred_collection_retention();
     }
 
     pub(super) fn remove_collection_output(&mut self, output: &Output) {
@@ -775,6 +816,7 @@ impl<W: LayoutElement> Layout<W> {
         };
         self.collection_returns.remove(&output.name());
         self.clean_up_collections();
+        self.flush_deferred_collection_retention();
     }
 
     fn show_collection_on_output(&mut self, output_name: &str, id: u64) {

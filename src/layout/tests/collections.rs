@@ -592,6 +592,107 @@ fn restored_persistent_slot_survives_workspace_move_and_scratchpad_hide() {
     layout.verify_invariants();
 }
 
+fn layout_with_unnamed_desk_during_workspace_switch() -> (Layout<TestWindow>, u64) {
+    let mut options = Options::default();
+    options.layout.collections.names = vec!["collection2".into(), "collection3".into()];
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: TestWindowParams::new(1),
+            },
+            Op::CreateCollection(Some(9)),
+            Op::CreateCollection(Some(3)),
+            Op::AddOutput(2),
+            Op::RemoveOutput(1),
+        ],
+    );
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::UpdateConfig {
+                layout_config: Box::new(niri_config::LayoutPart {
+                    empty_workspace_above_first: Some(Flag(true)),
+                    ..Default::default()
+                }),
+            },
+            Op::AddWindow {
+                params: TestWindowParams::new(2),
+            },
+            Op::CreateCollection(Some(2)),
+            Op::FocusWindowPrevious,
+            Op::FocusWorkspaceDown,
+            Op::RestoreCollectionState,
+            Op::FocusWorkspaceByReference(WorkspaceReferenceOp::Index(1)),
+            Op::RenameCollection {
+                reference: 1,
+                name: None,
+            },
+        ],
+    );
+
+    let renamed_collection = layout.collections[1].id;
+    (layout, renamed_collection)
+}
+
+#[test]
+fn unname_during_workspace_switch_defers_then_clears_row_retention() {
+    let (mut layout, renamed_collection) = layout_with_unnamed_desk_during_workspace_switch();
+    assert!(layout.deferred_collection_retention_cleanup);
+    assert!(layout
+        .active_monitor()
+        .unwrap()
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.collection_persistent()));
+
+    layout.clock.set_complete_instantly(true);
+    layout.advance_animations();
+    layout.clock.set_complete_instantly(false);
+    assert!(!layout.deferred_collection_retention_cleanup);
+    let monitor = layout
+        .monitors()
+        .find(|monitor| monitor.collection_id == Some(renamed_collection))
+        .unwrap();
+    assert!(monitor.workspaces.len() != 2);
+    assert!(monitor
+        .workspaces
+        .iter()
+        .all(|workspace| !workspace.collection_persistent()));
+    assert!(layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == renamed_collection)
+        .unwrap()
+        .workspaces
+        .iter()
+        .all(|workspace| !workspace.collection_persistent()));
+    layout.verify_invariants();
+}
+
+#[test]
+fn canceled_workspace_switch_flushes_deferred_row_retention_on_refresh() {
+    let (mut layout, renamed_collection) = layout_with_unnamed_desk_during_workspace_switch();
+    assert!(layout.deferred_collection_retention_cleanup);
+
+    layout.move_workspace_down();
+    assert!(layout.active_monitor().unwrap().workspace_switch.is_none());
+    layout.refresh(false);
+
+    assert!(!layout.deferred_collection_retention_cleanup);
+    let monitor = layout
+        .monitors()
+        .find(|monitor| monitor.collection_id == Some(renamed_collection))
+        .unwrap();
+    assert!(monitor
+        .workspaces
+        .iter()
+        .all(|workspace| !workspace.collection_persistent()));
+    layout.verify_invariants();
+}
+
 #[test]
 fn move_window_between_collections_preserves_window() {
     let mut layout = enabled_layout();

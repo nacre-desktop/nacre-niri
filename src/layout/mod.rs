@@ -389,6 +389,7 @@ pub struct Layout<W: LayoutElement> {
     interactive_move: Option<InteractiveMoveState<W>>,
     defer_collection_cleanup: bool,
     collection_recent_use: Vec<u64>,
+    deferred_collection_retention_cleanup: bool,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -777,6 +778,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             defer_collection_cleanup: false,
             collection_recent_use: Vec::new(),
+            deferred_collection_retention_cleanup: false,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -822,6 +824,7 @@ impl<W: LayoutElement> Layout<W> {
             interactive_move: None,
             defer_collection_cleanup: false,
             collection_recent_use: Vec::new(),
+            deferred_collection_retention_cleanup: false,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -3495,6 +3498,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        self.flush_deferred_collection_retention();
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
@@ -5918,6 +5922,7 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn refresh(&mut self, is_active: bool) {
         let _span = tracy_client::span!("Layout::refresh");
+        self.flush_deferred_collection_retention();
         let focused_collection = self
             .active_monitor_ref()
             .and_then(|monitor| monitor.collection_id);
