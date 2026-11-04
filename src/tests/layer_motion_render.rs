@@ -1078,10 +1078,10 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                     let atlas_offset = pixel_index * 4;
                     let atlas_pixel = &atlas[atlas_offset..atlas_offset + 4];
                     let (direct, crop) = reveal
-                        .rasterize(sampled_progress, scale as f32, (width, height))
+                        .rasterize(sampled_progress, scale, (width, height))
                         .expect("build direct compositor contour diagnostic");
-                    let contour_x = x as i32 - (crop.x * scale as f32).round() as i32;
-                    let contour_y = y as i32 - (crop.y * scale as f32).round() as i32;
+                    let contour_x = x as i32 - (crop.x * scale).round() as i32;
+                    let contour_y = y as i32 - (crop.y * scale).round() as i32;
                     let contour_pixel = if contour_x >= 0
                         && contour_y >= 0
                         && contour_x < direct.width() as i32
