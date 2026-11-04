@@ -1720,6 +1720,39 @@ impl<W: LayoutElement> Monitor<W> {
             .filter(move |(_ws, geo)| !cull || geo.intersection(output_geo).is_some())
     }
 
+    /// Return the closest workspace immediately outside the visible desk stack in each
+    /// direction. Overview scrolling renders these workspaces only after they enter the output,
+    /// so their render elements and imports can be prepared ahead of that first reveal.
+    pub(super) fn overview_prewarm_candidates(
+        &self,
+    ) -> [Option<(WorkspaceId, Rectangle<f64, Logical>)>; 2] {
+        let output_geo = Rectangle::from_size(self.view_size);
+        let mut above = None;
+        let mut below = None;
+
+        for (workspace, geometry) in self.workspaces.iter().zip(self.workspaces_render_geo()) {
+            if geometry.intersection(output_geo).is_some() {
+                continue;
+            }
+
+            if geometry.loc.y + geometry.size.h <= 0. {
+                if above.is_none_or(|(_, previous): (WorkspaceId, Rectangle<_, _>)| {
+                    geometry.loc.y > previous.loc.y
+                }) {
+                    above = Some((workspace.id(), geometry));
+                }
+            } else if geometry.loc.y >= self.view_size.h
+                && below.is_none_or(|(_, previous): (WorkspaceId, Rectangle<_, _>)| {
+                    geometry.loc.y < previous.loc.y
+                })
+            {
+                below = Some((workspace.id(), geometry));
+            }
+        }
+
+        [above, below]
+    }
+
     pub fn workspace_under(
         &self,
         pos_within_output: Point<f64, Logical>,

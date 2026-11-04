@@ -3576,6 +3576,8 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
         let overview_open = self.overview_open;
+        self.collection_overview
+            .observe_active_prewarm_open(overview_open);
         if self.collection_overview_is_open() {
             // Shown collections use Monitor::update_render_elements. Hidden workspaces only
             // prepare after source/layout changes; periodic refreshes do not invalidate them.
@@ -3654,6 +3656,28 @@ impl<W: LayoutElement> Layout<W> {
                     && !matches!(self.interactive_move, Some(InteractiveMoveState::Moving(_)));
                 mon.set_overview_progress(self.overview_progress.as_ref());
                 mon.update_render_elements(is_active);
+                if overview_open && output.is_some_and(|output| mon.output == *output) {
+                    let candidates = mon.overview_prewarm_candidates().map(|candidate| {
+                        candidate.and_then(|(workspace, _)| {
+                            mon.workspaces
+                                .iter()
+                                .find(|ws| ws.id() == workspace)
+                                .map(|ws| (workspace, ws.overview_revision()))
+                        })
+                    });
+                    if let Some(workspace) = self
+                        .collection_overview
+                        .schedule_active_prewarm(&mon.output, candidates)
+                    {
+                        if let Some(workspace) = mon
+                            .workspaces
+                            .iter_mut()
+                            .find(|ws| ws.id() == workspace)
+                        {
+                            workspace.update_render_elements(false);
+                        }
+                    }
+                }
             }
         }
     }
