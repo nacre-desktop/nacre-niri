@@ -100,6 +100,7 @@ fn output_elements_for_target(
                     renderer,
                     target,
                     xray: None,
+                    scale_override: None,
                 },
                 &output,
                 false,

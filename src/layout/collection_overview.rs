@@ -898,6 +898,8 @@ impl Overview {
             HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
         > = Vec::new();
         let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
+        let scale = key.scale * preview.zoom;
+        ctx.scale_override = Some(scale.into());
         preview
             .workspace
             .render_floating(ctx.r(), xray_pos, false, &mut |elem| {
@@ -910,7 +912,6 @@ impl Overview {
             });
         elements.push(preview.workspace.render_background().into());
         // Render at the final preview resolution, keeping source logical coordinates intact.
-        let scale = key.scale * preview.zoom;
         let size = preview
             .workspace
             .view_size()

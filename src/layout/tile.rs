@@ -1019,12 +1019,16 @@ impl<W: LayoutElement> Tile<W> {
     }
 
     pub fn bob_offset(&self) -> Point<f64, Logical> {
+        self.bob_offset_at_scale(self.scale)
+    }
+
+    fn bob_offset_at_scale(&self, scale: f64) -> Point<f64, Logical> {
         if self.window.rules().baba_is_float != Some(true) {
             return Point::from((0., 0.));
         }
 
         let y = baba_is_float_offset(self.clock.now(), self.view_size.h);
-        let y = round_logical_in_physical(self.scale, y);
+        let y = round_logical_in_physical(scale, y);
         Point::from((0., y))
     }
 
@@ -1038,7 +1042,7 @@ impl<W: LayoutElement> Tile<W> {
     ) {
         let _span = tracy_client::span!("Tile::render_inner");
 
-        let scale = Scale::from(self.scale);
+        let scale = ctx.render_scale(Scale::from(self.scale));
         let fullscreen_progress = self.fullscreen_progress();
         let expanded_progress = self.expanded_progress();
 
@@ -1060,7 +1064,7 @@ impl<W: LayoutElement> Tile<W> {
         //
         // This isn't to say that adding it here is perfect; indeed, it kind of breaks view_rect
         // passed to update_render_elements(). But, it works well enough for what it is.
-        let bob_offset = self.bob_offset();
+        let bob_offset = self.bob_offset_at_scale(scale.x);
         let location = location + bob_offset;
         xray_pos = xray_pos.offset(bob_offset);
 
@@ -1312,7 +1316,7 @@ impl<W: LayoutElement> Tile<W> {
         self.window.render_background_effect(
             ctx.as_gles(),
             area,
-            self.scale,
+            scale.x,
             clip_to_geometry,
             surface_anim_scale,
             radius,
@@ -1331,7 +1335,7 @@ impl<W: LayoutElement> Tile<W> {
     ) {
         let _span = tracy_client::span!("Tile::render");
 
-        let scale = Scale::from(self.scale);
+        let scale = ctx.render_scale(Scale::from(self.scale));
 
         let tile_alpha = self
             .alpha_animation
@@ -1428,6 +1432,7 @@ impl<W: LayoutElement> Tile<W> {
                 target: RenderTarget::Output,
                 renderer,
                 xray: xray.as_deref(),
+                scale_override: None,
             },
             Point::from((0., 0.)),
             xray_pos,
@@ -1479,6 +1484,7 @@ impl<W: LayoutElement> Tile<W> {
                         target: RenderTarget::Output,
                         renderer,
                         xray: Some(xray),
+                        scale_override: None,
                     },
                     Point::from((0., 0.)),
                     xray_pos,
@@ -1499,6 +1505,7 @@ impl<W: LayoutElement> Tile<W> {
                 target: RenderTarget::Screencast,
                 renderer,
                 xray: xray.as_deref(),
+                scale_override: None,
             },
             Point::from((0., 0.)),
             xray_pos,

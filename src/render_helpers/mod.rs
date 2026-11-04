@@ -58,6 +58,9 @@ pub struct RenderCtx<'a, R> {
     pub renderer: &'a mut R,
     pub target: RenderTarget,
     pub xray: Option<&'a Xray>,
+    /// Optional destination scale for an offscreen render whose logical scene was laid out on
+    /// another output.
+    pub scale_override: Option<Scale<f64>>,
 }
 
 impl<'a, R> RenderCtx<'a, R> {
@@ -68,7 +71,14 @@ impl<'a, R> RenderCtx<'a, R> {
             renderer: self.renderer,
             target: self.target,
             xray: self.xray,
+            scale_override: self.scale_override,
         }
+    }
+
+    /// Return the destination scale when one is set, otherwise the caller's workspace scale.
+    #[inline]
+    pub fn render_scale(&self, fallback: Scale<f64>) -> Scale<f64> {
+        self.scale_override.unwrap_or(fallback)
     }
 }
 
@@ -78,6 +88,7 @@ impl<'a, R: AsGlesRenderer> RenderCtx<'a, R> {
             renderer: self.renderer.as_gles_renderer(),
             target: self.target,
             xray: self.xray,
+            scale_override: self.scale_override,
         }
     }
 }

@@ -70,6 +70,7 @@ fn output_elements(
                     renderer,
                     target: RenderTarget::Output,
                     xray: None,
+                    scale_override: None,
                 },
                 &output,
                 false,

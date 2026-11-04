@@ -1063,7 +1063,7 @@ impl<W: LayoutElement> FloatingSpace<W> {
         focus_ring: bool,
         push: &mut dyn FnMut(FloatingSpaceRenderElement<R>),
     ) {
-        let scale = Scale::from(self.scale);
+        let scale = ctx.render_scale(Scale::from(self.scale));
 
         // Draw the closing windows on top of the other windows.
         //
