@@ -130,16 +130,28 @@ transition and uses the existing cleanup path. A deterministic regression and
 the saved property seed are retained; the monitorless and empty-row invariants
 were not weakened. The corrected full 200,000-case run passed.
 
-All builds/tests run in task-owned containers limited to 8 CPUs and 16 GiB,
-with `nice -n 10` inside each container and Cargo build parallelism limited to
+Earlier dev-1 builds/tests used task-owned containers limited to 8 CPUs and
+16 GiB, with `nice -n 10` inside each container and Cargo parallelism limited to
 two. Exact commands, source/tree identities, logs and numeric exit codes are
 retained under the task worktrees' ignored `.lead/` evidence directories.
-Nacre's complete desktop workflow was restarted at
-`ebb640f3c3fc0b0cbcd96d21703797d6072b825c` after correcting a test fixture's
-JSON-map type. Public-checkout, tool identity, Orient release and Python setup
-exited 0; formatting and Clippy completed successfully within the combined
-helper stage. That stage was still building examples when dev-1 became
-unreachable over SSH and Tailscale. Its overall exit, workspace tests, paired
-stock/fork config check and remaining desktop stages are **pending verification**;
-this is not a full Nacre CI pass. The durable runner checks the exact source HEAD
-before each stage and writes numeric exits to its task evidence directory.
+
+Hosted [CI run 41795656460](https://github.com/nacre-desktop/nacre-niri/actions/runs/41795656460)
+on `8dcff015e53ff60993ae9fad1fd57368b92f1df7` passed the test, slow/randomized
+(200,000 cases), feature combinations, MSRV, rustfmt, Clippy, visual build,
+Fedora, Alpine and Nix jobs. Its overall result is failure solely because the
+FreeBSD VM package repository requires a newer OS version than its userland;
+that setup fails before compilation and is the owner-approved known exception.
+The code is unchanged from the native revision above; subsequent changes are
+documentation only.
+
+Nacre full desktop validation remains deferred under the owner's revised
+validation plan. Earlier setup and Clippy checks succeeded at
+`ebb640f3c3fc0b0cbcd96d21703797d6072b825c`; a host reboot interrupted the
+combined helper stage, so no full Nacre CI pass is claimed. The earlier
+`2c9b45d78` run exited 101 for a new test fixture's JSON-map type; `ebb640f3c`
+fixes it. Remaining desktop gates are the complete Nacre desktop workflow,
+including workspace tests, stock/fork config validation with the freshly built
+fork binary, helper parity, shell proofs, source/UI checks, galleries and daemon
+memory checks. Repeat the native 200,000-case release suite there for the paired
+handoff. Task `.lead/report.md` records exact desktop commands. No further dev-1
+or production access is part of this unit's current validation plan.
