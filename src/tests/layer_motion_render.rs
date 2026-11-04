@@ -249,6 +249,8 @@ fn gpu_planes_share_a_buffer_but_preserve_crop_opacity_damage_and_capture_pixels
         active: None,
         reveal: None,
         reveal_current: None,
+        terminal: None,
+        terminal_ready: false,
     }));
     let mapped = f.niri().mapped_layer_surfaces.values_mut().next().unwrap();
     mapped.update_sizes(Size::from((96., 72.)), 1.5);
@@ -434,6 +436,8 @@ fn reveal_fill_raster_is_under_content_and_survives_capture_rendering() {
         active: None,
         reveal: Some(reveal.clone()),
         reveal_current: Some(reveal.sample(1.)),
+        terminal: None,
+        terminal_ready: false,
     }));
     let mapped = f.niri().mapped_layer_surfaces.values_mut().next().unwrap();
     mapped.update_sizes(Size::from((32., 32.)), 1.);
@@ -831,6 +835,29 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
             let scale = n(&plan["atlas"]["scale"]);
             let width = atlas_w as f32 / scale;
             let height = atlas_h as f32 / scale;
+            let (terminal_pixels, terminal_w, terminal_h) =
+                png_rgba(&root.join(plan["terminal"]["filename"].as_str().unwrap()));
+            assert_eq!(
+                terminal_w,
+                plan["terminal"]["width"].as_u64().unwrap() as u32
+            );
+            assert_eq!(
+                terminal_h,
+                plan["terminal"]["height"].as_u64().unwrap() as u32
+            );
+            assert_eq!(n(&plan["terminal"]["scale"]), scale);
+            assert_eq!(
+                plan["terminal"]["stride"].as_u64().unwrap(),
+                terminal_w as u64 * 4
+            );
+            let terminal = Arc::new(crate::protocols::layer_motion::LayerMotionTerminal {
+                logical_width: width as f64,
+                logical_height: height as f64,
+                pixel_width: terminal_w,
+                pixel_height: terminal_h,
+                format: Fourcc::Abgr8888,
+                pixels: terminal_pixels.into(),
+            });
             let reveal = reveal_from_fixture(&plan["reveal"]);
 
             let plan_plane = &plan["planes"][0];
@@ -927,6 +954,8 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 active: Some(group),
                 reveal: Some(reveal.clone()),
                 reveal_current: Some(reveal.sample(0.)),
+                terminal: Some(terminal),
+                terminal_ready: false,
             })));
             let format = Fourcc::Abgr8888;
             let mut route_max = 0u8;
@@ -1150,6 +1179,9 @@ fn reveal_headless_gles_cost_benchmark() {
         atlas: Vec<u8>,
         atlas_width: u32,
         atlas_height: u32,
+        terminal: Vec<u8>,
+        terminal_width: u32,
+        terminal_height: u32,
         source: RevealRect,
         reveal: RevealDescriptor,
         group: crate::layer::motion::LayerMotionGroup,
@@ -1175,6 +1207,27 @@ fn reveal_headless_gles_cost_benchmark() {
             atlas.truncate(atlas_info.buffer_size());
             let atlas_width = atlas_info.width;
             let atlas_height = atlas_info.height;
+            let terminal_path = root.join(plan["terminal"]["filename"].as_str().unwrap());
+            let terminal_decoder = png::Decoder::new(std::io::BufReader::new(
+                std::fs::File::open(terminal_path).unwrap(),
+            ));
+            let mut terminal_reader = terminal_decoder.read_info().unwrap();
+            let mut terminal = vec![0; terminal_reader.output_buffer_size().unwrap()];
+            let terminal_info = terminal_reader.next_frame(&mut terminal).unwrap();
+            assert_eq!(terminal_info.color_type, png::ColorType::Rgba);
+            terminal.truncate(terminal_info.buffer_size());
+            assert_eq!(
+                terminal_info.width,
+                plan["terminal"]["width"].as_u64().unwrap() as u32
+            );
+            assert_eq!(
+                terminal_info.height,
+                plan["terminal"]["height"].as_u64().unwrap() as u32
+            );
+            assert_eq!(
+                terminal_info.width as u64 * 4,
+                plan["terminal"]["stride"].as_u64().unwrap()
+            );
             let width = atlas_width as f32 / scale as f32;
             let height = atlas_height as f32 / scale as f32;
             let plane = &plan["planes"][0];
@@ -1230,6 +1283,9 @@ fn reveal_headless_gles_cost_benchmark() {
                 atlas,
                 atlas_width,
                 atlas_height,
+                terminal,
+                terminal_width: terminal_info.width,
+                terminal_height: terminal_info.height,
                 source,
                 reveal: reveal_from_fixture(&plan["reveal"]),
                 group,
@@ -1307,6 +1363,17 @@ fn reveal_headless_gles_cost_benchmark() {
             active: Some(case.group.clone()),
             reveal: Some(case.reveal.clone()),
             reveal_current: Some(case.reveal.sample(0.)),
+            terminal: Some(Arc::new(
+                crate::protocols::layer_motion::LayerMotionTerminal {
+                    logical_width: case.width as f64,
+                    logical_height: case.height as f64,
+                    pixel_width: case.terminal_width,
+                    pixel_height: case.terminal_height,
+                    format: Fourcc::Abgr8888,
+                    pixels: std::mem::take(&mut case.terminal).into(),
+                },
+            )),
+            terminal_ready: false,
         })));
     }
     let output = f.niri_output(1);
@@ -1327,6 +1394,7 @@ fn reveal_headless_gles_cost_benchmark() {
                 let mut fence_wall = Vec::with_capacity(FRAMES);
                 let mut fence_cpu = Vec::with_capacity(FRAMES);
                 let mut first_template_frame = None;
+                let mut first_terminal_upload_frame = None;
                 for frame in 0..(FRAMES + 8) {
                     let raw_progress = frame as f64 / (FRAMES + 8 - 1) as f64;
                     let elapsed = case.duration.mul_f64(raw_progress);
@@ -1363,6 +1431,12 @@ fn reveal_headless_gles_cost_benchmark() {
                             crate::layer::mapped::LayerSurfaceRenderElement::RevealClip(_)
                         )
                     });
+                    if frame == 0 {
+                        first_terminal_upload_frame = Some((
+                            element_elapsed.as_secs_f64() * 1_000_000.,
+                            element_cpu_elapsed.as_secs_f64() * 1_000_000.,
+                        ));
+                    }
 
                     let cpu_start = thread_cpu_time();
                     let wall_start = Instant::now();
@@ -1419,6 +1493,9 @@ fn reveal_headless_gles_cost_benchmark() {
                     println!("reveal-gles-bench first-template-frame: element-build-us={element_wall:.2} element-cpu-us={element_cpu:.2} draw-submit-us={draw_wall:.2} draw-cpu-us={draw_cpu:.2} fence-wait-us={fence_wall:.2} fence-cpu-us={fence_cpu:.2}");
                 } else {
                     println!("reveal-gles-bench first-template-frame=unavailable (edge template was rejected or route did not enter the cache path)");
+                }
+                if let Some((element_wall, element_cpu)) = first_terminal_upload_frame {
+                    println!("reveal-gles-bench first-terminal-upload-frame: element-build-us={element_wall:.2} element-cpu-us={element_cpu:.2}");
                 }
                 summarize("element-build-raster-upload", &mut element_wall, &element_cpu);
                 summarize("draw-submit", &mut draw_wall, &draw_cpu);
@@ -1554,6 +1631,8 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
             active: None,
             reveal: Some(reveal.clone()),
             reveal_current: Some(reveal.sample(1.)),
+            terminal: None,
+            terminal_ready: false,
         })));
     }
 

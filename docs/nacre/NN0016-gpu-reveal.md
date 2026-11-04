@@ -38,12 +38,25 @@ centre at five timeline samples and scales 1 and 1.5, with a one-channel-value
 maximum difference. Its atlas and per-frame JSON accompany the images. The
 separate ignored cost benchmark renders through `MappedLayer::render_normal`,
 reporting element-build/raster/upload, draw submission, and fence wait
-separately. It uses the same sampled plane clips and viewport path as the full
-frame comparator. It does not read back pixels, and allocates a headless render
-target per sampled frame; run it on the owner desktop after the host is
-available. Record the template's one-time bake frame when it occurs; that bake
-is part of active element-build timing. It is not a battery measurement, and no
-live desktop validation has been performed in this change.
+separately. Both now install the terminal snapshot referenced by each route's
+plan: the full-frame test loads the existing Nacre p1 PNG, and the benchmark
+loads the same snapshot before sampling. The completed frame therefore checks
+the exact uploaded endpoint path, while intermediate frames use the atlas and
+animated contour. The benchmark does not read back pixels, and allocates a
+headless render target per sampled frame; run it on the owner desktop after the
+host is available. Record the template's one-time bake and terminal texture
+upload separately from steady active frames. It is not a battery measurement,
+and no live desktop validation has been performed in this change.
+
+At commit, Niri copies a bounded SHM ARGB8888/ABGR8888 terminal buffer into
+compositor-owned premultiplied pixels and releases the client buffer. A cached
+GPU texture is prepared on the first visible frame and selected only at
+completed progress 1; it replaces the atlas and contour while preserving the
+sampled opacity. Reset, retarget, cancellation, unmap, stale serials, and
+controller destruction cannot expose an old endpoint. Input continues using
+the ordinary animated plane mapping. The terminal copy and retained snapshot
+are capped at 64 MiB. Server SHM lifecycle, release behavior, and owner-desktop
+render cost still require hosted CI and desktop validation.
 
 Desktop validation remains: run the full nacre-niri CI job, the fixture-backed
 GLES test, the 200,000-case layer-motion property suite, and the explicit

@@ -23,7 +23,7 @@ use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
-use crate::protocols::layer_motion::{LayerMotionRuntime, MotionPlane};
+use crate::protocols::layer_motion::{LayerMotionRuntime, LayerMotionTerminal, MotionPlane};
 use crate::render_helpers::background_effect::BackgroundEffectElement;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -75,6 +75,7 @@ pub struct MappedLayer {
     reveal_texture_cache: RefCell<Vec<RevealTextureCache>>,
     reveal_edge_cache: RefCell<Option<RevealEdgeTextureCache>>,
     reveal_edge_rejected: RefCell<Option<RevealEdgeCacheKey>>,
+    terminal_texture_cache: RefCell<Option<TerminalTextureCache>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -117,6 +118,11 @@ struct RevealEdgeTextureCache {
     first: i64,
     band_extent: u32,
     total_extent: u32,
+}
+
+struct TerminalTextureCache {
+    snapshot: Arc<LayerMotionTerminal>,
+    texture: Box<dyn Any>,
 }
 
 impl std::fmt::Debug for RevealEdgeTextureCache {
@@ -753,6 +759,7 @@ impl MappedLayer {
             reveal_texture_cache: RefCell::new(Vec::new()),
             reveal_edge_cache: RefCell::new(None),
             reveal_edge_rejected: RefCell::new(None),
+            terminal_texture_cache: RefCell::new(None),
         }
     }
 
@@ -775,6 +782,7 @@ impl MappedLayer {
             self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
             self.reveal_texture_cache.borrow_mut().clear();
+            self.terminal_texture_cache.borrow_mut().take();
         }
         self.view_size = view_size;
         self.scale = scale;
@@ -813,6 +821,7 @@ impl MappedLayer {
         self.reveal_edge_cache.borrow_mut().take();
         self.reveal_edge_rejected.borrow_mut().take();
         self.reveal_texture_cache.borrow_mut().clear();
+        self.terminal_texture_cache.borrow_mut().take();
         self.motion = Some(motion);
     }
 
@@ -827,6 +836,7 @@ impl MappedLayer {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
+            self.terminal_texture_cache.borrow_mut().take();
             return None;
         }
         let poses = runtime
@@ -858,6 +868,109 @@ impl MappedLayer {
             (1., opacity)
         };
         Some((reveal, progress, opacity))
+    }
+
+    fn terminal_snapshot(&self) -> Option<(Arc<LayerMotionTerminal>, bool, f64)> {
+        let motion = self.motion.as_ref()?;
+        let runtime = motion.lock().unwrap();
+        let snapshot = runtime.terminal.clone()?;
+        let reveal = runtime.reveal.as_ref()?;
+        if !reveal.visible {
+            return None;
+        }
+        let (complete, opacity) = if let Some(active) = runtime.active.as_ref() {
+            let now = self.clock.now_unadjusted();
+            let pose_opacity = active
+                .sample(now)
+                .into_iter()
+                .find(|(id, _)| *id == reveal.opacity_plane)
+                .map_or(1., |(_, pose)| pose.opacity);
+            (
+                runtime.terminal_ready || active.progress(now) >= 1.,
+                pose_opacity,
+            )
+        } else {
+            let opacity = runtime
+                .current
+                .iter()
+                .find(|(id, _)| *id == reveal.opacity_plane)
+                .map_or(1., |(_, pose)| pose.opacity);
+            (runtime.terminal_ready, opacity)
+        };
+        Some((snapshot, complete, opacity))
+    }
+
+    fn render_terminal<R: NiriRenderer>(
+        &self,
+        renderer: &mut R,
+        snapshot: Arc<LayerMotionTerminal>,
+        ready: bool,
+        location: Point<f64, Logical>,
+        alpha: f32,
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) -> bool {
+        let cached = {
+            let mut cache = self.terminal_texture_cache.borrow_mut();
+            if !cache
+                .as_ref()
+                .is_some_and(|cache| Arc::ptr_eq(&cache.snapshot, &snapshot))
+            {
+                cache.take();
+            }
+            cache.as_ref().and_then(|cache| {
+                let texture = cache
+                    .texture
+                    .downcast_ref::<TextureBuffer<R::NiriTextureId>>()?;
+                texture
+                    .belongs_to_renderer(renderer)
+                    .then(|| texture.clone())
+            })
+        };
+        let texture = if let Some(texture) = cached {
+            texture
+        } else {
+            self.terminal_texture_cache.borrow_mut().take();
+            if snapshot.logical_width <= 0. || snapshot.logical_height <= 0. {
+                return false;
+            }
+            let scale = Scale::from((
+                f64::from(snapshot.pixel_width) / snapshot.logical_width,
+                f64::from(snapshot.pixel_height) / snapshot.logical_height,
+            ));
+            let size = Size::from((snapshot.pixel_width as i32, snapshot.pixel_height as i32));
+            let Ok(texture) = TextureBuffer::from_memory(
+                renderer,
+                &snapshot.pixels,
+                snapshot.format,
+                size,
+                false,
+                scale,
+                Transform::Normal,
+                Vec::new(),
+            ) else {
+                return false;
+            };
+            self.terminal_texture_cache
+                .borrow_mut()
+                .replace(TerminalTextureCache {
+                    snapshot: snapshot.clone(),
+                    texture: Box::new(texture.clone()),
+                });
+            texture
+        };
+        if !ready {
+            return false;
+        }
+        let element = TextureRenderElement::from_texture_buffer(
+            texture,
+            location,
+            alpha,
+            None,
+            None,
+            Kind::Unspecified,
+        );
+        push(element.into());
+        true
     }
 
     fn render_edge_template<R: NiriRenderer>(
@@ -1556,17 +1669,33 @@ impl MappedLayer {
             );
             push(elem.into());
         } else if let Some((planes, poses)) = self.motion_snapshot() {
-            self.render_motion_planes(
-                ctx.renderer,
-                surface,
-                location,
-                scale,
-                alpha,
-                &planes,
-                &poses,
-                push,
-            );
-            self.render_reveal(ctx.renderer, location, scale, alpha, push);
+            let terminal = self.terminal_snapshot();
+            if terminal.is_none() {
+                self.terminal_texture_cache.borrow_mut().take();
+            }
+            let terminal_drawn = terminal.is_some_and(|(snapshot, ready, opacity)| {
+                self.render_terminal(
+                    ctx.renderer,
+                    snapshot,
+                    ready,
+                    location,
+                    alpha * opacity as f32,
+                    push,
+                )
+            });
+            if !terminal_drawn {
+                self.render_motion_planes(
+                    ctx.renderer,
+                    surface,
+                    location,
+                    scale,
+                    alpha,
+                    &planes,
+                    &poses,
+                    push,
+                );
+                self.render_reveal(ctx.renderer, location, scale, alpha, push);
+            }
         } else {
             // Layer surfaces don't have extra geometry like windows.
             let buf_pos = location;

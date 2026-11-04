@@ -4,12 +4,16 @@ use std::time::Duration;
 
 use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
 use bead_layer_motion_v1::BeadLayerMotionV1;
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::Id;
+use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
+use smithay::reexports::wayland_server::protocol::wl_shm::Format;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
 };
 use smithay::wayland::compositor::with_states;
+use smithay::wayland::shm;
 
 use crate::layer::motion::{LayerMotionGroup, MotionCurve, MotionPose, OpacityMode};
 use crate::layer::reveal::{
@@ -23,6 +27,7 @@ use crate::render_helpers::damage::ExtraDamage;
 const VERSION: u32 = 2;
 const MAX_PLANES: usize = 64;
 const MAX_REVEAL_RECTS: usize = 16;
+const MAX_TERMINAL_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct MotionPlane {
@@ -35,6 +40,29 @@ pub struct MotionPlane {
     pub opacity_mode: OpacityMode,
 }
 
+#[derive(Clone)]
+pub struct LayerMotionTerminal {
+    pub logical_width: f64,
+    pub logical_height: f64,
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    pub format: Fourcc,
+    pub pixels: Arc<[u8]>,
+}
+
+impl std::fmt::Debug for LayerMotionTerminal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LayerMotionTerminal")
+            .field("logical_width", &self.logical_width)
+            .field("logical_height", &self.logical_height)
+            .field("pixel_width", &self.pixel_width)
+            .field("pixel_height", &self.pixel_height)
+            .field("format", &self.format)
+            .field("bytes", &self.pixels.len())
+            .finish()
+    }
+}
+
 /// State shared by the protocol controller and its mapped layer surface.
 #[derive(Debug, Default)]
 pub struct LayerMotionRuntime {
@@ -43,6 +71,8 @@ pub struct LayerMotionRuntime {
     pub active: Option<LayerMotionGroup>,
     pub reveal: Option<RevealDescriptor>,
     pub reveal_current: Option<crate::layer::reveal::RevealSample>,
+    pub terminal: Option<Arc<LayerMotionTerminal>>,
+    pub terminal_ready: bool,
 }
 
 impl LayerMotionRuntime {
@@ -71,8 +101,23 @@ struct Controller {
     pending_cancel: Option<u32>,
     pending_reset: bool,
     pending_reveal: Option<RevealDescriptor>,
+    pending_terminal: Option<PendingTerminal>,
     committed_reveal: Option<RevealDescriptor>,
     last_seen_serial: Option<u32>,
+}
+
+enum PendingTerminal {
+    Clear,
+    Buffer {
+        buffer: WlBuffer,
+        width: f64,
+        height: f64,
+    },
+}
+
+enum CommittedTerminal {
+    Clear,
+    Snapshot(Arc<LayerMotionTerminal>),
 }
 
 impl Controller {
@@ -154,7 +199,40 @@ impl LayerMotionManagerState {
             return;
         }
         let mut runtime = controller.runtime.lock().unwrap();
-        if std::mem::take(&mut controller.pending_reset) {
+        let descriptor_changed = controller.pending_reveal.is_some();
+        let terminal_update = match controller.pending_terminal.take() {
+            None => None,
+            Some(PendingTerminal::Clear) if stale_animate => None,
+            Some(PendingTerminal::Clear) => Some(CommittedTerminal::Clear),
+            Some(PendingTerminal::Buffer { buffer, .. }) if stale_animate => {
+                buffer.release();
+                None
+            }
+            Some(PendingTerminal::Buffer {
+                buffer,
+                width,
+                height,
+            }) => {
+                let retained_bytes = runtime
+                    .terminal
+                    .as_ref()
+                    .map_or(0, |terminal| terminal.pixels.len());
+                let copied =
+                    copy_terminal_buffer(&buffer, width, height, surface_size, retained_bytes);
+                buffer.release();
+                match copied {
+                    Ok(snapshot) => Some(CommittedTerminal::Snapshot(snapshot)),
+                    Err(message) => {
+                        controller
+                            .resource
+                            .post_error(bead_layer_motion_v1::Error::InvalidGeometry, message);
+                        return;
+                    }
+                }
+            }
+        };
+        let reset_applied = std::mem::take(&mut controller.pending_reset);
+        if reset_applied {
             if let Some((serial, current)) = runtime.cancel_at(next_presentation) {
                 send_final_state(&controller.resource, &current);
                 controller.resource.cancelled(serial);
@@ -165,6 +243,8 @@ impl LayerMotionManagerState {
             controller.committed_reveal = None;
             runtime.reveal = None;
             runtime.reveal_current = None;
+            runtime.terminal = None;
+            runtime.terminal_ready = false;
         }
         let previous_reveal_pose = runtime
             .active
@@ -223,6 +303,7 @@ impl LayerMotionManagerState {
             }
         }
 
+        let mut cancelled_motion = false;
         if let Some(serial) = controller.pending_cancel.take() {
             if runtime
                 .active
@@ -246,8 +327,43 @@ impl LayerMotionManagerState {
                 controller.committed_reveal.clone_from(&runtime.reveal);
                 runtime.active = None;
                 runtime.current.clone_from(&current);
+                runtime.terminal_ready = false;
+                cancelled_motion = true;
                 send_final_state(&controller.resource, &current);
                 controller.resource.cancelled(serial);
+            }
+        }
+
+        if reset_applied {
+            runtime.terminal = None;
+            runtime.terminal_ready = false;
+        } else if !stale_animate {
+            match terminal_update {
+                Some(CommittedTerminal::Clear) => {
+                    runtime.terminal = None;
+                    runtime.terminal_ready = false;
+                }
+                Some(CommittedTerminal::Snapshot(snapshot))
+                    if runtime.reveal.as_ref().is_some_and(|reveal| reveal.visible) =>
+                {
+                    runtime.terminal = Some(snapshot);
+                    runtime.terminal_ready = runtime.terminal_ready
+                        && !descriptor_changed
+                        && !reset_applied
+                        && !cancelled_motion;
+                }
+                Some(CommittedTerminal::Snapshot(_)) => {
+                    runtime.terminal = None;
+                    runtime.terminal_ready = false;
+                }
+                None if reset_applied
+                    || descriptor_changed
+                    || runtime.reveal.as_ref().is_none_or(|reveal| !reveal.visible) =>
+                {
+                    runtime.terminal = None;
+                    runtime.terminal_ready = false;
+                }
+                None => {}
             }
         }
 
@@ -336,6 +452,7 @@ impl LayerMotionManagerState {
             controller.resource.cancelled(old.serial);
         }
         runtime.current = motion.sample(next_presentation);
+        runtime.terminal_ready = false;
         for plane in &mut runtime.planes {
             plane.damage.damage_all();
         }
@@ -363,6 +480,8 @@ impl LayerMotionManagerState {
             if let Some(reveal) = &runtime.reveal {
                 runtime.reveal_current = Some(reveal.sample(1.));
             }
+            runtime.terminal_ready = runtime.terminal.is_some()
+                && runtime.reveal.as_ref().is_some_and(|reveal| reveal.visible);
             send_final_state(&controller.resource, &final_poses);
             controller.resource.done(serial);
             false
@@ -372,6 +491,7 @@ impl LayerMotionManagerState {
             if let Some(reveal) = &runtime.reveal {
                 runtime.reveal_current = Some(reveal.sample(progress));
             }
+            runtime.terminal_ready = false;
             for plane in &mut runtime.planes {
                 plane.damage.damage_all();
             }
@@ -383,6 +503,9 @@ impl LayerMotionManagerState {
         let Some(controller) = self.controllers.remove(surface) else {
             return;
         };
+        if let Some(PendingTerminal::Buffer { buffer, .. }) = controller.pending_terminal {
+            buffer.release();
+        }
         let mut runtime = controller.runtime.lock().unwrap();
         if let Some(motion) = runtime.active.clone() {
             let current = motion.sample(presentation_time);
@@ -408,6 +531,8 @@ impl LayerMotionManagerState {
         runtime.planes.clear();
         runtime.reveal = None;
         runtime.reveal_current = None;
+        runtime.terminal = None;
+        runtime.terminal_ready = false;
     }
 
     /// Stop the current timeline while keeping the controller reusable after remap.
@@ -415,7 +540,12 @@ impl LayerMotionManagerState {
         let Some(controller) = self.controllers.get_mut(surface) else {
             return;
         };
+        if let Some(PendingTerminal::Buffer { buffer, .. }) = controller.pending_terminal.take() {
+            buffer.release();
+        }
         let mut runtime = controller.runtime.lock().unwrap();
+        runtime.terminal = None;
+        runtime.terminal_ready = false;
         if let Some(motion) = runtime.active.clone() {
             if let Some(sampled) = runtime
                 .reveal
@@ -493,6 +623,66 @@ fn serial_is_newer(candidate: u32, previous: u32) -> bool {
     distance != 0 && distance < (1 << 31)
 }
 
+fn copy_terminal_buffer(
+    buffer: &WlBuffer,
+    logical_width: f64,
+    logical_height: f64,
+    surface_size: smithay::utils::Size<f64, smithay::utils::Logical>,
+    retained_bytes: usize,
+) -> Result<Arc<LayerMotionTerminal>, &'static str> {
+    if !logical_width.is_finite()
+        || !logical_height.is_finite()
+        || logical_width <= 0.
+        || logical_height <= 0.
+        || logical_width > 32_768.
+        || logical_height > 32_768.
+        || logical_width != surface_size.w
+        || logical_height != surface_size.h
+    {
+        return Err("terminal dimensions must match the logical layer surface");
+    }
+    let copied = shm::with_buffer_contents(buffer, |bytes, shm_len, data| {
+        let width = u32::try_from(data.width).ok()?;
+        let height = u32::try_from(data.height).ok()?;
+        let stride = usize::try_from(data.stride).ok()?;
+        let row_bytes = usize::try_from(width).ok()?.checked_mul(4)?;
+        if width == 0 || height == 0 || stride < row_bytes {
+            return None;
+        }
+        let mapped_len = stride.checked_mul(height as usize)?;
+        let pixel_len = row_bytes.checked_mul(height as usize)?;
+        if mapped_len > shm_len || retained_bytes.checked_add(pixel_len)? > MAX_TERMINAL_BYTES {
+            return None;
+        }
+        let format = match data.format {
+            Format::Argb8888 => Fourcc::Argb8888,
+            Format::Abgr8888 => Fourcc::Abgr8888,
+            _ => return None,
+        };
+        // SAFETY: Smithay keeps the SHM mapping alive for this closure and passes its
+        // readable length; mapped_len was checked against that length above.
+        let bytes = unsafe { std::slice::from_raw_parts(bytes.cast::<u8>(), shm_len) };
+        let mut pixels = Vec::with_capacity(pixel_len);
+        for row in 0..height as usize {
+            let start = row.checked_mul(stride)?;
+            pixels.extend_from_slice(bytes.get(start..start.checked_add(row_bytes)?)?);
+        }
+        Some((width, height, format, pixels))
+    })
+    .unwrap_or(None);
+    let Some((pixel_width, pixel_height, format, pixels)) = copied else {
+        return Err("terminal buffer must be bounded SHM ARGB8888 or ABGR8888");
+    };
+    Ok(Arc::new(LayerMotionTerminal {
+        logical_width,
+        logical_height,
+        pixel_width,
+        pixel_height,
+        format,
+        pixels: pixels.into(),
+    }))
+}
+
 impl<D> GlobalDispatch<BeadLayerMotionManagerV1, (), D> for LayerMotionManagerState
 where
     D: GlobalDispatch<BeadLayerMotionManagerV1, ()>,
@@ -562,6 +752,7 @@ where
                         pending_cancel: None,
                         pending_reset: false,
                         pending_reveal: None,
+                        pending_terminal: None,
                         committed_reveal: None,
                         last_seen_serial: None,
                     },
@@ -1056,8 +1247,64 @@ where
                 };
                 controller.pending_reveal_mut().visible = visible;
             }
+            bead_layer_motion_v1::Request::SetRevealTerminalBuffer {
+                buffer,
+                width,
+                height,
+            } => {
+                if let Some(PendingTerminal::Buffer { buffer, .. }) =
+                    controller.pending_terminal.take()
+                {
+                    buffer.release();
+                }
+                if let Some(buffer) = buffer {
+                    if width <= 0. || height <= 0. || width > 32_768. || height > 32_768. {
+                        buffer.release();
+                        resource.post_error(
+                            bead_layer_motion_v1::Error::InvalidGeometry,
+                            "invalid reveal terminal dimensions",
+                        );
+                        return;
+                    }
+                    controller.pending_terminal = Some(PendingTerminal::Buffer {
+                        buffer,
+                        width,
+                        height,
+                    });
+                } else if width == 0. && height == 0. {
+                    controller.pending_terminal = Some(PendingTerminal::Clear);
+                } else {
+                    resource.post_error(
+                        bead_layer_motion_v1::Error::InvalidGeometry,
+                        "null terminal buffer requires zero dimensions",
+                    );
+                }
+            }
         }
         let _ = resource;
+    }
+
+    fn destroyed(
+        state: &mut D,
+        _client: smithay::reexports::wayland_server::backend::ClientId,
+        resource: &BeadLayerMotionV1,
+        data: &ControllerData,
+    ) {
+        let manager = state.layer_motion_manager_state();
+        if manager
+            .controllers
+            .get(&data.surface)
+            .is_some_and(|controller| &controller.resource == resource)
+        {
+            if let Some(controller) = manager.controllers.remove(&data.surface) {
+                if let Some(PendingTerminal::Buffer { buffer, .. }) = controller.pending_terminal {
+                    buffer.release();
+                }
+                let mut runtime = controller.runtime.lock().unwrap();
+                runtime.terminal = None;
+                runtime.terminal_ready = false;
+            }
+        }
     }
 }
 
@@ -1102,6 +1349,8 @@ mod tests {
             active: Some(motion),
             reveal: None,
             reveal_current: None,
+            terminal: None,
+            terminal_ready: false,
         };
         let presented = runtime
             .active
