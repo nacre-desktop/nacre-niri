@@ -833,11 +833,11 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
             let reveal = reveal_from_fixture(&plan["reveal"]);
 
             let plan_plane = &plan["planes"][0];
-            let source_rect = wire_rect(&plan_plane["source"]);
+            let source_rect = fixture_rect(&plan_plane["source"]);
             let pose = |field: &str| {
                 let pose = &plan_plane[field];
-                let dest = wire_rect(&pose["destination"]);
-                let clip = wire_rect(&pose["clip"]);
+                let dest = fixture_rect(&pose["destination"]);
+                let clip = fixture_rect(&pose["clip"]);
                 MotionPose::new(
                     dest.x as f64,
                     dest.y as f64,

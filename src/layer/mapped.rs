@@ -359,7 +359,7 @@ impl MappedLayer {
             self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
-        let Some(surface_geo) = with_states(&self.surface.wl_surface(), crate::utils::surface_geo)
+        let Some(surface_geo) = with_states(self.surface.wl_surface(), crate::utils::surface_geo)
         else {
             return;
         };
