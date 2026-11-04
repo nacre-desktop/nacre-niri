@@ -249,18 +249,32 @@ impl RevealDescriptor {
         scale: f32,
         surface_size: (f32, f32),
     ) -> Option<(Pixmap, Rect)> {
+        self.rasterize_in_crop(eased_progress, scale, surface_size, self.crop)
+    }
+
+    /// Rasterize a bounded subrectangle while keeping paths and gradients in the original
+    /// output coordinate space. Used to bake a reusable growing-edge template.
+    pub fn rasterize_in_crop(
+        &self,
+        eased_progress: f64,
+        scale: f32,
+        surface_size: (f32, f32),
+        requested_crop: Rect,
+    ) -> Option<(Pixmap, Rect)> {
         if !self.is_valid() || !scale.is_finite() || scale <= 0. {
             return None;
         }
         let sample = self.sample(eased_progress);
         let output = self.output_bounds;
         // Shadow planes are rendered separately by Niri's Gaussian shadow shader.
-        let left = self.crop.x.max(output.x).max(0.);
-        let top = self.crop.y.max(output.y).max(0.);
+        let left = self.crop.x.max(requested_crop.x).max(output.x).max(0.);
+        let top = self.crop.y.max(requested_crop.y).max(output.y).max(0.);
         let right = (self.crop.x + self.crop.w)
+            .min(requested_crop.x + requested_crop.w)
             .min(output.x + output.w)
             .min(surface_size.0);
         let bottom = (self.crop.y + self.crop.h)
+            .min(requested_crop.y + requested_crop.h)
             .min(output.y + output.h)
             .min(surface_size.1);
         if right <= left || bottom <= top {

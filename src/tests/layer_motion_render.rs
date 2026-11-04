@@ -818,6 +818,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 .join("src/tests/fixtures/nacre-reveal-goldens")
         });
     let mut compared = 0usize;
+    let mut route_failures = Vec::new();
     for route in ["dashboard", "launcher", "control"] {
         for scale_text in ["1.0", "1.5"] {
             let stem = format!("{route}-s{scale_text}");
@@ -1040,10 +1041,12 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                     }
                 }
             }
-            assert!(
-                route_max <= 1,
-                "{stem}: max diff={route_max}, worst={route_worst:?}"
-            );
+            println!("reveal-full-frame {stem}: max_diff={route_max} worst={route_worst:?}");
+            if route_max > 1 {
+                route_failures.push(format!(
+                    "{stem}: max diff={route_max}, worst={route_worst:?}"
+                ));
+            }
             let report = |phase: &str, wall: &[Duration], cpu: &[Duration]| {
                 let mean =
                     wall.iter().sum::<Duration>().as_secs_f64() * 1_000_000. / wall.len() as f64;
@@ -1064,14 +1067,17 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
         }
     }
     assert!(compared > 0);
+    assert!(
+        route_failures.is_empty(),
+        "compositor reveal golden mismatches:\n{}",
+        route_failures.join("\n")
+    );
 }
 
 #[test]
 #[ignore = "headless GLES compositor cost benchmark; run explicitly on owner desktop"]
 fn reveal_headless_gles_cost_benchmark() {
     use std::time::Instant;
-
-    use smithay::backend::renderer::element::utils::CropRenderElement;
 
     const FRAMES: usize = 64;
     let root = std::path::PathBuf::from(
@@ -1185,20 +1191,6 @@ fn reveal_headless_gles_cost_benchmark() {
         );
     }
 
-    fn physical_cover(
-        logical: Rectangle<f64, Logical>,
-        scale: f64,
-    ) -> Rectangle<i32, smithay::utils::Physical> {
-        let left = (logical.loc.x * scale).floor() as i32;
-        let top = (logical.loc.y * scale).floor() as i32;
-        let right = ((logical.loc.x + logical.size.w) * scale).ceil() as i32;
-        let bottom = ((logical.loc.y + logical.size.h) * scale).ceil() as i32;
-        Rectangle::new(
-            Point::from((left, top)),
-            Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),
-        )
-    }
-
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1200));
     f.niri_state()
@@ -1206,150 +1198,124 @@ fn reveal_headless_gles_cost_benchmark() {
         .headless()
         .add_renderer()
         .expect("surfaceless GLES renderer for reveal cost benchmark");
+    for case in &mut cases {
+        let client_id = f.add_client();
+        let namespace = format!("motion-bench-{}", case.label);
+        let layer = f
+            .client(client_id)
+            .create_layer(None, Layer::Top, &namespace);
+        let surface = layer.surface.clone();
+        layer.set_configure_props(LayerConfigureProps {
+            anchor: Some(Anchor::Left | Anchor::Top),
+            size: Some((case.width as u32, case.height as u32)),
+            ..Default::default()
+        });
+        layer.commit();
+        f.double_roundtrip(client_id);
+        let buffer = f.client(client_id).create_rgba_shm_buffer(
+            case.atlas_width,
+            case.atlas_height,
+            &case.atlas,
+        );
+        let layer = f.client(client_id).layer(&surface);
+        layer.surface.attach(Some(&buffer), 0, 0);
+        layer.set_size(case.width as u16, case.height as u16);
+        layer.ack_last_and_commit();
+        f.double_roundtrip(client_id);
+        case.atlas.clear();
+        let initial = case.group.sample(Duration::ZERO);
+        let (plane_id, initial_pose) = initial[0];
+        let mapped = f
+            .niri()
+            .mapped_layer_surfaces
+            .values_mut()
+            .find(|mapped| mapped.surface().namespace() == namespace)
+            .unwrap();
+        mapped.update_sizes(
+            Size::from((case.width as f64, case.height as f64)),
+            case.scale,
+        );
+        mapped.set_motion_runtime(Arc::new(Mutex::new(LayerMotionRuntime {
+            planes: vec![plane(
+                plane_id,
+                Rectangle::new(
+                    Point::from((case.source.x as f64, case.source.y as f64)),
+                    Size::from((case.source.w as f64, case.source.h as f64)),
+                ),
+                initial_pose,
+            )],
+            current: initial,
+            active: Some(case.group.clone()),
+            reveal: Some(case.reveal.clone()),
+            reveal_current: Some(case.reveal.sample(0.)),
+        })));
+    }
+    let output = f.niri_output(1);
     let state = f.niri_state();
-    let (backend, _niri) = (&mut state.backend, &mut state.niri);
+    let (backend, niri) = (&mut state.backend, &mut state.niri);
     backend
         .with_primary_renderer(|renderer| {
             println!(
-                "reveal-gles-bench backend=surfaceless GLES; LP_NUM_THREADS={}; 8 warmup and 64 sampled frames per route/scale",
+                "reveal-gles-bench backend=surfaceless GLES; LP_NUM_THREADS={}; 8 warmup and 64 sampled frames per route/scale; record external eglinfo -B; one output target allocation per frame; no readback",
                 std::env::var("LP_NUM_THREADS").unwrap_or_else(|_| "<unset>".into())
             );
             for case in cases {
-                // Match the client contract: upload the immutable content atlas once,
-                // then animate its plane while the compositor contour changes.
-                let content_buffer = crate::render_helpers::texture::TextureBuffer::from_memory(
-                    renderer,
-                    &case.atlas,
-                    Fourcc::Abgr8888,
-                    Size::from((case.atlas_width as i32, case.atlas_height as i32)),
-                    false,
-                    Scale::from(case.scale),
-                    Transform::Normal,
-                    Vec::new(),
-                )
-                .expect("upload immutable reveal content atlas");
-                let mut pose_wall = Vec::with_capacity(FRAMES);
-                let mut pose_cpu = Vec::with_capacity(FRAMES);
-                let mut raster_wall = Vec::with_capacity(FRAMES);
-                let mut raster_cpu = Vec::with_capacity(FRAMES);
-                let mut upload_wall = Vec::with_capacity(FRAMES);
-                let mut upload_cpu = Vec::with_capacity(FRAMES);
+                let namespace = format!("motion-bench-{}", case.label);
+                let mut element_wall = Vec::with_capacity(FRAMES);
+                let mut element_cpu = Vec::with_capacity(FRAMES);
                 let mut draw_wall = Vec::with_capacity(FRAMES);
                 let mut draw_cpu = Vec::with_capacity(FRAMES);
                 let mut fence_wall = Vec::with_capacity(FRAMES);
                 let mut fence_cpu = Vec::with_capacity(FRAMES);
-                let mut max_texture_bytes = 0usize;
+                let mut first_template_frame = None;
                 for frame in 0..(FRAMES + 8) {
                     let raw_progress = frame as f64 / (FRAMES + 8 - 1) as f64;
-                    let cpu_start = thread_cpu_time();
-                    let wall_start = Instant::now();
                     let elapsed = case.duration.mul_f64(raw_progress);
-                    let sampled_planes = case.group.sample(elapsed);
-                    let (_, plane_pose) = sampled_planes
-                        .first()
-                        .expect("route plan has one content plane");
-                    let progress = case.group.progress(elapsed);
-                    let reveal_pose = case.reveal.sample(progress);
-                    let pose_elapsed = wall_start.elapsed();
-                    let pose_cpu_elapsed = thread_cpu_time() - cpu_start;
-
                     let cpu_start = thread_cpu_time();
                     let wall_start = Instant::now();
-                    let (pixmap, crop) = case
-                        .reveal
-                        .rasterize(progress, case.scale as f32, (case.width, case.height))
-                        .expect("rasterize real route reveal sample");
-                    max_texture_bytes = max_texture_bytes.max(pixmap.data().len());
-                    let raster_elapsed = wall_start.elapsed();
-                    let raster_cpu_elapsed = thread_cpu_time() - cpu_start;
-
-                    let cpu_start = thread_cpu_time();
-                    let wall_start = Instant::now();
-                    let buffer = crate::render_helpers::texture::TextureBuffer::from_memory(
-                        renderer,
-                        pixmap.data(),
-                        Fourcc::Abgr8888,
-                        Size::from((pixmap.width() as i32, pixmap.height() as i32)),
-                        false,
-                        Scale::from(case.scale),
-                        Transform::Normal,
-                        Vec::new(),
-                    )
-                    .expect("upload reveal sample to GLES");
-                    let element = crate::render_helpers::texture::TextureRenderElement::from_texture_buffer(
-                        buffer,
-                        Point::from((crop.x as f64, crop.y as f64)),
-                        plane_pose.opacity as f32,
+                    niri.clock.set_unadjusted(elapsed);
+                    niri.output_state
+                        .get_mut(&output)
+                        .unwrap()
+                        .frame_clock
+                        .presented(elapsed);
+                    let mapped = niri
+                        .mapped_layer_surfaces
+                        .values()
+                        .find(|mapped| mapped.surface().namespace() == namespace)
+                        .expect("benchmark layer remains mapped");
+                    let mut elements = Vec::new();
+                    mapped.render_normal(
+                        RenderCtx {
+                            renderer,
+                            target: RenderTarget::Output,
+                            xray: None,
+                        },
                         None,
-                        None,
-                        smithay::backend::renderer::element::Kind::Unspecified,
+                        Point::from((0., 0.)),
+                        XrayPos::default(),
+                        &mut |element| elements.push(element),
                     );
-                    let upload_elapsed = wall_start.elapsed();
-                    let upload_cpu_elapsed = thread_cpu_time() - cpu_start;
+                    let element_elapsed = wall_start.elapsed();
+                    let element_cpu_elapsed = thread_cpu_time() - cpu_start;
+                    let template_frame = elements.iter().any(|element| {
+                        matches!(
+                            element,
+                            crate::layer::mapped::LayerSurfaceRenderElement::RevealClip(_)
+                        )
+                    });
 
                     let cpu_start = thread_cpu_time();
                     let wall_start = Instant::now();
-                    let content = crate::render_helpers::texture::TextureRenderElement::from_texture_buffer(
-                        content_buffer.clone(),
-                        Point::from((
-                            plane_pose.destination.loc.x,
-                            plane_pose.destination.loc.y,
-                        )),
-                        plane_pose.opacity as f32,
-                        Some(Rectangle::new(
-                            Point::from((case.source.x as f64, case.source.y as f64)),
-                            Size::from((case.source.w as f64, case.source.h as f64)),
-                        )),
-                        Some(Size::from((
-                            plane_pose.destination.size.w,
-                            plane_pose.destination.size.h,
-                        ))),
-                        smithay::backend::renderer::element::Kind::Unspecified,
-                    );
-                    let viewport = rect(0., 0., case.width as f64, case.height as f64);
-                    let content_clip = plane_pose
-                        .destination
-                        .intersection(plane_pose.clip)
-                        .and_then(|visible| visible.intersection(viewport))
-                        .and_then(|visible| {
-                            reveal_pose.content_clip.map_or(Some(visible), |clip| {
-                                visible.intersection(rect(
-                                    clip.x as f64,
-                                    clip.y as f64,
-                                    clip.w as f64,
-                                    clip.h as f64,
-                                ))
-                            })
-                        });
-                    let contour = CropRenderElement::from_element(
-                        element,
-                        Scale::from(case.scale),
-                        physical_cover(viewport, case.scale),
-                    )
-                    .expect("crop reveal contour to the layer viewport");
-                    let mut elements: Vec<CropRenderElement<
-                        crate::render_helpers::texture::TextureRenderElement<
-                            smithay::backend::renderer::gles::GlesTexture,
-                        >,
-                    >> = vec![contour];
-                    if let Some(content_clip) = content_clip {
-                        if let Some(content) = CropRenderElement::from_element(
-                            content,
-                            Scale::from(case.scale),
-                            physical_cover(content_clip, case.scale),
-                        ) {
-                            elements.push(content);
-                        }
-                    }
                     let (texture, sync) = render_helpers::render_to_texture(
                         renderer,
                         Size::from((case.atlas_width as i32, case.atlas_height as i32)),
                         Scale::from(case.scale),
                         Transform::Normal,
                         Fourcc::Abgr8888,
-                        elements.into_iter(),
+                        elements.into_iter().rev(),
                     )
-                    .expect("submit the complete reveal frame to a GLES render target");
+                    .expect("submit the mapped reveal elements to a GLES target");
                     let draw_elapsed = wall_start.elapsed();
                     let draw_cpu_elapsed = thread_cpu_time() - cpu_start;
 
@@ -1359,15 +1325,21 @@ fn reveal_headless_gles_cost_benchmark() {
                     let fence_elapsed = wall_start.elapsed();
                     let fence_cpu_elapsed = thread_cpu_time() - cpu_start;
                     drop(texture);
+                    if template_frame && first_template_frame.is_none() {
+                        first_template_frame = Some((
+                            element_elapsed.as_secs_f64() * 1_000_000.,
+                            element_cpu_elapsed.as_secs_f64() * 1_000_000.,
+                            draw_elapsed.as_secs_f64() * 1_000_000.,
+                            draw_cpu_elapsed.as_secs_f64() * 1_000_000.,
+                            fence_elapsed.as_secs_f64() * 1_000_000.,
+                            fence_cpu_elapsed.as_secs_f64() * 1_000_000.,
+                        ));
+                    }
 
                     // Eight startup frames warm shader compilation and texture pools.
                     if frame >= 8 {
-                        pose_wall.push(pose_elapsed.as_secs_f64() * 1_000_000.);
-                        pose_cpu.push(pose_cpu_elapsed.as_secs_f64() * 1_000_000.);
-                        raster_wall.push(raster_elapsed.as_secs_f64() * 1_000_000.);
-                        raster_cpu.push(raster_cpu_elapsed.as_secs_f64() * 1_000_000.);
-                        upload_wall.push(upload_elapsed.as_secs_f64() * 1_000_000.);
-                        upload_cpu.push(upload_cpu_elapsed.as_secs_f64() * 1_000_000.);
+                        element_wall.push(element_elapsed.as_secs_f64() * 1_000_000.);
+                        element_cpu.push(element_cpu_elapsed.as_secs_f64() * 1_000_000.);
                         draw_wall.push(draw_elapsed.as_secs_f64() * 1_000_000.);
                         draw_cpu.push(draw_cpu_elapsed.as_secs_f64() * 1_000_000.);
                         fence_wall.push(fence_elapsed.as_secs_f64() * 1_000_000.);
@@ -1375,18 +1347,21 @@ fn reveal_headless_gles_cost_benchmark() {
                     }
                 }
                 println!(
-                    "reveal-gles-bench case={} scale={} content={}x{} logical content_atlas_bytes={} cache_entries=1 contour_texture_bytes={} transient_cpu_pixmap_plus_gpu_texture_bytes={}",
+                    "reveal-gles-bench case={} scale={} content={}x{} logical edge_cache_limit_bytes={}",
                     case.label,
                     case.scale,
                     case.width,
                     case.height,
-                    case.atlas.len(),
-                    max_texture_bytes,
-                    max_texture_bytes * 2,
+                    REVEAL_EDGE_CACHE_LIMIT,
                 );
-                summarize("pose", &mut pose_wall, &pose_cpu);
-                summarize("contour-raster", &mut raster_wall, &raster_cpu);
-                summarize("texture-upload", &mut upload_wall, &upload_cpu);
+                if let Some((element_wall, element_cpu, draw_wall, draw_cpu, fence_wall, fence_cpu)) =
+                    first_template_frame
+                {
+                    println!("reveal-gles-bench first-template-frame: element-build-us={element_wall:.2} element-cpu-us={element_cpu:.2} draw-submit-us={draw_wall:.2} draw-cpu-us={draw_cpu:.2} fence-wait-us={fence_wall:.2} fence-cpu-us={fence_cpu:.2}");
+                } else {
+                    println!("reveal-gles-bench first-template-frame=unavailable (edge template was rejected or route did not enter the cache path)");
+                }
+                summarize("element-build-raster-upload", &mut element_wall, &element_cpu);
                 summarize("draw-submit", &mut draw_wall, &draw_cpu);
                 summarize("fence-wait", &mut fence_wall, &fence_cpu);
             }

@@ -6,24 +6,36 @@ content clip alongside the existing plane timeline. Version-1 request opcodes
 remain in place. The Bead client uploads content planes once and can retarget a
 retained opening from compositor-sampled geometry.
 
-Nacre's quadratic-cut compound contour, rim, and fill currently use a
-compositor-owned CPU raster (tiny-skia) uploaded as a cached GLES texture. The
-simple circular contour may use Niri's existing rounded-border element; circular
-shadows use Niri's rounded-box Gaussian shadow shader with all four sampled
-radii. The compositor advances the motion timeline and does not ask Bead to
-repaint each refresh. The generic rounded content mask is deliberately absent:
-legacy Nacre reveal output clips to the authored rectangular plane clip.
+Nacre's quadratic-cut compound contour, rim, and fill use compositor-owned
+tiny-skia rasters uploaded to GLES. Large constant-radius one-axis grows can
+cache a full-open contour and a validated 52-logical-pixel ghost edge band,
+then move the band by the same rounded physical-pixel shift as Bead's MIT
+`TreeCache` (`crates/bead-render/src/tree.rs` at commit
+`0eb9a9a8afdbd8e8a2f6770e1a3b05818af198b0`). The complete upstream MIT notice
+is retained in [`licenses/Bead-MIT.txt`](licenses/Bead-MIT.txt). This preserves
+the baked rim-gradient phase and avoids per-frame
+contour raster/upload on eligible frames. The retained texture pair is capped
+at 64 MiB per layer; unsupported axes/styles, small reveals, failed validation,
+or oversize pairs use the existing single-pose raster fallback. Tiny-skia still
+builds the initial full-open and ghost-band rasters synchronously on the first
+eligible frame. Circular shadows use Niri's rounded-box Gaussian shadow shader
+with all four sampled radii. The compositor advances the motion timeline and
+does not ask Bead to repaint each refresh. The generic rounded content mask is
+deliberately absent: legacy Nacre reveal output clips to the authored
+rectangular plane clip.
 
 The fixture-backed GLES test compares the complete compositor frame against
 Nacre's premultiplied RGBA references for dashboard, launcher, and control
 centre at five timeline samples and scales 1 and 1.5, with a one-channel-value
 maximum difference. Its atlas and per-frame JSON accompany the images. The
-separate ignored cost benchmark reports eased geometry sampling, contour raster,
-texture upload, draw submission, and fence wait separately. It clips the moving
-content plane to both sampled clip rectangles and the viewport. It does not
-read back pixels, and allocates a headless render target per sampled frame; run
-it on the owner desktop after the host is available. It is not a battery
-measurement, and no live desktop validation has been performed in this change.
+separate ignored cost benchmark renders through `MappedLayer::render_normal`,
+reporting element-build/raster/upload, draw submission, and fence wait
+separately. It uses the same sampled plane clips and viewport path as the full
+frame comparator. It does not read back pixels, and allocates a headless render
+target per sampled frame; run it on the owner desktop after the host is
+available. Record the template's one-time bake frame when it occurs; that bake
+is part of active element-build timing. It is not a battery measurement, and no
+live desktop validation has been performed in this change.
 
 Desktop validation remains: run the full nacre-niri CI job, the fixture-backed
 GLES test, the 200,000-case layer-motion property suite, and the explicit

@@ -73,6 +73,8 @@ pub struct MappedLayer {
     motion: Option<Arc<Mutex<LayerMotionRuntime>>>,
     promotion_motion: Option<LayerMotion>,
     reveal_texture_cache: RefCell<Vec<RevealTextureCache>>,
+    reveal_edge_cache: RefCell<Option<RevealEdgeTextureCache>>,
+    reveal_edge_rejected: RefCell<Option<RevealEdgeCacheKey>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,6 +95,72 @@ struct RevealTextureCache {
     crop: RevealRect,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct RevealEdgeCacheKey {
+    descriptor: RevealDescriptor,
+    scale: u32,
+    surface_width: u32,
+    surface_height: u32,
+    location_x: u64,
+    location_y: u64,
+}
+
+struct RevealEdgeTextureCache {
+    key: RevealEdgeCacheKey,
+    open: Box<dyn Any>,
+    band: Box<dyn Any>,
+    crop: RevealRect,
+    vertical: bool,
+    far: bool,
+    origin: f32,
+    lead: f32,
+    first: i64,
+    band_extent: u32,
+    total_extent: u32,
+}
+
+impl std::fmt::Debug for RevealEdgeTextureCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RevealEdgeTextureCache")
+            .field("crop", &self.crop)
+            .field("vertical", &self.vertical)
+            .field("far", &self.far)
+            .field("band_extent", &self.band_extent)
+            .field("total_extent", &self.total_extent)
+            .finish_non_exhaustive()
+    }
+}
+
+// This edge-template bake follows Bead's MIT-licensed tree.rs edge_items/build_edge algorithm
+// (commit 0eb9a9a8afdbd8e8a2f6770e1a3b05818af198b0; Copyright (c) 2026 siverteh).
+const REVEAL_EDGE_INSIDE: f32 = 44.;
+const REVEAL_EDGE_OUTSIDE: f32 = 8.;
+const REVEAL_EDGE_MIN_REVEALED: f32 = REVEAL_EDGE_INSIDE + 40.;
+const REVEAL_EDGE_CACHE_LIMIT: usize = 64 * 1024 * 1024;
+
+struct RevealEdgeSpec {
+    vertical: bool,
+    far: bool,
+    origin: f32,
+    length: f32,
+    full_lead: f32,
+    full_body: RevealRect,
+    closed_body: RevealRect,
+}
+
+struct RevealEdgePixels {
+    open: tiny_skia::Pixmap,
+    band: tiny_skia::Pixmap,
+    crop: RevealRect,
+    vertical: bool,
+    far: bool,
+    origin: f32,
+    lead: f32,
+    first: i64,
+    band_extent: u32,
+    total_extent: u32,
+}
+
 impl std::fmt::Debug for RevealTextureCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RevealTextureCache")
@@ -109,6 +177,7 @@ niri_render_elements! {
         MotionPlane = MotionPlaneRenderElement<R>,
         Border = BorderRenderElement,
         Reveal = TextureRenderElement<R::NiriTextureId>,
+        RevealClip = CropRenderElement<TextureRenderElement<R::NiriTextureId>>,
         SolidColor = SolidColorRenderElement,
         Shadow = ShadowRenderElement,
         BackgroundEffect = BackgroundEffectElement,
@@ -140,6 +209,273 @@ fn to_physical_cover(
         Point::from((left, top)),
         Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),
     )
+}
+
+fn reveal_edge_spec(reveal: &RevealDescriptor) -> Option<RevealEdgeSpec> {
+    if !reveal.visible
+        || reveal.corner_mode != super::reveal::CornerMode::QuadraticCut
+        || reveal.radii_from != reveal.radii_to
+        || reveal.shadow.is_some()
+    {
+        return None;
+    }
+    let from = reveal.animated_from;
+    let to = reveal.animated_to;
+    if from.h >= 0. && from.h < to.h && from.w > 0. && to.h > 0. && from.x == to.x && from.w == to.w
+    {
+        let far = if from.y == to.y {
+            true
+        } else if from.y + from.h == to.y + to.h {
+            false
+        } else {
+            return None;
+        };
+        return Some(RevealEdgeSpec {
+            vertical: true,
+            far,
+            origin: reveal.crop.y,
+            length: to.h,
+            full_lead: if far { to.y + to.h } else { to.y },
+            full_body: to,
+            closed_body: if far {
+                RevealRect::new(to.x, to.y, to.w, 0.)
+            } else {
+                RevealRect::new(to.x, to.y + to.h, to.w, 0.)
+            },
+        });
+    }
+    if from.w >= 0. && from.w < to.w && from.h > 0. && to.w > 0. && from.y == to.y && from.h == to.h
+    {
+        let far = if from.x == to.x {
+            true
+        } else if from.x + from.w == to.x + to.w {
+            false
+        } else {
+            return None;
+        };
+        return Some(RevealEdgeSpec {
+            vertical: false,
+            far,
+            origin: reveal.crop.x,
+            length: to.w,
+            full_lead: if far { to.x + to.w } else { to.x },
+            full_body: to,
+            closed_body: if far {
+                RevealRect::new(to.x, to.y, 0., to.h)
+            } else {
+                RevealRect::new(to.x + to.w, to.y, 0., to.h)
+            },
+        });
+    }
+    None
+}
+
+fn reveal_edge_pixel(pixmap: &tiny_skia::Pixmap, x: u32, y: u32) -> [u8; 4] {
+    let offset = ((y * pixmap.width() + x) * 4) as usize;
+    pixmap.data()[offset..offset + 4].try_into().unwrap()
+}
+
+fn reveal_edge_template_matches(
+    band: &tiny_skia::Pixmap,
+    open: &tiny_skia::Pixmap,
+    first: i64,
+    last: i64,
+    shift: i64,
+    vertical: bool,
+    far: bool,
+) -> bool {
+    let band_extent = if vertical {
+        band.height()
+    } else {
+        band.width()
+    } as i64;
+    let total_extent = if vertical {
+        open.height()
+    } else {
+        open.width()
+    } as i64;
+    if band_extent < 4
+        || first + shift < 1
+        || shift + last >= total_extent
+        || (vertical && band.width() != open.width())
+        || (!vertical && band.height() != open.height())
+    {
+        return false;
+    }
+    let close = |a: [u8; 4], b: [u8; 4], tolerance: i32| {
+        a.iter()
+            .zip(b)
+            .all(|(a, b)| (i32::from(*a) - i32::from(b)).abs() <= tolerance)
+    };
+    let (inner, next) = if far {
+        (0, 1)
+    } else {
+        (band_extent - 1, band_extent - 2)
+    };
+    let uniform = if vertical {
+        (0..band.width()).all(|x| {
+            close(
+                reveal_edge_pixel(band, x, inner as u32),
+                reveal_edge_pixel(band, x, next as u32),
+                2,
+            )
+        })
+    } else {
+        (0..band.height()).all(|y| {
+            close(
+                reveal_edge_pixel(band, inner as u32, y),
+                reveal_edge_pixel(band, next as u32, y),
+                2,
+            )
+        })
+    };
+    if !uniform {
+        return false;
+    }
+    let within = |template: [u8; 4], around: [[u8; 4]; 3]| {
+        (0..4).all(|channel| {
+            let low = around
+                .iter()
+                .map(|pixel| i32::from(pixel[channel]))
+                .min()
+                .unwrap_or(0)
+                - 28;
+            let high = around
+                .iter()
+                .map(|pixel| i32::from(pixel[channel]))
+                .max()
+                .unwrap_or(0)
+                + 28;
+            (low..=high).contains(&i32::from(template[channel]))
+        })
+    };
+    if vertical {
+        (0..band.height()).all(|y| {
+            (0..band.width()).step_by(3).all(|x| {
+                let row = (i64::from(y) + first + shift) as u32;
+                within(
+                    reveal_edge_pixel(band, x, y),
+                    [
+                        reveal_edge_pixel(open, x, row - 1),
+                        reveal_edge_pixel(open, x, row),
+                        reveal_edge_pixel(open, x, row + 1),
+                    ],
+                )
+            })
+        })
+    } else {
+        (0..band.width()).all(|x| {
+            (0..band.height()).step_by(3).all(|y| {
+                let column = (i64::from(x) + first + shift) as u32;
+                within(
+                    reveal_edge_pixel(band, x, y),
+                    [
+                        reveal_edge_pixel(open, column - 1, y),
+                        reveal_edge_pixel(open, column, y),
+                        reveal_edge_pixel(open, column + 1, y),
+                    ],
+                )
+            })
+        })
+    }
+}
+
+fn build_reveal_edge_pixels(
+    reveal: &RevealDescriptor,
+    spec: &RevealEdgeSpec,
+    progress: f64,
+    scale: f32,
+    surface_size: (f32, f32),
+) -> Option<RevealEdgePixels> {
+    if spec.length < 2. * REVEAL_EDGE_MIN_REVEALED || progress >= 1. {
+        return None;
+    }
+    let body = reveal.sample(progress).body;
+    let now = match (spec.vertical, spec.far) {
+        (true, true) => body.y + body.h,
+        (true, false) => body.y,
+        (false, true) => body.x + body.w,
+        (false, false) => body.x,
+    };
+    let revealed = spec.length - (now - spec.full_lead).abs();
+    if revealed < REVEAL_EDGE_MIN_REVEALED {
+        return None;
+    }
+
+    let (open, crop) = reveal.rasterize(1., scale, surface_size)?;
+    let origin = if spec.vertical { crop.y } else { crop.x };
+    let extent = if spec.vertical {
+        open.height()
+    } else {
+        open.width()
+    };
+    let ghost_progress = ((REVEAL_EDGE_MIN_REVEALED + 24.) / spec.length).clamp(0.5, 0.9);
+    let mut ghost_descriptor = reveal.clone();
+    ghost_descriptor.animated_from = spec.closed_body;
+    ghost_descriptor.animated_to = spec.full_body;
+    let ghost = ghost_descriptor.sample(f64::from(ghost_progress)).body;
+    let ghost_lead = match (spec.vertical, spec.far) {
+        (true, true) => ghost.y + ghost.h,
+        (true, false) => ghost.y,
+        (false, true) => ghost.x + ghost.w,
+        (false, false) => ghost.x,
+    };
+    let (low, high) = if spec.far {
+        (
+            ghost_lead - REVEAL_EDGE_INSIDE,
+            ghost_lead + REVEAL_EDGE_OUTSIDE,
+        )
+    } else {
+        (
+            ghost_lead - REVEAL_EDGE_OUTSIDE,
+            ghost_lead + REVEAL_EDGE_INSIDE,
+        )
+    };
+    let first = (((low - origin) * scale).floor() as i64).max(0);
+    let last = (((high - origin) * scale).ceil() as i64).min(i64::from(extent));
+    if last - first < 4 {
+        return None;
+    }
+    let ghost_crop = if spec.vertical {
+        RevealRect::new(
+            crop.x,
+            origin + first as f32 / scale,
+            crop.w,
+            (last - first) as f32 / scale,
+        )
+    } else {
+        RevealRect::new(
+            origin + first as f32 / scale,
+            crop.y,
+            (last - first) as f32 / scale,
+            crop.h,
+        )
+    };
+    let (band, _) =
+        reveal.rasterize_in_crop(f64::from(ghost_progress), scale, surface_size, ghost_crop)?;
+    let band_extent = if spec.vertical {
+        band.height()
+    } else {
+        band.width()
+    };
+    let last = first + i64::from(band_extent);
+    let full_lead = spec.full_lead;
+    let shift = ((((full_lead - ghost_lead) * scale).round() as i64).max(-first));
+    if !reveal_edge_template_matches(&band, &open, first, last, shift, spec.vertical, spec.far) {
+        return None;
+    }
+    Some(RevealEdgePixels {
+        open,
+        band,
+        crop,
+        vertical: spec.vertical,
+        far: spec.far,
+        origin,
+        lead: (ghost_lead - origin) * scale,
+        first,
+        band_extent,
+        total_extent: extent,
+    })
 }
 
 impl<R: NiriRenderer> MotionPlaneRenderElement<R> {
@@ -246,6 +582,8 @@ impl MappedLayer {
             motion: None,
             promotion_motion: None,
             reveal_texture_cache: RefCell::new(Vec::new()),
+            reveal_edge_cache: RefCell::new(None),
+            reveal_edge_rejected: RefCell::new(None),
         }
     }
 
@@ -264,6 +602,11 @@ impl MappedLayer {
     }
 
     pub fn update_sizes(&mut self, view_size: Size<f64, Logical>, scale: f64) {
+        if self.view_size != view_size || self.scale != scale {
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
+            self.reveal_texture_cache.borrow_mut().clear();
+        }
         self.view_size = view_size;
         self.scale = scale;
     }
@@ -298,6 +641,9 @@ impl MappedLayer {
     }
 
     pub fn set_motion_runtime(&mut self, motion: Arc<Mutex<LayerMotionRuntime>>) {
+        self.reveal_edge_cache.borrow_mut().take();
+        self.reveal_edge_rejected.borrow_mut().take();
+        self.reveal_texture_cache.borrow_mut().clear();
         self.motion = Some(motion);
     }
 
@@ -310,6 +656,8 @@ impl MappedLayer {
         let runtime = motion.lock().unwrap();
         if runtime.planes.is_empty() {
             self.reveal_texture_cache.borrow_mut().clear();
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
             return None;
         }
         let poses = runtime
@@ -343,6 +691,222 @@ impl MappedLayer {
         Some((reveal, progress, opacity))
     }
 
+    fn render_edge_template<R: NiriRenderer>(
+        &self,
+        renderer: &mut R,
+        reveal: &RevealDescriptor,
+        progress: f64,
+        opacity: f32,
+        location: Point<f64, Logical>,
+        scale: Scale<f64>,
+        surface_size: (f32, f32),
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) -> bool {
+        let Some(spec) = reveal_edge_spec(reveal) else {
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
+            return false;
+        };
+        let current_body = reveal.sample(progress).body;
+        let now = match (spec.vertical, spec.far) {
+            (true, true) => current_body.y + current_body.h,
+            (true, false) => current_body.y,
+            (false, true) => current_body.x + current_body.w,
+            (false, false) => current_body.x,
+        };
+        let revealed = spec.length - (now - spec.full_lead).abs();
+        let key = RevealEdgeCacheKey {
+            descriptor: reveal.clone(),
+            scale: (scale.x as f32).to_bits(),
+            surface_width: surface_size.0.to_bits(),
+            surface_height: surface_size.1.to_bits(),
+            location_x: location.x.to_bits(),
+            location_y: location.y.to_bits(),
+        };
+        {
+            let mut rejected = self.reveal_edge_rejected.borrow_mut();
+            if rejected.as_ref().is_some_and(|rejected| rejected != &key) {
+                rejected.take();
+            }
+            if rejected.as_ref() == Some(&key) {
+                return false;
+            }
+        }
+        if progress < 1.
+            && (spec.length < 2. * REVEAL_EDGE_MIN_REVEALED || revealed < REVEAL_EDGE_MIN_REVEALED)
+        {
+            return false;
+        }
+        let cached = {
+            let mut cache = self.reveal_edge_cache.borrow_mut();
+            if cache.as_ref().is_some_and(|entry| entry.key != key) {
+                cache.take();
+            }
+            cache.as_ref().and_then(|entry| {
+                let open = entry
+                    .open
+                    .downcast_ref::<TextureBuffer<R::NiriTextureId>>()?;
+                let band = entry
+                    .band
+                    .downcast_ref::<TextureBuffer<R::NiriTextureId>>()?;
+                (open.belongs_to_renderer(renderer) && band.belongs_to_renderer(renderer)).then(
+                    || {
+                        (
+                            open.clone(),
+                            band.clone(),
+                            entry.crop,
+                            entry.vertical,
+                            entry.far,
+                            entry.origin,
+                            entry.lead,
+                            entry.first,
+                            entry.band_extent,
+                            entry.total_extent,
+                        )
+                    },
+                )
+            })
+        };
+        let cached = if let Some(cached) = cached {
+            Some(cached)
+        } else {
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
+            if progress >= 1. {
+                return false;
+            }
+            let Some(pixels) =
+                build_reveal_edge_pixels(reveal, &spec, progress, scale.x as f32, surface_size)
+            else {
+                *self.reveal_edge_rejected.borrow_mut() = Some(key);
+                return false;
+            };
+            if pixels.open.data().len() + pixels.band.data().len() > REVEAL_EDGE_CACHE_LIMIT {
+                *self.reveal_edge_rejected.borrow_mut() = Some(key);
+                return false;
+            }
+            let open_size = Size::from((pixels.open.width() as i32, pixels.open.height() as i32));
+            let band_size = Size::from((pixels.band.width() as i32, pixels.band.height() as i32));
+            let Ok(open) = TextureBuffer::from_memory(
+                renderer,
+                pixels.open.data(),
+                Fourcc::Abgr8888,
+                open_size,
+                false,
+                scale,
+                Transform::Normal,
+                Vec::new(),
+            ) else {
+                *self.reveal_edge_rejected.borrow_mut() = Some(key);
+                return false;
+            };
+            let Ok(band) = TextureBuffer::from_memory(
+                renderer,
+                pixels.band.data(),
+                Fourcc::Abgr8888,
+                band_size,
+                false,
+                scale,
+                Transform::Normal,
+                Vec::new(),
+            ) else {
+                *self.reveal_edge_rejected.borrow_mut() = Some(key);
+                return false;
+            };
+            let cached = (
+                open.clone(),
+                band.clone(),
+                pixels.crop,
+                pixels.vertical,
+                pixels.far,
+                pixels.origin,
+                pixels.lead,
+                pixels.first,
+                pixels.band_extent,
+                pixels.total_extent,
+            );
+            *self.reveal_edge_cache.borrow_mut() = Some(RevealEdgeTextureCache {
+                key,
+                open: Box::new(open),
+                band: Box::new(band),
+                crop: pixels.crop,
+                vertical: pixels.vertical,
+                far: pixels.far,
+                origin: pixels.origin,
+                lead: pixels.lead,
+                first: pixels.first,
+                band_extent: pixels.band_extent,
+                total_extent: pixels.total_extent,
+            });
+            self.reveal_edge_rejected.borrow_mut().take();
+            self.reveal_texture_cache.borrow_mut().clear();
+            Some(cached)
+        };
+        let Some((open, band, crop, vertical, far, origin, lead, first, band_extent, total_extent)) =
+            cached
+        else {
+            return false;
+        };
+        let shift = ((now - origin) * scale.x as f32 - lead).round() as i64;
+        let start = first + shift;
+        if start < 0 || start + i64::from(band_extent) > i64::from(total_extent) {
+            return false;
+        }
+        let open_element = TextureRenderElement::from_texture_buffer(
+            open,
+            location + Point::from((crop.x as f64, crop.y as f64)),
+            opacity,
+            None,
+            None,
+            Kind::Unspecified,
+        );
+        if progress < 1. {
+            let edge_start = origin + start as f32 / scale.x as f32;
+            let edge_end = origin + (start + i64::from(band_extent)) as f32 / scale.x as f32;
+            let open_clip = if vertical {
+                if far {
+                    RevealRect::new(crop.x, crop.y, crop.w, edge_start - crop.y)
+                } else {
+                    RevealRect::new(crop.x, edge_end, crop.w, crop.y + crop.h - edge_end)
+                }
+            } else if far {
+                RevealRect::new(crop.x, crop.y, edge_start - crop.x, crop.h)
+            } else {
+                RevealRect::new(edge_end, crop.y, crop.x + crop.w - edge_end, crop.h)
+            };
+            if open_clip.w > 0. && open_clip.h > 0. {
+                let clip = Rectangle::new(
+                    location + Point::from((open_clip.x as f64, open_clip.y as f64)),
+                    Size::from((open_clip.w as f64, open_clip.h as f64)),
+                );
+                if let Some(element) = CropRenderElement::from_element(
+                    open_element.clone(),
+                    scale,
+                    to_physical_cover(clip, scale),
+                ) {
+                    push(element.into());
+                }
+            }
+            let band_location = if vertical {
+                location + Point::from((crop.x as f64, origin as f64 + start as f64 / scale.x))
+            } else {
+                location + Point::from((origin as f64 + start as f64 / scale.x, crop.y as f64))
+            };
+            let band_element = TextureRenderElement::from_texture_buffer(
+                band,
+                band_location,
+                opacity,
+                None,
+                None,
+                Kind::Unspecified,
+            );
+            push(band_element.into());
+        } else {
+            push(open_element.into());
+        }
+        true
+    }
+
     fn render_reveal<R: NiriRenderer>(
         &self,
         renderer: &mut R,
@@ -353,14 +917,21 @@ impl MappedLayer {
     ) {
         let Some((reveal, progress, opacity)) = self.reveal_snapshot() else {
             self.reveal_texture_cache.borrow_mut().clear();
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
             return;
         };
         if !reveal.visible {
             self.reveal_texture_cache.borrow_mut().clear();
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
             return;
         }
         let Some(surface_geo) = with_states(self.surface.wl_surface(), crate::utils::surface_geo)
         else {
+            self.reveal_texture_cache.borrow_mut().clear();
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
             return;
         };
         if reveal.fill[3] == 0
@@ -370,6 +941,9 @@ impl MappedLayer {
                 .is_none_or(|rim| rim.width == 0. || rim.opacity == 0.)
             && reveal.shadow.is_none()
         {
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
+            self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
         if reveal.static_rects.is_empty()
@@ -377,6 +951,8 @@ impl MappedLayer {
             && reveal.corner_mode == super::reveal::CornerMode::Circular
             && reveal.rim.is_none()
         {
+            self.reveal_edge_cache.borrow_mut().take();
+            self.reveal_edge_rejected.borrow_mut().take();
             let body = reveal.sample(progress).body;
             let crop = reveal.crop;
             let size = Size::from((crop.w as f64, crop.h as f64));
@@ -443,6 +1019,19 @@ impl MappedLayer {
             if let Some(shadow) = self.create_reveal_shadow(&reveal, progress, location, scale) {
                 push(shadow.with_alpha(alpha * opacity as f32).into());
             }
+            self.reveal_texture_cache.borrow_mut().clear();
+            return;
+        }
+        if self.render_edge_template(
+            renderer,
+            &reveal,
+            progress,
+            alpha * opacity as f32,
+            location,
+            scale,
+            (surface_geo.size.w as f32, surface_geo.size.h as f32),
+            push,
+        ) {
             self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
