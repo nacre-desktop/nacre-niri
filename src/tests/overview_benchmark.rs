@@ -123,7 +123,7 @@ fn populated_fixture() -> (Fixture, super::client::ClientId, ZwlrVirtualPointerV
     let client = fixture.add_client();
     fixture.double_roundtrip(client);
     for idx in 0..8 {
-        create_window(&mut fixture, client, 900 + idx * 10, 650 + idx * 5);
+        create_window(&mut fixture, client, 900, 650);
         if idx < 7 {
             fixture.niri().layout.switch_workspace_down();
         }
@@ -269,7 +269,7 @@ fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
         &open_pointer,
         32,
         8,
-        "first during 120 Hz opening",
+        "first during 120 Hz opening (diagnostic only)",
     );
 
     let (mut fixture, client, pointer) = populated_fixture();
