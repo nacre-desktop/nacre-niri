@@ -211,6 +211,64 @@ fn to_physical_cover(
     )
 }
 
+fn reveal_edge_clip(
+    crop: RevealRect,
+    origin: f32,
+    start: i64,
+    band_extent: u32,
+    vertical: bool,
+    far: bool,
+    scale: f32,
+) -> RevealRect {
+    const M: f32 = 4096.;
+    let cut_start = start as f32 / scale;
+    let cut_end = (start + i64::from(band_extent)) as f32 / scale;
+    match (vertical, far) {
+        (true, true) => RevealRect::new(
+            crop.x - M,
+            crop.y - M,
+            crop.w + 2. * M,
+            origin + cut_start - crop.y + M,
+        ),
+        (true, false) => RevealRect::new(
+            crop.x - M,
+            origin + cut_end,
+            crop.w + 2. * M,
+            crop.y + crop.h - origin - cut_end + M,
+        ),
+        (false, true) => RevealRect::new(
+            crop.x - M,
+            crop.y - M,
+            origin + cut_start - crop.x + M,
+            crop.h + 2. * M,
+        ),
+        (false, false) => RevealRect::new(
+            origin + cut_end,
+            crop.y - M,
+            crop.x + crop.w - origin - cut_end + M,
+            crop.h + 2. * M,
+        ),
+    }
+}
+
+fn reveal_edge_clip_pixels(
+    clip: RevealRect,
+    location: Point<f64, Logical>,
+    scale: Scale<f64>,
+) -> Rectangle<i32, smithay::utils::Physical> {
+    let scale_x = scale.x as f32;
+    let scale_y = scale.y as f32;
+    let left = (clip.x * scale_x).floor() as i32;
+    let top = (clip.y * scale_y).floor() as i32;
+    let right = ((clip.x + clip.w) * scale_x).ceil() as i32;
+    let bottom = ((clip.y + clip.h) * scale_y).ceil() as i32;
+    let location = location.to_physical_precise_round(scale);
+    Rectangle::new(
+        Point::from((location.x + left, location.y + top)),
+        Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),
+    )
+}
+
 fn reveal_edge_spec(reveal: &RevealDescriptor) -> Option<RevealEdgeSpec> {
     if !reveal.visible
         || reveal.corner_mode != super::reveal::CornerMode::QuadraticCut
@@ -451,8 +509,12 @@ fn build_reveal_edge_pixels(
             crop.h,
         )
     };
-    let (band, _) =
-        reveal.rasterize_in_crop(f64::from(ghost_progress), scale, surface_size, ghost_crop)?;
+    let (band, _) = ghost_descriptor.rasterize_in_crop(
+        f64::from(ghost_progress),
+        scale,
+        surface_size,
+        ghost_crop,
+    )?;
     let band_extent = if spec.vertical {
         band.height()
     } else {
@@ -861,31 +923,21 @@ impl MappedLayer {
             Kind::Unspecified,
         );
         if progress < 1. {
-            let edge_start = origin + start as f32 / scale.x as f32;
-            let edge_end = origin + (start + i64::from(band_extent)) as f32 / scale.x as f32;
-            let open_clip = if vertical {
-                if far {
-                    RevealRect::new(crop.x, crop.y, crop.w, edge_start - crop.y)
-                } else {
-                    RevealRect::new(crop.x, edge_end, crop.w, crop.y + crop.h - edge_end)
-                }
-            } else if far {
-                RevealRect::new(crop.x, crop.y, edge_start - crop.x, crop.h)
-            } else {
-                RevealRect::new(edge_end, crop.y, crop.x + crop.w - edge_end, crop.h)
-            };
-            if open_clip.w > 0. && open_clip.h > 0. {
-                let clip = Rectangle::new(
-                    location + Point::from((open_clip.x as f64, open_clip.y as f64)),
-                    Size::from((open_clip.w as f64, open_clip.h as f64)),
-                );
-                if let Some(element) = CropRenderElement::from_element(
-                    open_element.clone(),
-                    scale,
-                    to_physical_cover(clip, scale),
-                ) {
-                    push(element.into());
-                }
+            let clip = reveal_edge_clip(
+                crop,
+                origin,
+                start,
+                band_extent,
+                vertical,
+                far,
+                scale.x as f32,
+            );
+            if let Some(element) = CropRenderElement::from_element(
+                open_element.clone(),
+                scale,
+                reveal_edge_clip_pixels(clip, location, scale),
+            ) {
+                push(element.into());
             }
             let band_location = if vertical {
                 location + Point::from((crop.x as f64, origin as f64 + start as f64 / scale.x))
