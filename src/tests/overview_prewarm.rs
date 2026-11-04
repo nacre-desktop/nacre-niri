@@ -35,12 +35,7 @@ workspace "desk-4" { open-on-output "headless-1" }
     fixture
 }
 
-fn create_window(
-    fixture: &mut Fixture,
-    client: ClientId,
-    width: u16,
-    height: u16,
-) -> WlSurface {
+fn create_window(fixture: &mut Fixture, client: ClientId, width: u16, height: u16) -> WlSurface {
     let surface = {
         let window = fixture.client(client).create_window();
         let surface = window.surface.clone();
@@ -61,7 +56,16 @@ fn create_window(
     window.set_size(width, height);
     window.ack_last_and_commit();
     fixture.double_roundtrip(client);
-    surface
+    fixture
+        .niri()
+        .layout
+        .windows()
+        .next()
+        .expect("mapped client window")
+        .1
+        .toplevel()
+        .wl_surface()
+        .clone()
 }
 
 fn has_renderer_texture(surface: &WlSurface, context: ContextId<GlesTexture>) -> bool {
@@ -71,7 +75,6 @@ fn has_renderer_texture(surface: &WlSurface, context: ContextId<GlesTexture>) ->
             .get::<RendererSurfaceStateUserData>()
             .is_some_and(|data| data.lock().unwrap().texture(context).is_some())
     })
-    .unwrap_or(false)
 }
 
 fn prepare(fixture: &mut Fixture, output: &Output, target: RenderTarget) {
@@ -189,7 +192,12 @@ workspace "desk-4" { open-on-output "headless-1" }
 
     // Creating the EGL renderer after mapping the window ensures this surface has never been
     // imported into its context before the overview prewarm path runs.
-    fixture.niri_state().backend.headless().add_renderer().unwrap();
+    fixture
+        .niri_state()
+        .backend
+        .headless()
+        .add_renderer()
+        .unwrap();
     let output = fixture.niri_output(1);
     fixture.niri().layout.open_overview();
     let context = fixture
@@ -197,11 +205,11 @@ workspace "desk-4" { open-on-output "headless-1" }
         .backend
         .with_primary_renderer(|renderer| renderer.context_id())
         .expect("headless EGL renderer");
-    assert!(!has_renderer_texture(&surface, context));
+    assert!(!has_renderer_texture(&surface, context.clone()));
 
     for _ in 0..4 {
         prepare(&mut fixture, &output, RenderTarget::Output);
-        if has_renderer_texture(&surface, context) {
+        if has_renderer_texture(&surface, context.clone()) {
             return;
         }
     }
