@@ -5028,6 +5028,7 @@ impl Niri {
 
     fn redraw(&mut self, backend: &mut Backend, output: &Output) {
         let _span = tracy_client::span!("Niri::redraw");
+        let _frame_trace = crate::frame_trace::frame(output);
 
         // Verify our invariant.
         let state = self.output_state.get_mut(output).unwrap();
@@ -5050,7 +5051,10 @@ impl Niri {
                 .tick(&surface, target_presentation_time);
         }
 
-        self.update_render_elements(Some(output));
+        {
+            let _trace = crate::frame_trace::span("frame_prepare");
+            self.update_render_elements(Some(output));
+        }
 
         let mut res = RenderResult::Skipped;
         if self.monitors_active {
@@ -5077,6 +5081,7 @@ impl Niri {
             }
 
             // Render.
+            let _trace = crate::frame_trace::span("frame_render_submit");
             res = backend.render(self, output, target_presentation_time);
         }
 

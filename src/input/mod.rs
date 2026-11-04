@@ -3263,6 +3263,9 @@ impl State {
                 let horizontal = horizontal_amount_v120.unwrap_or(0.);
                 let ticks = self.niri.horizontal_wheel_tracker.accumulate(horizontal);
                 if ticks != 0 {
+                    if should_handle_in_overview {
+                        crate::frame_trace::overview_scroll();
+                    }
                     let (bind_left, bind_right) =
                         if should_handle_in_overview && modifiers.is_empty() {
                             let bind_left = Some(Bind {
@@ -3324,6 +3327,9 @@ impl State {
                 let vertical = vertical_amount_v120.unwrap_or(0.);
                 let ticks = self.niri.vertical_wheel_tracker.accumulate(vertical);
                 if ticks != 0 {
+                    if should_handle_in_overview {
+                        crate::frame_trace::overview_scroll();
+                    }
                     let (bind_up, bind_down) = if should_handle_in_overview && modifiers.is_empty()
                     {
                         let bind_up = Some(Bind {

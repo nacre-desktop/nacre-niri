@@ -4724,6 +4724,9 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn overview_gesture_begin(&mut self) {
+        if !self.overview_open {
+            crate::frame_trace::overview_open();
+        }
         self.overview_open = true;
 
         let value = self.overview_progress.take().map_or(0., |p| p.value());
@@ -5636,6 +5639,11 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_overview(&mut self) {
         self.overview_open = !self.overview_open;
+        if self.overview_open {
+            crate::frame_trace::overview_open();
+        } else {
+            crate::frame_trace::marker("overview_close");
+        }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());
         let to = if self.overview_open { 1. } else { 0. };
