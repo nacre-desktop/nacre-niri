@@ -142,3 +142,30 @@ fn monitor_actions_survive_hotplug_zero_outputs_and_disabled_collections() {
         }
     }
 }
+
+#[test]
+fn monitor_exchange_keeps_unequal_indices_and_rebinds_different_output_scales() {
+    let mut layout = layout(true, false);
+    populate(&mut layout, 1);
+    layout.switch_workspace_down();
+    Op::AddWindow { params: TestWindowParams::new(2) }.apply(&mut layout);
+    Op::AddScaledOutput { id: 2, scale: 1.5, layout_config: None }.apply(&mut layout);
+    Op::FocusOutput(2).apply(&mut layout);
+    Op::AddWindow { params: TestWindowParams::new(3) }.apply(&mut layout);
+    Op::FocusOutput(1).apply(&mut layout);
+    Op::CompleteAnimations.apply(&mut layout);
+    let a = selected(&layout, 1);
+    let b = selected(&layout, 2);
+    assert_ne!(a.1, b.1);
+    layout.swap_workspace_with_monitor(true);
+    assert_eq!(selected(&layout, 1), (b.0, a.1));
+    assert_eq!(selected(&layout, 2), (a.0, b.1));
+    layout.verify_invariants();
+    layout.rotate_collections(true);
+    layout.verify_invariants();
+    layout.rotate_collections(false);
+    layout.swap_workspace_with_monitor(false);
+    assert_eq!(selected(&layout, 1), a);
+    assert_eq!(selected(&layout, 2), b);
+    layout.verify_invariants();
+}
