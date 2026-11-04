@@ -981,6 +981,7 @@ impl Overview {
     ) {
         let workspaces: HashSet<_> = workspaces.collect();
         let outputs: HashSet<_> = outputs.collect();
+        self.drop_hints.borrow_mut().retain(|output, _| outputs.contains(output));
         self.prepared_revisions
             .borrow_mut()
             .retain(|id, _| workspaces.contains(id));

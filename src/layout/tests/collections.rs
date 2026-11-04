@@ -723,7 +723,7 @@ proptest! {
     #[test]
     fn actual_drop_target_correctness_property(
         samples in prop::collection::vec(
-            (0usize..2, 0usize..2, 0usize..3, 16u16..=65_519, 16u16..=65_519),
+            (0usize..2, 0usize..2, 0usize..5, 16u16..=65_519, 16u16..=65_519),
             100_000..=100_000,
         )
     ) {
@@ -737,23 +737,22 @@ proptest! {
         for (index, output) in outputs.iter().enumerate() {
             layout.focus_output(output);
             let home = layout.collection_for_output(output).unwrap();
-            let source = layout.create_collection(Some(format!("property-source-{index}")));
+            let source = home;
             let moved_window = 100 + index;
             add_window(&mut layout, moved_window);
             let target = layout.create_collection(Some(format!("property-target-{index}")));
-            for seed in 0..3 {
+            for seed in 0..4 {
                 add_window(&mut layout, 200 + index * 10 + seed);
             }
             let target_workspace = layout.collection_active_workspace(target).unwrap();
-            let second_workspace = super::super::workspace::Workspace::new_no_outputs(
-                layout.clock.clone(),
-                layout.options.clone(),
-            );
-            let second_workspace_id = second_workspace.id();
-            layout.collections.iter_mut().find(|collection| collection.id == target)
-                .unwrap().workspaces.push(second_workspace);
+            layout.monitor_for_output_mut(output).unwrap().add_workspace_bottom();
             layout.move_to_workspace(Some(&(202 + index * 10)), 1, ActivateWindow::No);
+            layout.move_to_workspace(Some(&(203 + index * 10)), 1, ActivateWindow::No);
+            let second_workspace_id = layout.monitor_for_output(output).unwrap().workspaces[1].id();
             layout.focus_collection(&WorkspaceReference::Id(home));
+            let stored_rows: Vec<_> = layout.collection_workspaces(target).map(|workspace| workspace.id()).collect();
+            prop_assert!(stored_rows.contains(&target_workspace));
+            prop_assert!(stored_rows.contains(&second_workspace_id));
             endpoints.push((home, source, target, moved_window, [target_workspace, second_workspace_id]));
         }
         layout.open_overview();
@@ -765,25 +764,39 @@ proptest! {
             let (home, source, target, moved_window, target_rows) = endpoints[output_index];
             let output = outputs[output_index].clone();
             let target_workspace = target_rows[row_choice];
+            layout.collections.iter_mut().find(|collection| collection.id == target)
+                .unwrap().active_workspace = Some(target_workspace);
             let x_fraction = f64::from(x_raw) / 65_535.;
             let y_fraction = f64::from(y_raw) / 65_535.;
             let (start, hovered_screen, expected_column) = {
+                let (_, source_geometry, _) = layout.collection_window_preview(&output, &moved_window).unwrap();
                 let previews = layout.collection_previews(&output);
-                let source_geometry = previews.iter().find(|preview| preview.id == source).unwrap().geometry;
                 let target_preview = previews.iter().find(|preview| {
                     preview.id == target && preview.workspace.id() == target_workspace
                 }).unwrap();
                 let target_geometry = target_preview.geometry;
                 let target_zoom = target_preview.zoom;
                 let target_ws = layout.find_workspace_by_id(target_workspace).unwrap().1;
+                let output_view = Rectangle::from_size(Size::from((1280., 720.)));
+                let preview_visible = target_geometry.intersection(output_view).unwrap();
+                let preview_local_clip = Rectangle::new(
+                    (preview_visible.loc - target_geometry.loc).downscale(target_zoom),
+                    preview_visible.size.downscale(target_zoom),
+                );
+                let view = Rectangle::from_size(target_ws.view_size())
+                    .intersection(preview_local_clip)
+                    .unwrap();
                 let tiles: Vec<_> = target_ws.tiles_with_ipc_layouts()
-                    .filter_map(|(_, info)| info.tile_pos_in_workspace_view.map(|position| (info.tile_size, position)))
+                    .filter_map(|(_, info)| {
+                        let position = info.tile_pos_in_workspace_view?;
+                        Rectangle::new(position, Size::from(info.tile_size)).intersection(view)
+                    })
                     .collect();
                 prop_assert!(!tiles.is_empty());
-                let (tile_size, tile_pos) = &tiles[column_choice % tiles.len()];
+                let visible_tile = tiles[column_choice % tiles.len()];
                 let local = Point::from((
-                    tile_pos.0 + tile_size.0 * x_fraction,
-                    tile_pos.1 + tile_size.1 * y_fraction,
+                    visible_tile.loc.x + visible_tile.size.w * x_fraction,
+                    visible_tile.loc.y + visible_tile.size.h * y_fraction,
                 ));
                 let hovered_screen = target_geometry.loc + local.upscale(target_zoom);
                 let insert = target_ws.scrolling_insert_position(local);
@@ -819,6 +832,7 @@ proptest! {
                 layout.verify_invariants();
             }
 
+            layout.focus_output(&output);
             layout.focus_collection(&WorkspaceReference::Id(target));
             layout.activate_window(&moved_window);
             layout.move_window_to_collection(&WorkspaceReference::Id(source));
