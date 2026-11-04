@@ -18,10 +18,12 @@ contour raster/upload on eligible frames. The retained texture pair is capped
 at 64 MiB per layer. Each tiny-skia raster pass also holds separate fill and rim
 pixmaps, each subject to the existing 64 MiB per-image guard, and applies the
 SVG group's opacity when compositing the rim layer. Unsupported axes/styles,
-small reveals, failed validation, or oversize pairs use the existing
-single-pose raster fallback. Tiny-skia still builds the initial full-open and
-ghost-band rasters synchronously on the first eligible frame. Circular shadows
-use Niri's rounded-box Gaussian shadow shader
+failed validation, or oversize pairs use the existing single-pose raster
+fallback. Early one-axis grows use Bead's MIT `sliced_art` method when the
+16-logical-pixel center strip is uniform within four channel values: render
+96-logical-pixel end slices and stretch the center line, keeping the legacy
+gradient phase. Tiny-skia still builds initial templates synchronously on the
+first eligible frame. Circular shadows use Niri's rounded-box Gaussian shadow shader
 with all four sampled radii. The compositor advances the motion timeline and
 does not ask Bead to repaint each refresh. The generic rounded content mask is
 deliberately absent: legacy Nacre reveal output clips to the authored

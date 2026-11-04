@@ -540,6 +540,121 @@ fn build_reveal_edge_pixels(
     })
 }
 
+/// Port of Bead's MIT-licensed `sliced_art` path (tree.rs, same source/notice as the edge cache).
+/// The uniform centre strip keeps the legacy output-space gradient phase on early direct frames.
+fn build_sliced_reveal_pixels(
+    reveal: &RevealDescriptor,
+    spec: &RevealEdgeSpec,
+    progress: f64,
+    scale: f32,
+    surface_size: (f32, f32),
+) -> Option<(tiny_skia::Pixmap, RevealRect)> {
+    const END: f32 = 96.;
+    const MID: f32 = 16.;
+    if progress >= 1. {
+        return None;
+    }
+    let body = reveal.sample(progress).body;
+    if body.w.min(body.h) < 1. {
+        return None;
+    }
+    let output = reveal.output_bounds;
+    let crop = RevealRect::new(
+        reveal.crop.x.max(output.x).max(0.),
+        reveal.crop.y.max(output.y).max(0.),
+        (reveal.crop.x + reveal.crop.w)
+            .min(output.x + output.w)
+            .min(surface_size.0)
+            - reveal.crop.x.max(output.x).max(0.),
+        (reveal.crop.y + reveal.crop.h)
+            .min(output.y + output.h)
+            .min(surface_size.1)
+            - reveal.crop.y.max(output.y).max(0.),
+    );
+    if crop.w <= 0. || crop.h <= 0. {
+        return None;
+    }
+    let (w, h) = (
+        (crop.w * scale).ceil() as u32,
+        (crop.h * scale).ceil() as u32,
+    );
+    let (end, mid) = (
+        (END * scale).round() as u32,
+        ((MID * scale).round() as u32).max(2),
+    );
+    let long = if spec.vertical { w } else { h };
+    if long < 2 * end + mid + 8
+        || w == 0
+        || h == 0
+        || u64::from(w) * u64::from(h) * 4 > 64 * 1024 * 1024
+    {
+        return None;
+    }
+    let slice = |at: u32, size: u32| {
+        let rect = if spec.vertical {
+            RevealRect::new(
+                crop.x + at as f32 / scale,
+                crop.y,
+                size as f32 / scale,
+                crop.h,
+            )
+        } else {
+            RevealRect::new(
+                crop.x,
+                crop.y + at as f32 / scale,
+                crop.w,
+                size as f32 / scale,
+            )
+        };
+        let (pixmap, _) = reveal.rasterize_in_crop(progress, scale, surface_size, rect)?;
+        let expected = if spec.vertical { (size, h) } else { (w, size) };
+        ((pixmap.width(), pixmap.height()) == expected).then_some(pixmap)
+    };
+    let (first, last, middle) = (slice(0, end)?, slice(long - end, end)?, slice(end, mid)?);
+    let pixel = |pixmap: &tiny_skia::Pixmap, x: u32, y: u32| {
+        let offset = ((y * pixmap.width() + x) * 4) as usize;
+        pixmap.data()[offset..offset + 4].try_into().unwrap()
+    };
+    let close = |a: [u8; 4], b: [u8; 4]| {
+        a.iter()
+            .zip(b)
+            .all(|(a, b)| (i32::from(*a) - i32::from(b)).abs() <= 4)
+    };
+    let uniform = if spec.vertical {
+        (0..h).all(|y| close(pixel(&middle, 0, y), pixel(&middle, mid - 1, y)))
+    } else {
+        (0..w).all(|x| close(pixel(&middle, x, 0), pixel(&middle, x, mid - 1)))
+    };
+    if !uniform {
+        return None;
+    }
+    let mut output = tiny_skia::Pixmap::new(w, h)?;
+    let stride = w as usize * 4;
+    if spec.vertical {
+        let end_bytes = end as usize * 4;
+        for y in 0..h as usize {
+            let row = &mut output.data_mut()[y * stride..(y + 1) * stride];
+            row[..end_bytes].copy_from_slice(&first.data()[y * end_bytes..(y + 1) * end_bytes]);
+            row[stride - end_bytes..]
+                .copy_from_slice(&last.data()[y * end_bytes..(y + 1) * end_bytes]);
+            let fill = pixel(&middle, mid / 2, y as u32);
+            for destination in row[end_bytes..stride - end_bytes].chunks_exact_mut(4) {
+                destination.copy_from_slice(&fill);
+            }
+        }
+    } else {
+        let data = output.data_mut();
+        data[..end as usize * stride].copy_from_slice(first.data());
+        data[(h - end) as usize * stride..].copy_from_slice(last.data());
+        let line_start = (mid / 2) as usize * stride;
+        let line = &middle.data()[line_start..line_start + stride];
+        for y in end as usize..(h - end) as usize {
+            data[y * stride..(y + 1) * stride].copy_from_slice(line);
+        }
+    }
+    Some((output, crop))
+}
+
 impl<R: NiriRenderer> MotionPlaneRenderElement<R> {
     fn new(
         inner: MotionPlaneInner<R>,
@@ -1117,11 +1232,13 @@ impl MappedLayer {
         let (buffer, crop, cached_shadow) = if let Some((buffer, shadow, crop)) = cached {
             (buffer, crop, shadow)
         } else {
-            let Some((pixmap, crop)) = reveal.rasterize(
-                progress,
-                scale.x as f32,
-                (surface_geo.size.w as f32, surface_geo.size.h as f32),
-            ) else {
+            let surface_size = (surface_geo.size.w as f32, surface_geo.size.h as f32);
+            let sliced = reveal_edge_spec(&reveal).and_then(|spec| {
+                build_sliced_reveal_pixels(&reveal, &spec, progress, scale.x as f32, surface_size)
+            });
+            let raster =
+                sliced.or_else(|| reveal.rasterize(progress, scale.x as f32, surface_size));
+            let Some((pixmap, crop)) = raster else {
                 return;
             };
             let size = (pixmap.width(), pixmap.height());
