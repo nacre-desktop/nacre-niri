@@ -364,6 +364,8 @@ pub struct Layout<W: LayoutElement> {
     scratchpad_active: Option<W::Id>,
     /// Scratchpad insertion order, retained while windows are shown as overlays.
     scratchpad_cycle: Vec<W::Id>,
+    /// Source workspace and floating state for origin-aware hidden-window restoration.
+    scratchpad_origins: Vec<(W::Id, WorkspaceId, bool)>,
     /// Collection to restore when a borrowed output collection returns home.
     collection_returns: HashMap<String, u64>,
     /// Configured workspaces awaiting their first matching output at startup.
@@ -764,6 +766,7 @@ impl<W: LayoutElement> Layout<W> {
             scratchpad: Workspace::new_no_outputs(clock.clone(), Rc::new(options.clone())),
             scratchpad_active: None,
             scratchpad_cycle: Vec::new(),
+            scratchpad_origins: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
@@ -806,6 +809,7 @@ impl<W: LayoutElement> Layout<W> {
             scratchpad: Workspace::new_no_outputs(clock.clone(), opts.clone()),
             scratchpad_active: None,
             scratchpad_cycle: Vec::new(),
+            scratchpad_origins: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
@@ -1381,6 +1385,7 @@ impl<W: LayoutElement> Layout<W> {
         window: &W::Id,
         transaction: Transaction,
     ) -> Option<RemovedTile<W>> {
+        self.scratchpad_origins.retain(|(id, _, _)| id != window);
         if self.scratchpad_active.as_ref() == Some(window) {
             self.scratchpad_active = None;
         }

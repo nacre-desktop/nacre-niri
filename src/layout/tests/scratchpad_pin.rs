@@ -70,6 +70,131 @@ fn scratchpad_cycles_newest_to_oldest_then_hides() {
 }
 
 #[test]
+fn restore_last_returns_to_original_workspace_and_preserves_tiling() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    layout.set_workspace_name("original".into(), None);
+    let original = layout.active_workspace().unwrap().id();
+    add_window(&mut layout, 1);
+    layout.move_window_to_scratchpad(Some(&1));
+    layout.switch_workspace_down();
+    add_window(&mut layout, 2);
+    layout.move_window_to_scratchpad(Some(&2));
+
+    layout.restore_last_hidden_window();
+    assert!(layout.is_window_hidden(&1));
+    assert!(!layout.is_window_hidden(&2));
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(2));
+    layout.restore_last_hidden_window();
+    assert_eq!(layout.active_workspace().unwrap().id(), original);
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(1));
+    assert!(!layout.active_workspace().unwrap().is_floating(&1));
+    assert!(layout.scratchpad_origins.is_empty());
+    layout.verify_invariants();
+}
+
+#[test]
+fn restore_current_restores_only_matching_sources_without_changing_focus() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    layout.set_workspace_name("first".into(), None);
+    for id in 1..=2 {
+        add_window(&mut layout, id);
+        layout.move_window_to_scratchpad(Some(&id));
+    }
+    layout.switch_workspace_down();
+    layout.set_workspace_name("second".into(), None);
+    add_window(&mut layout, 3);
+    layout.move_window_to_scratchpad(Some(&3));
+    add_window(&mut layout, 4);
+    layout.restore_current_workspace_hidden_windows();
+    assert!(layout.is_window_hidden(&1));
+    assert!(layout.is_window_hidden(&2));
+    assert!(!layout.is_window_hidden(&3));
+    assert_eq!(layout.focus().map(|window| *window.id()), Some(4));
+    layout.switch_workspace_up();
+    layout.restore_current_workspace_hidden_windows();
+    assert!(!layout.is_window_hidden(&1));
+    assert!(!layout.is_window_hidden(&2));
+    assert!(layout.scratchpad_origins.is_empty());
+    layout.verify_invariants();
+}
+
+#[test]
+fn origin_survives_scratchpad_overlay_cycle_and_restores_floating_state() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    layout.set_workspace_name("original".into(), None);
+    let original = layout.active_workspace().unwrap().id();
+    add_window(&mut layout, 1);
+    layout.toggle_window_floating(Some(&1));
+    layout.move_window_to_scratchpad(Some(&1));
+    layout.switch_workspace_down();
+    layout.toggle_scratchpad();
+    layout.toggle_scratchpad();
+    layout.restore_last_hidden_window();
+    assert_eq!(layout.active_workspace().unwrap().id(), original);
+    assert!(layout.active_workspace().unwrap().is_floating(&1));
+    layout.verify_invariants();
+}
+
+#[test]
+fn restore_handles_hidden_collection_and_all_outputs_unplugged() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    layout.set_workspace_name("original".into(), None);
+    add_window(&mut layout, 1);
+    layout.move_window_to_scratchpad(Some(&1));
+    layout.create_collection(Some("another".into()));
+    let unplugged = output(&layout, 1);
+    layout.remove_output(&unplugged);
+    layout.restore_current_workspace_hidden_windows();
+    assert!(layout.is_window_hidden(&1));
+    layout.restore_last_hidden_window();
+    assert!(!layout.is_window_hidden(&1));
+    assert!(layout.has_window(&1));
+    layout.verify_invariants();
+    layout.add_output(unplugged, None);
+    layout.verify_invariants();
+}
+
+#[test]
+fn restore_flag_off_is_noop_and_closing_hidden_window_clears_origin() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    layout.move_window_to_scratchpad(Some(&1));
+    let mut options = Options::default();
+    options.nacre.window_restore = false;
+    layout.update_options(options);
+    layout.restore_last_hidden_window();
+    layout.restore_current_workspace_hidden_windows();
+    assert!(layout.is_window_hidden(&1));
+    Op::CloseWindow(1).apply(&mut layout);
+    assert!(layout.scratchpad_origins.is_empty());
+    layout.verify_invariants();
+}
+
+#[test]
+fn restore_expired_unnamed_workspace_uses_current_workspace() {
+    let mut layout = Layout::default();
+    Op::AddOutput(1).apply(&mut layout);
+    add_window(&mut layout, 1);
+    let original = layout.active_workspace().unwrap().id();
+    layout.move_window_to_scratchpad(Some(&1));
+    layout.switch_workspace_down();
+    Op::CompleteAnimations.apply(&mut layout);
+    // Empty dynamic workspaces may be pruned while the window is hidden.
+    let current = layout.active_workspace().unwrap().id();
+    assert_ne!(original, current);
+    layout.restore_last_hidden_window();
+    assert!(layout.has_window(&1));
+    assert!(!layout.is_window_hidden(&1));
+    assert!(layout.scratchpad_origins.is_empty());
+    layout.verify_invariants();
+}
+
+#[test]
 fn pinned_window_survives_workspace_collection_and_output_switches() {
     let mut options = Options::default();
     options.layout.collections.enabled = true;
