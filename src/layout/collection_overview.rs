@@ -68,7 +68,7 @@ struct ActivePrewarm {
 struct ActivePrewarmState {
     identity: Option<(ContextId<GlesTexture>, u64)>,
     attempted: HashSet<ActivePrewarmKey>,
-    candidates: Option<[Option<ActivePrewarm>; 2]>,
+    candidates: Option<Vec<ActivePrewarm>>,
     pending: Option<ActivePrewarm>,
 }
 
@@ -139,6 +139,12 @@ impl<W: LayoutElement> Layout<W> {
         self.collection_overview.active_prewarm_pending(output)
     }
 
+    #[cfg(test)]
+    pub(crate) fn active_overview_prewarm_candidate_count(&self, output: &Output) -> usize {
+        self.collection_overview
+            .active_prewarm_candidate_count(output)
+    }
+
     /// Warm one already-prepared, offscreen adjacent workspace into a throwaway texture.
     /// Rendering uses the regular workspace elements and output target, so imports and GPU draw
     /// paths run before the workspace is revealed. The returned sync point is intentionally
@@ -158,6 +164,7 @@ impl<W: LayoutElement> Layout<W> {
         let Some(prewarm) = self.collection_overview.take_active_prewarm(output) else {
             return;
         };
+        let _trace = crate::frame_trace::span("overview_prewarm_active");
         let Some(monitor) = self.monitor_for_output(output) else {
             return;
         };
@@ -880,35 +887,25 @@ impl Overview {
     pub(super) fn schedule_active_prewarm(
         &self,
         output: &Output,
-        candidates: [Option<(WorkspaceId, u64)>; 2],
+        candidates: Vec<(WorkspaceId, u64)>,
     ) -> Option<WorkspaceId> {
         let mut all = self.active_prewarm.borrow_mut();
         let state = all.entry(output.clone()).or_default();
         if state.pending.is_some() {
             return None;
         }
-        let candidates = candidates.map(|candidate| {
-            candidate.map(|(workspace, revision)| ActivePrewarm {
+        let candidates = candidates
+            .into_iter()
+            .map(|(workspace, revision)| ActivePrewarm {
                 workspace,
                 revision,
             })
-        });
-        let saved = state.candidates.get_or_insert(candidates);
-        for (saved, current) in saved.iter_mut().zip(candidates) {
-            let (Some(saved), Some((workspace, revision))) = (saved.as_mut(), current) else {
-                continue;
-            };
-            if saved.workspace == workspace && saved.revision != revision {
-                state.attempted.remove(&ActivePrewarmKey {
-                    workspace,
-                    revision: saved.revision,
-                });
-                saved.revision = revision;
-            }
-        }
-        let candidate = saved
+            .collect::<Vec<_>>();
+        state.candidates.get_or_insert(candidates);
+        let candidate = state
+            .candidates
+            .as_ref()?
             .iter()
-            .flatten()
             .copied()
             .find(|candidate| {
                 !state.attempted.contains(&ActivePrewarmKey {
@@ -927,11 +924,18 @@ impl Overview {
         Some(candidate.workspace)
     }
 
+    pub(super) fn needs_active_prewarm_candidates(&self, output: &Output) -> bool {
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .is_none_or(|state| state.candidates.is_none())
+    }
+
     pub(super) fn active_prewarm_pending(&self, output: &Output) -> bool {
         self.active_prewarm.borrow().get(output).is_some_and(|state| {
             state.pending.is_some()
                 || state.candidates.as_ref().is_some_and(|candidates| {
-                    candidates.iter().flatten().any(|candidate| {
+                    candidates.iter().any(|candidate| {
                         !state.attempted.contains(&ActivePrewarmKey {
                             workspace: candidate.workspace,
                             revision: candidate.revision,
@@ -939,6 +943,15 @@ impl Overview {
                     })
                 })
         })
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_prewarm_candidate_count(&self, output: &Output) -> usize {
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .and_then(|state| state.candidates.as_ref())
+            .map_or(0, Vec::len)
     }
 
     fn observe_active_prewarm_identity(

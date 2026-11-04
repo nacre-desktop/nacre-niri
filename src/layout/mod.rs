@@ -3657,18 +3657,16 @@ impl<W: LayoutElement> Layout<W> {
                 mon.set_overview_progress(self.overview_progress.as_ref());
                 mon.update_render_elements(is_active);
                 if overview_open && output.is_some_and(|output| mon.output == *output) {
-                    let candidates = mon.overview_prewarm_candidates().map(|candidate| {
-                        candidate.and_then(|(workspace, _)| {
-                            mon.workspaces
-                                .iter()
-                                .find(|ws| ws.id() == workspace)
-                                .map(|ws| (workspace, ws.overview_revision()))
-                        })
-                    });
+                    let candidates = self
+                        .collection_overview
+                        .needs_active_prewarm_candidates(&mon.output)
+                        .then(|| mon.overview_prewarm_candidates())
+                        .unwrap_or_default();
                     if let Some(workspace) = self
                         .collection_overview
                         .schedule_active_prewarm(&mon.output, candidates)
                     {
+                        let _trace = crate::frame_trace::span("overview_prewarm_prepare");
                         if let Some(workspace) = mon
                             .workspaces
                             .iter_mut()
@@ -5643,6 +5641,8 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn set_monitors_overview_state(&mut self) {
+        self.collection_overview
+            .observe_active_prewarm_open(self.overview_open);
         let MonitorSet::Normal { monitors, .. } = &mut self.monitor_set else {
             return;
         };

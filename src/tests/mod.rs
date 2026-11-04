@@ -16,6 +16,7 @@ mod layer_promote;
 mod layer_shell;
 mod overview_benchmark;
 mod overview_geometry;
+mod overview_prewarm;
 mod overview_raster;
 mod remove_output;
 mod transactions;
