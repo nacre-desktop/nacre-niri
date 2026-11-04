@@ -188,7 +188,7 @@ fn measure_scroll(
     client: super::client::ClientId,
     pointer: &ZwlrVirtualPointerV1,
     start_ms: u64,
-    frame_step_ms: u64,
+    frame_period: Duration,
     label: &str,
 ) -> (f64, f64, f64) {
     use wayland_client::protocol::wl_pointer;
@@ -225,13 +225,15 @@ fn measure_scroll(
     );
 
     let mut frames = Vec::with_capacity(61);
+    let frames_per_second = (Duration::from_secs(1).as_nanos() / frame_period.as_nanos()) as u64;
     set_time(fixture.niri(), Duration::from_millis(start_ms + 1));
     fixture.niri().advance_animations();
     frames.push(sample_frame(fixture, 1));
     for frame in 1..=60 {
         set_time(
             fixture.niri(),
-            Duration::from_millis(start_ms + 1 + frame * frame_step_ms),
+            Duration::from_millis(start_ms + 1)
+                + Duration::from_nanos(frame * 1_000_000_000 / frames_per_second),
         );
         fixture.niri().advance_animations();
         let (assembly_ms, draw_ms) = sample_frame(fixture, 1);
@@ -259,7 +261,10 @@ fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
     let (mut during_open, open_client, open_pointer) = populated_fixture();
     during_open.niri().layout.open_overview();
     for frame in 1..=4 {
-        set_time(during_open.niri(), Duration::from_millis(frame * 8));
+        set_time(
+            during_open.niri(),
+            Duration::from_nanos(frame * 1_000_000_000 / 120),
+        );
         during_open.niri().advance_animations();
         let _ = sample_frame(&mut during_open, 1);
     }
@@ -267,8 +272,8 @@ fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
         &mut during_open,
         open_client,
         &open_pointer,
-        32,
-        8,
+        33,
+        Duration::from_nanos(1_000_000_000 / 120),
         "first during 120 Hz opening (diagnostic only)",
     );
 
@@ -278,17 +283,21 @@ fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
     // Finish the opening animation before measuring the first scroll. The loop
     // renders all opening frames, matching the user's sequence of entering overview
     // and then using the wheel, without consuming a scroll event as warm-up.
-    for frame in 1..=60 {
-        set_time(fixture.niri(), Duration::from_millis(frame * 1000 / 60));
+    for frame in 1..=120 {
+        set_time(
+            fixture.niri(),
+            Duration::from_nanos(frame * 1_000_000_000 / 120),
+        );
         fixture.niri().advance_animations();
         let _ = sample_frame(&mut fixture, 1);
     }
 
+    let frame_period = Duration::from_nanos(1_000_000_000 / 120);
     let (first, first_assembly, first_draw) =
-        measure_scroll(&mut fixture, client, &pointer, 1000, 1000 / 60, "first");
+        measure_scroll(&mut fixture, client, &pointer, 1000, frame_period, "first");
     fixture.niri_complete_animations();
     let (second, second_assembly, second_draw) =
-        measure_scroll(&mut fixture, client, &pointer, 2000, 1000 / 60, "second");
+        measure_scroll(&mut fixture, client, &pointer, 2000, frame_period, "second");
     let margin = 1.0_f64.max(second * 0.2);
     eprintln!(
         "overview scroll comparison: total first/second={:.3}; assembly first/second={:.3}; EGL draw+readback first/second={:.3}; margin={margin:.3} ms; within-margin={}; software EGL draw+readback includes readback cost and is not GPU-only timing",
