@@ -41,15 +41,7 @@ fn create_window(fixture: &mut Fixture, client: super::client::ClientId, w: u16,
     };
     fixture.roundtrip(client);
     let window = fixture.client(client).window(&surface);
-    let buffer = window.spbm.create_u32_rgba_buffer(
-        u32::MAX / 4,
-        u32::MAX / 2,
-        u32::MAX,
-        u32::MAX,
-        &window.qh,
-        (),
-    );
-    window.surface.attach(Some(&buffer), 0, 0);
+    window.attach_shm_buffer(w, h);
     window.set_size(w, h);
     window.ack_last_and_commit();
     fixture.double_roundtrip(client);
