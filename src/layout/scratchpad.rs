@@ -156,6 +156,7 @@ impl<W: LayoutElement> Layout<W> {
             .scratchpad_origins
             .iter()
             .find(|(window, _, _)| window == &id)
+            .filter(|_| self.scratchpad.has_window(&id) || self.scratchpad_active.as_ref() == Some(&id))
             .cloned()
             .or_else(|| {
                 self.workspaces()
