@@ -1070,9 +1070,8 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
 #[test]
 #[ignore = "headless GLES compositor cost benchmark; run explicitly on owner desktop"]
 fn reveal_headless_gles_cost_benchmark() {
+    use smithay::backend::renderer::element::utils::CropRenderElement;
     use std::time::Instant;
-
-    use smithay::backend::renderer::ExportMem as _;
 
     const FRAMES: usize = 64;
     let root = std::path::PathBuf::from(
@@ -1186,6 +1185,20 @@ fn reveal_headless_gles_cost_benchmark() {
         );
     }
 
+    fn physical_cover(
+        logical: Rectangle<f64, Logical>,
+        scale: f64,
+    ) -> Rectangle<i32, smithay::utils::Physical> {
+        let left = (logical.loc.x * scale).floor() as i32;
+        let top = (logical.loc.y * scale).floor() as i32;
+        let right = ((logical.loc.x + logical.size.w) * scale).ceil() as i32;
+        let bottom = ((logical.loc.y + logical.size.h) * scale).ceil() as i32;
+        Rectangle::new(
+            Point::from((left, top)),
+            Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),
+        )
+    }
+
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1200));
     f.niri_state()
@@ -1223,8 +1236,8 @@ fn reveal_headless_gles_cost_benchmark() {
                 let mut upload_cpu = Vec::with_capacity(FRAMES);
                 let mut draw_wall = Vec::with_capacity(FRAMES);
                 let mut draw_cpu = Vec::with_capacity(FRAMES);
-                let mut map_wall = Vec::with_capacity(FRAMES);
-                let mut map_cpu = Vec::with_capacity(FRAMES);
+                let mut fence_wall = Vec::with_capacity(FRAMES);
+                let mut fence_cpu = Vec::with_capacity(FRAMES);
                 let mut max_texture_bytes = 0usize;
                 for frame in 0..(FRAMES + 8) {
                     let raw_progress = frame as f64 / (FRAMES + 8 - 1) as f64;
@@ -1236,13 +1249,13 @@ fn reveal_headless_gles_cost_benchmark() {
                         .first()
                         .expect("route plan has one content plane");
                     let progress = case.group.progress(elapsed);
-                    let _reveal_pose = case.reveal.sample(progress);
+                    let reveal_pose = case.reveal.sample(progress);
                     let pose_elapsed = wall_start.elapsed();
                     let pose_cpu_elapsed = thread_cpu_time() - cpu_start;
 
                     let cpu_start = thread_cpu_time();
                     let wall_start = Instant::now();
-                    let (pixmap, _crop) = case
+                    let (pixmap, crop) = case
                         .reveal
                         .rasterize(progress, case.scale as f32, (case.width, case.height))
                         .expect("rasterize real route reveal sample");
@@ -1293,10 +1306,40 @@ fn reveal_headless_gles_cost_benchmark() {
                         ))),
                         smithay::backend::renderer::element::Kind::Unspecified,
                     );
-                    let elements: [crate::layer::mapped::LayerSurfaceRenderElement<
-                        smithay::backend::renderer::gles::GlesRenderer,
-                    >; 2] = [element.into(), content.into()];
-                    let mapping = render_helpers::render_and_download(
+                    let viewport = rect(0., 0., case.width as f64, case.height as f64);
+                    let content_clip = plane_pose
+                        .destination
+                        .intersection(plane_pose.clip)
+                        .and_then(|visible| visible.intersection(viewport))
+                        .and_then(|visible| {
+                            reveal_pose.content_clip.map_or(Some(visible), |clip| {
+                                visible.intersection(rect(
+                                    clip.x as f64,
+                                    clip.y as f64,
+                                    clip.w as f64,
+                                    clip.h as f64,
+                                ))
+                            })
+                        })
+                        .expect("route content intersects the viewport and sampled clips");
+                    let content = CropRenderElement::from_element(
+                        content,
+                        Scale::from(case.scale),
+                        physical_cover(content_clip, case.scale),
+                    )
+                    .expect("crop content to the sampled plane and reveal clips");
+                    let contour = CropRenderElement::from_element(
+                        element,
+                        Scale::from(case.scale),
+                        physical_cover(viewport, case.scale),
+                    )
+                    .expect("crop reveal contour to the layer viewport");
+                    let elements: [CropRenderElement<
+                        crate::render_helpers::texture::TextureRenderElement<
+                            smithay::backend::renderer::gles::GlesTexture,
+                        >,
+                    >; 2] = [contour, content];
+                    let (texture, sync) = render_helpers::render_to_texture(
                         renderer,
                         Size::from((case.atlas_width as i32, case.atlas_height as i32)),
                         Scale::from(case.scale),
@@ -1304,16 +1347,16 @@ fn reveal_headless_gles_cost_benchmark() {
                         Fourcc::Abgr8888,
                         elements.into_iter(),
                     )
-                    .expect("draw reveal and enqueue frame readback");
+                    .expect("submit the complete reveal frame to a GLES render target");
                     let draw_elapsed = wall_start.elapsed();
                     let draw_cpu_elapsed = thread_cpu_time() - cpu_start;
 
                     let cpu_start = thread_cpu_time();
                     let wall_start = Instant::now();
-                    let mapped = renderer.map_texture(&mapping).expect("wait and map GLES frame");
-                    let _checksum = mapped.iter().step_by(4093).fold(0u8, |sum, byte| sum ^ byte);
-                    let map_elapsed = wall_start.elapsed();
-                    let map_cpu_elapsed = thread_cpu_time() - cpu_start;
+                    sync.wait().expect("wait for the submitted GLES frame fence");
+                    let fence_elapsed = wall_start.elapsed();
+                    let fence_cpu_elapsed = thread_cpu_time() - cpu_start;
+                    drop(texture);
 
                     // Eight startup frames warm shader compilation and texture pools.
                     if frame >= 8 {
@@ -1325,8 +1368,8 @@ fn reveal_headless_gles_cost_benchmark() {
                         upload_cpu.push(upload_cpu_elapsed.as_secs_f64() * 1_000_000.);
                         draw_wall.push(draw_elapsed.as_secs_f64() * 1_000_000.);
                         draw_cpu.push(draw_cpu_elapsed.as_secs_f64() * 1_000_000.);
-                        map_wall.push(map_elapsed.as_secs_f64() * 1_000_000.);
-                        map_cpu.push(map_cpu_elapsed.as_secs_f64() * 1_000_000.);
+                        fence_wall.push(fence_elapsed.as_secs_f64() * 1_000_000.);
+                        fence_cpu.push(fence_cpu_elapsed.as_secs_f64() * 1_000_000.);
                     }
                 }
                 println!(
@@ -1342,8 +1385,8 @@ fn reveal_headless_gles_cost_benchmark() {
                 summarize("pose", &mut pose_wall, &pose_cpu);
                 summarize("contour-raster", &mut raster_wall, &raster_cpu);
                 summarize("texture-upload", &mut upload_wall, &upload_cpu);
-                summarize("draw-submit-copy", &mut draw_wall, &draw_cpu);
-                summarize("fence-wait-map", &mut map_wall, &map_cpu);
+                summarize("draw-submit", &mut draw_wall, &draw_cpu);
+                summarize("fence-wait", &mut fence_wall, &fence_cpu);
             }
         })
         .unwrap();

@@ -18,13 +18,16 @@ The fixture-backed GLES test compares the complete compositor frame against
 Nacre's premultiplied RGBA references for dashboard, launcher, and control
 centre at five timeline samples and scales 1 and 1.5, with a one-channel-value
 maximum difference. Its atlas and per-frame JSON accompany the images. The
-separate ignored cost benchmark reports geometry sampling, contour raster,
-texture upload, draw submission, and fenced map/readback separately; run it on
-the owner desktop after the host is available. It is not a hardware or battery
+separate ignored cost benchmark reports eased geometry sampling, contour raster,
+texture upload, draw submission, and fence wait separately. It clips the moving
+content plane to both sampled clip rectangles and the viewport. It does not
+read back pixels, and allocates a headless render target per sampled frame; run
+it on the owner desktop after the host is available. It is not a battery
 measurement, and no live desktop validation has been performed in this change.
 
 Desktop validation remains: run the full nacre-niri CI job, the fixture-backed
 GLES test, the 200,000-case layer-motion property suite, and the explicit
-`reveal_headless_gles_cost_benchmark`; record GL vendor/renderer/version and
-fence-wait separately from draw submission. Also run the Bead and Nacre CI and
-route/request-once tests against the final pinned protocol source.
+release-mode `reveal_headless_gles_cost_benchmark`; record `eglinfo -B` vendor,
+renderer, and version alongside the separate draw-submit and fence-wait
+results. Also run the Bead and Nacre CI and route/request-once tests against the
+final pinned protocol source.
