@@ -342,7 +342,7 @@ mod tests {
         let (legacy_tx, legacy_rx) = async_channel::bounded(4);
         let (extension_tx, extension_rx) = async_channel::bounded(4);
         let (hover_tx, hover_rx) = async_channel::bounded(4);
-        let (edge_tx, edge_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(6);
         let (legacy_disconnect, _) = async_channel::bounded(1);
         let (extension_disconnect, _) = async_channel::bounded(1);
         let (hover_disconnect, _) = async_channel::bounded(1);
@@ -454,7 +454,7 @@ mod tests {
         let (regular_tx, _regular_rx) = async_channel::bounded(4);
         let (hover_tx, _hover_rx) = async_channel::bounded(4);
         let (collections_tx, _collections_rx) = async_channel::bounded(4);
-        let (edge_tx, edge_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(6);
         let (regular_disconnect, regular_disconnect_rx) = async_channel::bounded(1);
         let (hover_disconnect, hover_disconnect_rx) = async_channel::bounded(1);
         let (collections_disconnect, collections_disconnect_rx) = async_channel::bounded(1);

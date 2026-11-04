@@ -82,6 +82,7 @@ enum EdgeAction {
 }
 
 /// Returns the nearest configured edge when the logical pointer is in its one-pixel edge band.
+#[cfg(test)]
 pub fn select_edge(size: Option<[f64; 2]>, position: [f64; 2], enabled: [bool; 4]) -> Option<Edge> {
     select_edge_with_distances(size, position, enabled, [None; 4])
 }
@@ -156,6 +157,7 @@ pub fn select_edge_with_distances(
 }
 
 /// Checks whether the pointer remains in a given output-local logical edge band.
+#[cfg(test)]
 pub fn is_inside_edge(size: [f64; 2], position: [f64; 2], edge: Edge) -> bool {
     is_inside_edge_with_distance(size, position, edge, None)
 }
