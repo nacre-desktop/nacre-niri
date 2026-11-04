@@ -126,7 +126,10 @@ fn reveal_from_fixture(source: &serde_json::Value) -> RevealDescriptor {
             .unwrap();
         let point = |key: &str| {
             let p = rim[key].as_array().unwrap();
-            (fixture_fixed(fixture_number(&p[0])), fixture_fixed(fixture_number(&p[1])))
+            (
+                fixture_fixed(fixture_number(&p[0])),
+                fixture_fixed(fixture_number(&p[1])),
+            )
         };
         reveal.rim = Some(crate::layer::reveal::RimStyle {
             colors,
@@ -1043,16 +1046,20 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 "{stem}: max diff={route_max}, worst={route_worst:?}"
             );
             let report = |phase: &str, wall: &[Duration], cpu: &[Duration]| {
-                let mean = wall.iter().sum::<Duration>().as_secs_f64() * 1_000_000.
-                    / wall.len() as f64;
-                let cpu_mean = cpu.iter().sum::<Duration>().as_secs_f64() * 1_000_000.
-                    / cpu.len() as f64;
+                let mean =
+                    wall.iter().sum::<Duration>().as_secs_f64() * 1_000_000. / wall.len() as f64;
+                let cpu_mean =
+                    cpu.iter().sum::<Duration>().as_secs_f64() * 1_000_000. / cpu.len() as f64;
                 println!(
                     "reveal-full-frame {stem} {phase}: n={} mean_wall_us={mean:.2} mean_thread_cpu_us={cpu_mean:.2}",
                     wall.len()
                 );
             };
-            report("element-build-raster-upload", &element_build_wall, &element_build_cpu);
+            report(
+                "element-build-raster-upload",
+                &element_build_wall,
+                &element_build_cpu,
+            );
             report("draw-submit-copy", &frame_submit_wall, &frame_submit_cpu);
             report("fence-wait-map", &frame_map_wall, &frame_map_cpu);
         }
@@ -1061,7 +1068,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
 }
 
 #[test]
-#[ignore = "headless GLES compositor cost benchmark; run explicitly on dev-1"]
+#[ignore = "headless GLES compositor cost benchmark; run explicitly on owner desktop"]
 fn reveal_headless_gles_cost_benchmark() {
     use std::time::Instant;
 
@@ -1139,9 +1146,7 @@ fn reveal_headless_gles_cost_benchmark() {
                 "EaseInOut" => crate::layer::motion::MotionCurve::EaseInOutCubic,
                 other => panic!("unsupported fixture curve {other}"),
             };
-            let duration = Duration::from_secs_f64(
-                plan["duration_ms"].as_f64().unwrap() / 1000.,
-            );
+            let duration = Duration::from_secs_f64(plan["duration_ms"].as_f64().unwrap() / 1000.);
             let plane_id = plane["id"].as_u64().unwrap() as u32;
             let group = crate::layer::motion::LayerMotionGroup::new(
                 1,
@@ -1355,8 +1360,7 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
         sign - sign / (approximation * approximation)
     }
     fn gaussian(x: f32, sigma: f32) -> f32 {
-        (-x * x / (2. * sigma * sigma)).exp()
-            / ((2. * std::f32::consts::PI).sqrt() * sigma)
+        (-x * x / (2. * sigma * sigma)).exp() / ((2. * std::f32::consts::PI).sqrt() * sigma)
     }
     fn box_shadow_x(x: f32, y: f32, sigma: f32, radii: [f32; 4], half: (f32, f32)) -> f32 {
         let (left_radius, right_radius) = if y < 0. {
@@ -1538,7 +1542,10 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
         );
         for y in 0..output_height {
             for x in 0..output_width {
-                let local_physical = (x as f32 + 0.5 - physical_left, y as f32 + 0.5 - physical_top);
+                let local_physical = (
+                    x as f32 + 0.5 - physical_left,
+                    y as f32 + 0.5 - physical_top,
+                );
                 if local_physical.0 < 0.
                     || local_physical.1 < 0.
                     || local_physical.0 >= physical_width
@@ -1553,13 +1560,7 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
                 let shadow_point = (area_point.0 - extent, area_point.1 - extent);
                 let window_point = (area_point.0 - window_loc.0, area_point.1 - window_loc.1);
                 let mask = box_shadow(shadow_point, shadow_size, sigma, shadow_radii)
-                    * (1.
-                        - rounded_alpha(
-                            window_point,
-                            (body.w, body.h),
-                            body_radii,
-                            scale_f32,
-                        ));
+                    * (1. - rounded_alpha(window_point, (body.w, body.h), body_radii, scale_f32));
                 let channel = (mask.clamp(0., 1.) * 255.).round() as u8;
                 let offset = (y * output_width + x) * 4;
                 expected[offset..offset + 4].fill(channel);

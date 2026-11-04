@@ -20,8 +20,11 @@ are not screenshots from a live compositor.
 
 
 Provenance: exported from the Nacre route fixture test in worktree base
-`88cb0f2f`, using Bead's REVEAL opening planner fix source SHA-256
-`af28cf108cfb7afb211463fdfb5f8ebe64a371145ae89c8b497495a127705638`.
+`88cb0f2f`, using Bead's final REVEAL opening planner at commit
+`0eb9a9a8afdbd8e8a2f6770e1a3b05818af198b0` (source SHA-256
+`88de30ead7a1dd484a6ce0f20a7dd911d665e7736b5e76020c3bf62a4bc3c472`). The
+vendored protocol XML is Bead's canonical source at that commit (SHA-256
+`855cd28c2aba1ef29289787c1014719ca4438c77eb2045f205e7cd2d79a2c283`).
 For REVEAL openings with no explicit distance, the content plane stays at its
 open position (zero offset); the contour body still grows from the bar. The
 fixed export regenerates the atlas, plans, and all 30 full-canvas CPU samples.
