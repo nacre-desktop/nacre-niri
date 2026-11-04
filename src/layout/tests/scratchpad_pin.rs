@@ -140,7 +140,9 @@ fn origin_survives_scratchpad_overlay_cycle_and_restores_floating_state() {
 
 #[test]
 fn restore_handles_hidden_collection_and_all_outputs_unplugged() {
-    let mut layout = Layout::default();
+    let mut options = Options::default();
+    options.layout.collections.enabled = true;
+    let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
     Op::AddOutput(1).apply(&mut layout);
     layout.set_workspace_name("original".into(), None);
     add_window(&mut layout, 1);
