@@ -74,6 +74,21 @@ use crate::utils::{
     ensure_min_max_size_maybe_zero, output_matches_name, output_size,
     round_logical_in_physical_max1, ResizeEdge,
 };
+
+/// Compute the same scale and offset used to fit a collection workspace into an output during a
+/// desk swipe. Promoted layer surfaces use this too so they travel with their owning workspace.
+pub(crate) fn collection_switch_fit(
+    destination_size: Size<f64, Logical>,
+    source_size: Size<f64, Logical>,
+    x_offset: f64,
+) -> (f64, Point<f64, Logical>) {
+    let scale = (destination_size.w / source_size.w).max(destination_size.h / source_size.h);
+    let offset = Point::from((
+        x_offset + (destination_size.w - source_size.w * scale) / 2.,
+        (destination_size.h - source_size.h * scale) / 2.,
+    ));
+    (scale, offset)
+}
 use crate::window::ResolvedWindowRules;
 
 pub mod closing_window;

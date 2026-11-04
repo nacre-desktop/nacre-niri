@@ -3680,6 +3680,13 @@ impl Niri {
             self.promoted_layers_for_output(output)
                 .into_iter()
                 .find_map(|p| {
+                    if self
+                        .layout
+                        .collection_switch_involves_workspace(output, p.workspace)
+                        || !self.promotion_can_receive_input(p)
+                    {
+                        return None;
+                    }
                     let mapped = self.mapped_layer_surfaces.get(&p.layer)?;
                     let origin = self.promoted_surface_origin(p);
                     let local = pos_within_output - origin;
@@ -4905,13 +4912,55 @@ impl Niri {
         &self,
         mut ctx: RenderCtx<R>,
         output: &Output,
-        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+        push: &mut dyn FnMut(OutputRenderElements<R>),
     ) {
+        let output_scale = output.current_scale().fractional_scale();
+        let output_size = crate::utils::output_size(output);
+        let output_bounds = Rectangle::from_size(output_size).to_physical_precise_round(output_scale);
+
         for p in self.promoted_layers_for_output(output) {
             if let Some(mapped) = self.mapped_layer_surfaces.get(&p.layer) {
+                let Some((fit_scale, fit_offset)) = self
+                    .layout
+                    .collection_switch_transform_for_workspace(output, p.workspace)
+                else {
+                    continue;
+                };
                 let origin = self.promoted_surface_origin(p);
-                mapped.render_popups(ctx.r(), None, origin, XrayPos::default(), push);
-                mapped.render_promoted(ctx.r(), origin, push);
+                let desk_x_offset = self
+                    .layout
+                    .collection_switch_workspace_x_offset(output, p.workspace);
+                let viewport = desk_x_offset.and_then(|x_offset| {
+                    let desk_bounds = Rectangle::new(
+                        Point::from((x_offset, 0.)).to_physical_precise_round(output_scale),
+                        output_size.to_physical_precise_round(output_scale),
+                    );
+                    output_bounds.intersection(desk_bounds)
+                });
+                let mut draw = |elem| {
+                    if desk_x_offset.is_some() {
+                        let Some(viewport) = viewport else {
+                            return;
+                        };
+                        let elem = RescaleRenderElement::from_element(
+                            elem,
+                            Point::default(),
+                            fit_scale,
+                        );
+                        let offset = fit_offset.to_physical_precise_round(output_scale);
+                        let elem =
+                            RelocateRenderElement::from_element(elem, offset, Relocate::Relative);
+                        if let Some(elem) =
+                            CropRenderElement::from_element(elem, output_scale, viewport)
+                        {
+                            push(OutputRenderElements::RelocatedLayerSurface(elem));
+                        }
+                    } else {
+                        push(OutputRenderElements::LayerSurface(elem));
+                    }
+                };
+                mapped.render_popups(ctx.r(), None, origin, XrayPos::default(), &mut draw);
+                mapped.render_promoted(ctx.r(), origin, &mut draw);
             }
         }
     }

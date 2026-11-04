@@ -997,6 +997,81 @@ impl<W: LayoutElement> Layout<W> {
         ))
     }
 
+    /// Return the render scale and offset for a workspace participating in a desk swipe.
+    /// The incoming workspace may be leased from another output with a different size.
+    pub fn collection_switch_transform_for_workspace(
+        &self,
+        output: &Output,
+        workspace_id: u64,
+    ) -> Option<(f64, smithay::utils::Point<f64, smithay::utils::Logical>)> {
+        let monitor = self.monitor_for_output(output)?;
+        let Some(transition) = self
+            .collection_switch
+            .as_ref()
+            .filter(|transition| transition.output == *output)
+        else {
+            return (monitor.active_workspace_ref().id().get() == workspace_id)
+                .then_some((1., smithay::utils::Point::default()));
+        };
+
+        if monitor.active_workspace_ref().id().get() == workspace_id {
+            return Some((
+                1.,
+                smithay::utils::Point::from((transition.offset(), 0.)),
+            ));
+        }
+
+        let (workspace, x_offset) = self.collection_switch_render_workspace(output)?;
+        if workspace.id().get() != workspace_id {
+            return None;
+        }
+        Some(super::collection_switch_fit(
+            output_size(output),
+            workspace.view_size(),
+            x_offset,
+        ))
+    }
+
+    pub fn collection_switch_workspace_x_offset(
+        &self,
+        output: &Output,
+        workspace_id: u64,
+    ) -> Option<f64> {
+        let transition = self
+            .collection_switch
+            .as_ref()
+            .filter(|transition| transition.output == *output)?;
+        if self
+            .monitor_for_output(output)
+            .is_some_and(|monitor| monitor.active_workspace_ref().id().get() == workspace_id)
+        {
+            return Some(transition.offset());
+        }
+        self.collection_switch_render_workspace(output)
+            .filter(|(workspace, _)| workspace.id().get() == workspace_id)
+            .map(|(_, x_offset)| x_offset)
+    }
+
+    pub fn collection_switch_involves_workspace(
+        &self,
+        output: &Output,
+        workspace_id: u64,
+    ) -> bool {
+        let Some(transition) = self
+            .collection_switch
+            .as_ref()
+            .filter(|transition| transition.output == *output)
+        else {
+            return false;
+        };
+        self.monitor_for_output(output)
+            .is_some_and(|monitor| monitor.active_workspace_ref().id().get() == workspace_id)
+            || transition.other_id.is_some_and(|id| {
+                self.collection_active_workspace(id)
+                    .is_some_and(|active| active.get() == workspace_id)
+            })
+    }
+
     pub(super) fn update_collection_switch_render_state(&mut self) {
         if self.collection_switch.as_ref().is_some_and(|transition| {
             matches!(&transition.offset, CollectionSwitchOffset::Animation(animation) if animation.is_done())

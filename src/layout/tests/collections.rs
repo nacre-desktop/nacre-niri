@@ -113,6 +113,71 @@ fn collection_swipe_to_a_collection_shown_elsewhere_leases_only_on_commit() {
 }
 
 #[test]
+fn incoming_collection_fit_transform_matches_different_output_size_and_scale() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    Op::AddOutput(2).apply(&mut layout);
+    let output1 = layout
+        .outputs()
+        .find(|output| output.name() == "output1")
+        .unwrap()
+        .clone();
+    let output2 = layout
+        .outputs()
+        .find(|output| output.name() == "output2")
+        .unwrap()
+        .clone();
+    output1.change_current_state(
+        Some(Mode {
+            size: Size::from((600, 450)),
+            refresh: 60_000,
+        }),
+        None,
+        Some(smithay::output::Scale::Fractional(1.5)),
+        None,
+    );
+    output2.change_current_state(
+        Some(Mode {
+            size: Size::from((900, 600)),
+            refresh: 60_000,
+        }),
+        None,
+        None,
+        None,
+    );
+    layout.update_output_size(&output1);
+    layout.update_output_size(&output2);
+    let outgoing_id = layout
+        .monitor_for_output(&output1)
+        .unwrap()
+        .active_workspace_ref()
+        .id()
+        .get();
+    assert!(layout.collection_switch_gesture_begin(&output1));
+    layout.collection_switch_gesture_update(-180., Duration::from_millis(10));
+    let (incoming, incoming_x) = layout
+        .collection_switch_render_workspace(&output1)
+        .expect("desk from the other output is available to preview");
+    let expected = super::super::collection_switch_fit(
+        output_size(&output1),
+        incoming.view_size(),
+        incoming_x,
+    );
+    assert!(expected.0 != 1.);
+    assert_eq!(
+        layout.collection_switch_transform_for_workspace(&output1, incoming.id().get()),
+        Some(expected)
+    );
+    let outgoing = layout
+        .collection_switch_transform_for_workspace(&output1, outgoing_id)
+        .expect("outgoing desk retains its swipe translation");
+    assert_eq!(outgoing.0, 1.);
+    assert_eq!(outgoing.1.x, layout.monitor_for_output(&output1).unwrap().collection_switch_offset_x);
+    assert!(layout.collection_switch_involves_workspace(&output1, outgoing_id));
+    assert!(layout.collection_switch_involves_workspace(&output1, incoming.id().get()));
+}
+
+#[test]
 fn collection_swipe_retarget_and_hotplug_clear_transient_state() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);

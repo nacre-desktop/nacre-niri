@@ -261,6 +261,50 @@ fn hidden_collection_and_unmap_remove_both_visual_and_input_ownership() {
 }
 
 #[test]
+fn hidden_incoming_collection_promotion_tracks_swipe_and_cannot_receive_hit_testing() {
+    let mut config = Config::parse_mem("output \"headless-1\" { scale 1.5; }").unwrap();
+    config.layout.collections.enabled = true;
+    let mut f = Fixture::with_config(config);
+    f.add_output(1, (600, 450));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    let output = f.niri_output(1);
+    let original_workspace = f.niri().layer_promote_manager_state.promoted[&root].workspace;
+
+    f.niri().layout.create_collection(Some("incoming".into()));
+    assert!(f.niri().layout.collection_switch_gesture_begin(&output));
+    f.niri()
+        .layout
+        .collection_switch_gesture_update(180., Duration::from_millis(10));
+
+    let (incoming, incoming_x) = f
+        .niri()
+        .layout
+        .collection_switch_render_workspace(&output)
+        .expect("hidden desk is rendered during the swipe");
+    assert_eq!(incoming.id().get(), original_workspace);
+    assert!(f
+        .niri()
+        .promoted_layers_for_output(&output)
+        .iter()
+        .any(|promotion| promotion.layer.wl_surface() == &root));
+    let promotion = &f.niri().layer_promote_manager_state.promoted[&root];
+    assert!(!f.niri().promotion_can_receive_input(promotion));
+    assert_eq!(
+        f.niri()
+            .layout
+            .collection_switch_workspace_x_offset(&output, original_workspace),
+        Some(incoming_x)
+    );
+    assert!(f
+        .niri()
+        .contents_under(Point::from((20., 20.)))
+        .surface
+        .is_none());
+}
+
+#[test]
 fn invalid_body_is_rejected_without_changing_the_docked_surface() {
     let mut f = Fixture::new();
     f.add_output(1, (600, 400));

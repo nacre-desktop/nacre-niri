@@ -224,14 +224,22 @@ impl Niri {
     pub fn promotion_visible(&self, p: &PromotedLayer) -> bool {
         !self.is_locked()
             && !self.layout.is_overview_open()
-            && self
-                .layout
-                .monitor_for_output(&p.output)
-                .is_some_and(|mon| mon.active_workspace_ref().id().get() == p.workspace)
+            && self.layout.outputs().any(|output| {
+                self.layout
+                    .collection_switch_transform_for_workspace(output, p.workspace)
+                    .is_some()
+            })
             && is_mapped(p.layer.wl_surface())
     }
     pub fn promotion_can_receive_input(&self, p: &PromotedLayer) -> bool {
         self.promotion_visible(p)
+            && !self
+                .layout
+                .collection_switch_involves_workspace(&p.output, p.workspace)
+            && self
+                .layout
+                .monitor_for_output(&p.output)
+                .is_some_and(|mon| mon.active_workspace_ref().id().get() == p.workspace)
             && !self.screenshot_ui.is_open()
             && !self.exit_confirm_dialog.is_open()
             && !self.window_mru_ui.is_open()
@@ -241,7 +249,12 @@ impl Niri {
             .layer_promote_manager_state
             .promoted
             .values()
-            .filter(|p| &p.output == output && self.promotion_visible(p))
+            .filter(|p| {
+                self.layout
+                    .collection_switch_transform_for_workspace(output, p.workspace)
+                    .is_some()
+                    && self.promotion_visible(p)
+            })
             .collect::<Vec<_>>();
         layers.sort_by_key(|p| std::cmp::Reverse(p.order));
         layers

@@ -2006,12 +2006,8 @@ impl<W: LayoutElement> Monitor<W> {
             Size::from((i32::MAX, source_height)),
         );
         let destination_size = output_size(&self.output);
-        let fitted_scale =
-            (destination_size.w / source_size.w).max(destination_size.h / source_size.h);
-        let fitted_offset = Point::from((
-            x_offset + (destination_size.w - source_size.w * fitted_scale) / 2.,
-            (destination_size.h - source_size.h * fitted_scale) / 2.,
-        ));
+        let (fitted_scale, fitted_offset) =
+            super::collection_switch_fit(destination_size, source_size, x_offset);
         let offset = fitted_offset.to_physical_precise_round(scale);
         let xray_pos = XrayPos::new(fitted_offset, fitted_scale);
 
