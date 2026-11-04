@@ -160,6 +160,9 @@ pub struct Nacre {
     pub window_pinning: bool,
     pub proportional_x11_widths: bool,
     pub edge_triggers: bool,
+    pub window_restore: bool,
+    pub force_close: bool,
+    pub monitor_workspace_actions: bool,
 }
 
 impl Default for Nacre {
@@ -170,6 +173,9 @@ impl Default for Nacre {
             window_pinning: true,
             proportional_x11_widths: true,
             edge_triggers: true,
+            force_close: true,
+            monitor_workspace_actions: true,
+            window_restore: true,
         }
     }
 }
@@ -186,6 +192,12 @@ pub struct NacrePart {
     pub proportional_x11_widths: Option<Flag>,
     #[knuffel(child)]
     pub edge_triggers: Option<Flag>,
+    #[knuffel(child)]
+    pub window_restore: Option<Flag>,
+    #[knuffel(child)]
+    pub force_close: Option<Flag>,
+    #[knuffel(child)]
+    pub monitor_workspace_actions: Option<Flag>,
 }
 
 impl MergeWith<NacrePart> for Nacre {
@@ -196,7 +208,10 @@ impl MergeWith<NacrePart> for Nacre {
             scratchpad,
             window_pinning,
             proportional_x11_widths,
-            edge_triggers
+            edge_triggers,
+            force_close,
+            monitor_workspace_actions,
+            window_restore
         );
     }
 }

@@ -380,6 +380,11 @@ impl Mapped {
         self.id
     }
 
+    /// Whether this is one of the windows owned by the managed Xwayland satellite client.
+    pub fn is_xwayland_satellite(&self) -> bool {
+        self.is_xwayland_satellite
+    }
+
     pub fn credentials(&self) -> Option<&Credentials> {
         self.credentials.as_ref()
     }

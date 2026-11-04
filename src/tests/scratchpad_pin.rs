@@ -93,6 +93,34 @@ fn hide_show_ipc_mru_and_unmap() {
 }
 
 #[test]
+fn restore_actions_are_flag_gated_and_restore_to_source() {
+    let (mut f, client, _) = window(Config::default());
+    let id = snapshot(&mut f).id;
+    let source_workspace = snapshot(&mut f).workspace_id;
+    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.double_roundtrip(client);
+    assert!(snapshot(&mut f).is_hidden);
+
+    f.niri().config.borrow_mut().nacre.window_restore = false;
+    f.niri_state().do_action(Action::RestoreLastHiddenWindow, false);
+    assert!(snapshot(&mut f).is_hidden);
+
+    f.niri().config.borrow_mut().nacre.window_restore = true;
+    f.niri_state().do_action(Action::RestoreLastHiddenWindow, false);
+    f.double_roundtrip(client);
+    assert!(!snapshot(&mut f).is_hidden);
+    assert_eq!(snapshot(&mut f).workspace_id, source_workspace);
+
+    f.niri_state().do_action(Action::MoveWindowToScratchpad, false);
+    f.double_roundtrip(client);
+    f.niri_state()
+        .do_action(Action::RestoreCurrentWorkspaceHiddenWindows, false);
+    f.double_roundtrip(client);
+    assert!(!snapshot(&mut f).is_hidden);
+    assert_eq!(snapshot(&mut f).id, id);
+}
+
+#[test]
 fn pin_action_ipc_survives_workspace_and_collection_switches() {
     let mut config = Config::default();
     config.layout.collections.enabled = true;

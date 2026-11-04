@@ -649,6 +649,10 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     scratchpad: config.nacre.scratchpad,
                     window_pinning: config.nacre.window_pinning,
                     edge_triggers: crate::edge_triggers::event_source_available(&config),
+                    force_close: config.nacre.force_close,
+                    monitor_workspace_actions: config.nacre.monitor_workspace_actions
+                        && config.layout.collections.enabled,
+                    window_restore: config.nacre.window_restore && config.nacre.scratchpad,
                 });
             });
             let capabilities = rx

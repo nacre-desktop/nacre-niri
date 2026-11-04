@@ -34,9 +34,12 @@ use smithay::input::SeatHandler;
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::reexports::wayland_server::Resource as _;
+use smithay::reexports::wayland_server::backend::DisconnectReason;
 use smithay::utils::{Logical, Point, Rectangle, Transform, SERIAL_COUNTER};
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint};
+use smithay::wayland::seat::WaylandFocus as _;
 use smithay::wayland::tablet_manager::{TabletDescriptor, TabletSeatTrait};
 use touch_overview_grab::TouchOverviewGrab;
 
@@ -852,6 +855,69 @@ impl State {
                 let window = self.niri.layout.windows().find(|(_, m)| m.id().get() == id);
                 if let Some((_, mapped)) = window {
                     mapped.toplevel().send_close();
+                }
+            }
+            action @ (Action::ForceCloseWindow | Action::ForceCloseWindowById(_)) => {
+                let config = self.niri.config.borrow();
+                if config.nacre.force_close {
+                    let id = match action {
+                        Action::ForceCloseWindow => None,
+                        Action::ForceCloseWindowById(id) => Some(id),
+                        _ => unreachable!(),
+                    };
+                    let mapped = id
+                        .and_then(|id| self.niri.layout.windows().find(|(_, m)| m.id().get() == id).map(|(_, m)| m))
+                        .or_else(|| id.is_none().then(|| self.niri.layout.focus()).flatten());
+                    if let Some(surface) = mapped
+                        .filter(|mapped| !mapped.is_xwayland_satellite())
+                        .and_then(|mapped| mapped.window.wl_surface())
+                    {
+                        if let Some(client) = surface.client() {
+                            self.niri
+                                .display_handle
+                                .backend_handle()
+                                .kill_client(client.id(), DisconnectReason::ConnectionClosed);
+                        }
+                    }
+                }
+            }
+            Action::SwapWorkspaceWithMonitorNext | Action::SwapWorkspaceWithMonitorPrevious => {
+                let enabled = self.niri.config.borrow().nacre.monitor_workspace_actions;
+                if enabled {
+                    self.niri.layout.swap_workspace_with_monitor(matches!(action, Action::SwapWorkspaceWithMonitorNext));
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::RotateWorkspaceSetsNext | Action::RotateWorkspaceSetsPrevious => {
+                let enabled = {
+                    let config = self.niri.config.borrow();
+                    config.nacre.monitor_workspace_actions && config.layout.collections.enabled
+                };
+                if enabled {
+                    self.niri.layout.rotate_workspace_sets(matches!(action, Action::RotateWorkspaceSetsNext));
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::RestoreLastHiddenWindow => {
+                let enabled = {
+                    let config = self.niri.config.borrow();
+                    config.nacre.window_restore && config.nacre.scratchpad
+                };
+                if enabled {
+                    self.niri.layout.restore_last_hidden_window();
+                    self.maybe_warp_cursor_to_focus();
+                    self.niri.layer_shell_on_demand_focus = None;
+                    self.niri.queue_redraw_all();
+                }
+            }
+            Action::RestoreCurrentWorkspaceHiddenWindows => {
+                let enabled = {
+                    let config = self.niri.config.borrow();
+                    config.nacre.window_restore && config.nacre.scratchpad
+                };
+                if enabled {
+                    self.niri.layout.restore_current_workspace_hidden_windows();
+                    self.niri.queue_redraw_all();
                 }
             }
             Action::FullscreenWindow => {

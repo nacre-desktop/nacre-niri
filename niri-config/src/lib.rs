@@ -779,6 +779,21 @@ mod tests {
     }
 
     #[test]
+    fn workaround_actions_default_on_and_can_be_disabled() {
+        let defaults = do_parse("");
+        assert!(defaults.nacre.force_close);
+        assert!(defaults.nacre.monitor_workspace_actions);
+        assert!(defaults.nacre.window_restore);
+
+        let disabled = do_parse(
+            "nacre { force-close false; monitor-workspace-actions false; window-restore false; }",
+        );
+        assert!(!disabled.nacre.force_close);
+        assert!(!disabled.nacre.monitor_workspace_actions);
+        assert!(!disabled.nacre.window_restore);
+    }
+
+    #[test]
     fn scratchpad_and_pinning_actions_decode() {
         let config = do_parse(
             r#"binds {
