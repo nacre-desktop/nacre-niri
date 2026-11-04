@@ -292,7 +292,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
-        self.deferred_collection_retention_cleanup = self.monitors().any(|monitor| {
+        let deferred_monitor_cleanup = self.monitors().any(|monitor| {
             monitor.workspace_switch.is_some()
                 && monitor
                     .collection_id
@@ -302,6 +302,7 @@ impl<W: LayoutElement> Layout<W> {
                     .iter()
                     .any(|workspace| workspace.collection_persistent())
         });
+        self.deferred_collection_retention_cleanup = deferred_monitor_cleanup;
         for collection in &mut self.collections {
             if !nonpersistent_ids.contains(&collection.id) {
                 continue;
