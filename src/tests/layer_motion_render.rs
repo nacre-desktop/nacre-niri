@@ -1266,7 +1266,7 @@ fn reveal_headless_gles_cost_benchmark() {
                     let element = crate::render_helpers::texture::TextureRenderElement::from_texture_buffer(
                         buffer,
                         Point::from((_crop.x as f64, _crop.y as f64)),
-                        1.,
+                        plane_pose.opacity as f32,
                         None,
                         None,
                         smithay::backend::renderer::element::Kind::Unspecified,
@@ -1295,7 +1295,7 @@ fn reveal_headless_gles_cost_benchmark() {
                     );
                     let elements: [crate::layer::mapped::LayerSurfaceRenderElement<
                         smithay::backend::renderer::gles::GlesRenderer,
-                    >; 2] = [content.into(), element.into()];
+                    >; 2] = [element.into(), content.into()];
                     let mapping = render_helpers::render_and_download(
                         renderer,
                         Size::from((case.atlas_width as i32, case.atlas_height as i32)),
@@ -1523,23 +1523,26 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
         let output_height = (240. * scale) as usize;
         let mut expected = vec![0; output_width * output_height * 4];
         let sigma = reveal.shadow.as_ref().unwrap().blur_radius;
-        let spread = reveal.shadow.as_ref().unwrap().spread;
         let scale_f32 = scale as f32;
+        let ceil = |value: f32| (value * scale_f32).ceil() / scale_f32;
+        let spread = ceil(reveal.shadow.as_ref().unwrap().spread.abs())
+            .copysign(reveal.shadow.as_ref().unwrap().spread);
+        let offset = (
+            ceil(reveal.shadow.as_ref().unwrap().offset.0),
+            ceil(reveal.shadow.as_ref().unwrap().offset.1),
+        );
         let extent = (sigma * 3. * scale_f32).ceil() / scale_f32;
         let body = reveal.sample(1.).body;
         let body_radii = reveal.sample(1.).radii;
         let shadow_size = (body.w + 2. * spread, body.h + 2. * spread);
         let shadow_radii = body_radii.map(|radius| radius + spread);
-        let left = body.x - extent - spread + reveal.shadow.as_ref().unwrap().offset.0;
-        let top = body.y - extent - spread + reveal.shadow.as_ref().unwrap().offset.1;
+        let left = body.x - extent - spread + offset.0;
+        let top = body.y - extent - spread + offset.1;
         let physical_left = (left * scale_f32).round();
         let physical_top = (top * scale_f32).round();
         let physical_width = (shadow_size.0 + 2. * extent) * scale_f32;
         let physical_height = (shadow_size.1 + 2. * extent) * scale_f32;
-        let window_loc = (
-            extent + spread - reveal.shadow.as_ref().unwrap().offset.0,
-            extent + spread - reveal.shadow.as_ref().unwrap().offset.1,
-        );
+        let window_loc = (extent + spread - offset.0, extent + spread - offset.1);
         for y in 0..output_height {
             for x in 0..output_width {
                 let local_physical = (
@@ -1559,8 +1562,16 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
                 );
                 let shadow_point = (area_point.0 - extent, area_point.1 - extent);
                 let window_point = (area_point.0 - window_loc.0, area_point.1 - window_loc.1);
-                let mask = box_shadow(shadow_point, shadow_size, sigma, shadow_radii)
-                    * (1. - rounded_alpha(window_point, (body.w, body.h), body_radii, scale_f32));
+                let cutout = if window_point.0 >= 0.
+                    && window_point.0 <= body.w
+                    && window_point.1 >= 0.
+                    && window_point.1 <= body.h
+                {
+                    1. - rounded_alpha(window_point, (body.w, body.h), body_radii, scale_f32)
+                } else {
+                    1.
+                };
+                let mask = box_shadow(shadow_point, shadow_size, sigma, shadow_radii) * cutout;
                 let channel = (mask.clamp(0., 1.) * 255.).round() as u8;
                 let offset = (y * output_width + x) * 4;
                 expected[offset..offset + 4].fill(channel);

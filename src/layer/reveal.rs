@@ -257,8 +257,12 @@ impl RevealDescriptor {
         // Shadow planes are rendered separately by Niri's Gaussian shadow shader.
         let left = self.crop.x.max(output.x).max(0.);
         let top = self.crop.y.max(output.y).max(0.);
-        let right = (self.crop.x + self.crop.w).min(output.x + output.w).min(surface_size.0);
-        let bottom = (self.crop.y + self.crop.h).min(output.y + output.h).min(surface_size.1);
+        let right = (self.crop.x + self.crop.w)
+            .min(output.x + output.w)
+            .min(surface_size.0);
+        let bottom = (self.crop.y + self.crop.h)
+            .min(output.y + output.h)
+            .min(surface_size.1);
         if right <= left || bottom <= top {
             return None;
         }
@@ -498,8 +502,6 @@ fn path_from_svg_commands(input: &str) -> Option<Path> {
     }
     builder.finish()
 }
-
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Point(f64, f64);
 impl Point {

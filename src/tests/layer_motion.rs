@@ -508,9 +508,14 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         .niri
         .layer_motion_manager_state
         .runtime(&root_surface)
+        .unwrap();
+    let start = runtime
+        .lock()
         .unwrap()
-        ;
-    let start = runtime.lock().unwrap().active.as_ref().unwrap().start_time();
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
     assert!(runtime.lock().unwrap().active.is_some());
     let midpoint = start + Duration::from_millis(75);
     let output = f.niri_output(1);
@@ -529,7 +534,10 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         let runtime = runtime.lock().unwrap();
         assert!(runtime.active.is_none());
         let expected_clip = super::super::layer::reveal::Rect::new(15., 20., 70., 65.);
-        assert_eq!(runtime.reveal_current.unwrap().content_clip, Some(expected_clip));
+        assert_eq!(
+            runtime.reveal_current.unwrap().content_clip,
+            Some(expected_clip)
+        );
         assert_eq!(
             runtime.reveal.as_ref().unwrap().content_clip,
             Some((expected_clip, expected_clip)),
