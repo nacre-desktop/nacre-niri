@@ -20,7 +20,9 @@ use smithay::utils::{Logical, Point, Rectangle, Size, Transform};
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::monitor::{InsertPosition, MonitorAddWindowTarget};
 use super::workspace::{Workspace, WorkspaceAddWindowTarget, WorkspaceId, WorkspaceRenderElement};
-use super::{ActivateWindow, HitType, InteractiveMoveData, Layout, LayoutElement};
+use super::{
+    ActivateWindow, HitType, InteractiveMoveData, InteractiveMoveState, Layout, LayoutElement,
+};
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -788,7 +790,7 @@ impl<W: LayoutElement> Layout<W> {
         .to_physical_precise_round(scale)
         .to_logical(scale);
         let transformed_view = Rectangle::new(
-            (preview.geometry.loc - transformed_area.loc),
+            preview.geometry.loc - transformed_area.loc,
             preview.workspace.view_size().upscale(preview.zoom),
         );
         let border_width = moving.tile.effective_border_width().unwrap_or(0.);

@@ -397,7 +397,8 @@ fn egl_overview_emits_consistent_workspace_and_window_geometry_on_both_outputs()
                             contents.push(geometry);
                         }
                         crate::layout::CollectionOverviewRenderElement::Label(_)
-                        | crate::layout::CollectionOverviewRenderElement::Shadow(_) => {}
+                        | crate::layout::CollectionOverviewRenderElement::Shadow(_)
+                        | crate::layout::CollectionOverviewRenderElement::InsertHint(_) => {}
                     }
                 } else {
                     match element {

@@ -70,6 +70,7 @@ fn collection_swipe_tracks_fraction_of_output_width_and_cancel_keeps_source() {
 fn first_collection_swipe_frame_uses_only_the_axis_recognition_event() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
     layout.create_collection(Some("desk".into()));
     let width = layout.monitor_for_output(&output).unwrap().view_size().w;
 
@@ -665,8 +666,7 @@ fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
         );
         let source_column = columns.iter().find(|column| column.id == source).unwrap();
         let from = (source_column.bounds.loc.x + 40., 360.).into();
-        let to =
-            preview.geometry.loc + (preview.geometry.size.w / 2., preview.geometry.size.h / 2.);
+        let to = preview.geometry.loc + preview.geometry.size.to_point().downscale(2.);
         let target_ws = layout.find_workspace_by_id(target_workspace).unwrap().1;
         let expected = target_ws
             .scrolling_insert_position((to - preview.geometry.loc).downscale(preview.zoom));

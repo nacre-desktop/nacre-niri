@@ -75,8 +75,8 @@ use smithay::output::Output;
 use super::monitor::{Monitor, MonitorAddWindowTarget, WORKSPACE_GESTURE_MOVEMENT};
 use super::workspace::WorkspaceAddWindowTarget;
 use super::{
-    output_size, ActivateWindow, CollectionSwitchOffset, CollectionSwitchTransition, Layout,
-    MonitorSet,
+    output_size, ActivateWindow, CollectionSwitchOffset, CollectionSwitchTransition,
+    InteractiveMoveState, Layout, MonitorSet,
 };
 use crate::animation::Animation;
 use crate::input::swipe_tracker::SwipeTracker;
