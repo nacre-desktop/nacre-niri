@@ -477,7 +477,7 @@ impl<W: LayoutElement> Layout<W> {
         let had_outputs = self.monitors().next().is_some();
         self.configure_collections();
         let name = output.name();
-        let id = self
+        let home_id = self
             .collections
             .iter()
             .find(|c| {
@@ -486,21 +486,20 @@ impl<W: LayoutElement> Layout<W> {
                     .is_some_and(|home| home.matches(&output))
                     || c.original_output.as_deref() == Some(&name)
             })
-            .map(|c| c.id)
-            .unwrap_or_else(|| {
-                // The first configured collection can serve as the first monitor's desk.
-                if self.monitors().next().is_none() {
-                    if let Some(c) = self
-                        .collections
-                        .iter_mut()
-                        .find(|c| c.original_output.is_none() && c.persistent)
-                    {
-                        c.original_output = Some(name.clone());
-                        return c.id;
-                    }
-                }
-                self.new_collection(None, Some(name.clone()), false)
-            });
+            .map(|c| c.id);
+        // The first configured collection can serve as the first monitor's desk.
+        let initial_config_id = if home_id.is_none() && self.monitors().next().is_none() {
+            self.collections.iter().find(|c| c.original_output.is_none() && c.persistent).map(|c| c.id)
+        } else { None };
+        let recent_hidden_id = if home_id.is_none() && initial_config_id.is_none() {
+            self.collection_recent_use.iter().rev().copied().find(|id| {
+                !self.monitors().any(|monitor| monitor.collection_id == Some(*id))
+                    && self.collections.iter().any(|collection| collection.id == *id)
+            })
+        } else { None };
+        let reused = home_id.is_none() && initial_config_id.is_none() && recent_hidden_id.is_some();
+        let id = home_id.or(initial_config_id).or(recent_hidden_id)
+            .unwrap_or_else(|| self.new_collection(None, Some(name.clone()), false));
         // Only the initial configured workspaces retain upstream startup output routing.
         // Established collection stacks stay intact during subsequent hotplug.
         let pending = self.collection_pending_workspaces.clone();
@@ -542,8 +541,10 @@ impl<W: LayoutElement> Layout<W> {
             collection.workspaces.splice(0..0, arriving);
         }
         let collection = self.collections.iter_mut().find(|c| c.id == id).unwrap();
-        collection.original_output = Some(name.clone());
-        collection.home_output = Some(OutputId::new(&output));
+        if !reused {
+            collection.original_output = Some(name.clone());
+            collection.home_output = Some(OutputId::new(&output));
+        }
         // A disconnected monitor's collection may currently be borrowed by another output.
         let borrower = self
             .monitors()
@@ -570,6 +571,11 @@ impl<W: LayoutElement> Layout<W> {
                         })
                         .map(|c| c.id)
                 })
+                .or_else(|| self.collection_recent_use.iter().rev().copied().find(|candidate| {
+                    *candidate != id
+                        && !self.monitors().any(|m| m.collection_id == Some(*candidate))
+                        && self.collections.iter().any(|c| c.id == *candidate)
+                }))
                 .unwrap_or_else(|| self.new_collection(None, Some(borrower.clone()), false));
             self.show_collection_on_output(&borrower, fallback);
         }
@@ -606,6 +612,8 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         };
+        self.collection_recent_use.retain(|recent| *recent != id);
+        self.collection_recent_use.push(id);
         let assigned: Vec<_> = self
             .collection_workspaces(id)
             .filter(|ws| ws.original_output.matches(&output))
@@ -773,6 +781,59 @@ impl<W: LayoutElement> Layout<W> {
         self.focus_collection_on_output(&output, reference);
     }
 
+    /// Switch desks with the same horizontal transition used by the swipe gesture.
+    pub fn focus_collection_animated(&mut self, reference: &WorkspaceReference, next: Option<bool>) {
+        if self.options.animations.workspace_switch.0.off {
+            self.focus_collection(reference);
+            return;
+        }
+        let Some(output) = self.active_output().cloned() else { return; };
+        let Some(target) = self.collections.iter().enumerate()
+            .find(|(index, collection)| collection.matches_reference(reference, *index))
+            .map(|(_, collection)| collection.id)
+        else { return; };
+        let Some(current) = self.monitor_for_output(&output).and_then(|monitor| monitor.collection_id)
+        else { return; };
+        if target == current { return; }
+        let positions = self.collection_switch.as_ref().filter(|transition| transition.output == output)
+            .map(|transition| {
+                let current_x = transition.offset();
+                let other_x = current_x + transition.other_offset_delta;
+                (transition.current_id, current_x, transition.other_id.map(|id| (id, other_x)))
+            });
+        let side = next.unwrap_or_else(|| {
+            let current_idx = self.collections.iter().position(|collection| collection.id == current).unwrap_or(0);
+            let target_idx = self.collections.iter().position(|collection| collection.id == target).unwrap_or(0);
+            target_idx > current_idx
+        });
+        let width = output_size(&output).w;
+        let current_x = positions.map_or(0., |(id, x, _)| if id == current { x } else { 0. });
+        let target_x = positions.and_then(|(id, x, other)| {
+            if id == target { Some(x) } else { other.filter(|(other_id, _)| *other_id == target).map(|(_, x)| x) }
+        }).unwrap_or(if side { width } else { -width });
+        let old = self.collection_switch.take();
+        if let Some(old) = old {
+            if old.output != output {
+                if let Some(monitor) = self.monitor_for_output_mut(&old.output) {
+                    monitor.collection_switch_active = false;
+                    monitor.collection_switch_offset_x = 0.;
+                }
+            }
+        }
+        let duration = self.options.animations.workspace_switch.0;
+        self.collection_switch = Some(CollectionSwitchTransition {
+            output: output.clone(),
+            current_id: target,
+            other_id: Some(current),
+            other_offset_delta: (if positions.is_some_and(|(id, _, _)| id == current) { current_x } else { if side { -width } else { width } }) - target_x,
+            side: if side { 1. } else { -1. },
+            offset: CollectionSwitchOffset::Animation(Animation::new(
+                self.clock.clone(), target_x, 0., 0., duration,
+            )),
+        });
+        self.focus_collection_on_output(&output, &WorkspaceReference::Id(target));
+    }
+
     pub fn focus_collection_on_output(&mut self, output: &Output, reference: &WorkspaceReference) {
         if !self.options.layout.collections.enabled {
             return;
@@ -786,6 +847,8 @@ impl<W: LayoutElement> Layout<W> {
         else {
             return;
         };
+        self.collection_recent_use.retain(|recent| *recent != id);
+        self.collection_recent_use.push(id);
         let Some((name, old)) = self
             .monitors()
             .find(|monitor| monitor.output() == output)
@@ -1066,9 +1129,10 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub(super) fn update_collection_switch_render_state(&mut self) {
-        if self.collection_switch.as_ref().is_some_and(|transition| {
+        let finished = self.collection_switch.as_ref().is_some_and(|transition| {
             matches!(&transition.offset, CollectionSwitchOffset::Animation(animation) if animation.is_done())
-        }) {
+        });
+        if finished {
             self.collection_switch = None;
         }
         let transition = self
@@ -1088,15 +1152,18 @@ impl<W: LayoutElement> Layout<W> {
                 monitor.collection_switch_offset_x = 0.;
             }
         }
+        if finished {
+            self.clean_up_collections();
+        }
     }
     pub fn focus_collection_next(&mut self) {
         if let Some(id) = self.adjacent_collection(true) {
-            self.focus_collection(&WorkspaceReference::Id(id));
+            self.focus_collection_animated(&WorkspaceReference::Id(id), Some(true));
         }
     }
     pub fn focus_collection_previous(&mut self) {
         if let Some(id) = self.adjacent_collection(false) {
-            self.focus_collection(&WorkspaceReference::Id(id));
+            self.focus_collection_animated(&WorkspaceReference::Id(id), Some(false));
         }
     }
     pub fn move_window_to_collection_next(&mut self) {
@@ -1191,6 +1258,14 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub(super) fn clean_up_collections(&mut self) {
+        // A collection can temporarily have no windows while a tile is being dragged out of it.
+        // Keep its identity and workspace stack intact until the drop has selected a destination.
+        if self.defer_collection_cleanup
+            || matches!(self.interactive_move, Some(InteractiveMoveState::Moving(_)))
+            || self.collection_switch.is_some()
+        {
+            return;
+        }
         let shown: Vec<_> = self.monitors().filter_map(|m| m.collection_id).collect();
         let outputs: Vec<_> = self.monitors().map(|m| m.output().clone()).collect();
         let returns: Vec<_> = self.collection_returns.values().copied().collect();

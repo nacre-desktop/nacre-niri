@@ -1553,7 +1553,7 @@ impl State {
                 self.niri.queue_redraw_all();
             }
             Action::FocusCollection(reference) => {
-                self.niri.layout.focus_collection(&reference);
+                self.niri.layout.focus_collection_animated(&reference, None);
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
                 self.niri.queue_redraw_all();

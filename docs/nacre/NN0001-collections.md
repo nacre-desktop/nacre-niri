@@ -34,6 +34,10 @@ On replug, the original collection returns to its output. If another output was
 temporarily showing it, that output returns to its saved collection. When selecting
 a collection already displayed elsewhere, swap the displayed collections so every
 connected output continues to have a stack and no collection has two owners.
+When a newly connected output has no original collection, it reuses the most
+recently focused hidden collection before creating an empty one. Reuse does not
+change that collection's original-output identity; if no hidden collection exists,
+the output receives a new home collection.
 Workspace-level original-output behavior remains available to upstream explicit
 workspace-to-output actions; collection restoration uses collection identity.
 
