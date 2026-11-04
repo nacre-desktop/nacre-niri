@@ -1080,8 +1080,8 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                     let (direct, crop) = reveal
                         .rasterize(sampled_progress, scale as f32, (width, height))
                         .expect("build direct compositor contour diagnostic");
-                    let contour_x = x as i32 - (crop.x as f64 * scale).round() as i32;
-                    let contour_y = y as i32 - (crop.y as f64 * scale).round() as i32;
+                    let contour_x = x as i32 - (crop.x * scale as f32).round() as i32;
+                    let contour_y = y as i32 - (crop.y * scale as f32).round() as i32;
                     let contour_pixel = if contour_x >= 0
                         && contour_y >= 0
                         && contour_x < direct.width() as i32
