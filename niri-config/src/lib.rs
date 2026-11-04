@@ -1992,6 +1992,7 @@ mod tests {
                 },
             },
             edge_triggers: EdgeTriggers {
+                cue: false,
                 left: None,
                 right: None,
                 top: None,
