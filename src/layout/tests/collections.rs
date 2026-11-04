@@ -777,7 +777,7 @@ proptest! {
                 let target_geometry = target_preview.geometry;
                 let target_zoom = target_preview.zoom;
                 let target_ws = layout.find_workspace_by_id(target_workspace).unwrap().1;
-                let output_view = Rectangle::from_size(Size::from((1280., 720.)));
+                let output_view = Rectangle::from_size(super::super::output_size(&output));
                 let preview_visible = target_geometry.intersection(output_view).unwrap();
                 let preview_local_clip = Rectangle::new(
                     (preview_visible.loc - target_geometry.loc).downscale(target_zoom),
@@ -789,7 +789,7 @@ proptest! {
                 let tiles: Vec<_> = target_ws.tiles_with_ipc_layouts()
                     .filter_map(|(_, info)| {
                         let position = info.tile_pos_in_workspace_view?;
-                        Rectangle::new(position, Size::from(info.tile_size)).intersection(view)
+                        Rectangle::new(smithay::utils::Point::from(position), Size::from(info.tile_size)).intersection(view)
                     })
                     .collect();
                 prop_assert!(!tiles.is_empty());
