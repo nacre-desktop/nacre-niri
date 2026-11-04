@@ -42,6 +42,9 @@ fn panel_on_output(
 ) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
     let namespace = format!("promote-test-{}", f.state.clients.len());
     let id = f.add_client();
+    if output_name.is_some() {
+        f.double_roundtrip(id);
+    }
     let output = output_name.map(|name| f.client(id).output(name));
     let layer = f
         .client(id)
