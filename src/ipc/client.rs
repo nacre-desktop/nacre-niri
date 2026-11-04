@@ -527,6 +527,28 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     } => {
                         println!("Edge triggered on {output} {edge:?} at {position:?}");
                     }
+                    Event::EdgeApproach {
+                        output,
+                        edge,
+                        position,
+                        progress,
+                    } => {
+                        println!(
+                            "Edge approached on {output} {edge:?} at {position:?} ({:.0}% dwell)",
+                            progress * 100.
+                        );
+                    }
+                    Event::EdgeHover {
+                        output,
+                        edge,
+                        position,
+                        progress,
+                    } => {
+                        println!(
+                            "Edge hover on {output} {edge:?} at {position:?} ({:.0}% dwell)",
+                            progress * 100.
+                        );
+                    }
                     Event::EdgeLeft {
                         output,
                         edge,

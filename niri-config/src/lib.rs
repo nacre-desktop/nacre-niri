@@ -832,9 +832,11 @@ mod tests {
         let config = do_parse(
             r#"
             edge-triggers {
+                cue
                 left {
                     action { event; }
                     dwell-time-ms 250
+                    trigger-distance 10
                     pressure 12
                     velocity 600
                 }
@@ -842,6 +844,7 @@ mod tests {
             }
             output "DP-1" {
                 edge-triggers {
+                    cue false
                     left { off; }
                     bottom { action { event; }; }
                 }
@@ -851,8 +854,10 @@ mod tests {
         );
 
         assert!(!config.nacre.edge_triggers);
+        assert!(config.edge_triggers.cue);
         let left = config.edge_triggers.left.as_ref().unwrap();
         assert_eq!(left.dwell_time_ms, Some(250));
+        assert_eq!(left.trigger_distance.map(|v| v.0), Some(10.0));
         assert_eq!(left.pressure.map(|v| v.0), Some(12.0));
         assert_eq!(left.velocity.map(|v| v.0), Some(600.0));
         assert!(left.action.as_ref().unwrap().event);
@@ -880,6 +885,7 @@ mod tests {
             })
             .unwrap();
         let overrides = output.edge_triggers.as_ref().unwrap();
+        assert_eq!(overrides.cue, Some(Flag(false)));
         assert!(overrides.left.as_ref().unwrap().off);
         assert!(
             overrides

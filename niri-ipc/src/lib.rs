@@ -126,7 +126,7 @@ pub enum Request {
     /// Start a regular event stream that opts in to native screen-edge trigger events.
     ///
     /// The initial standard state snapshot is sent first. `EdgeTriggered` and `EdgeLeft` events
-    /// are delivered only to clients using this request, preserving compatibility with older
+    /// pre-dwell cue and trigger events are delivered only to clients using this request, preserving compatibility with older
     /// event clients.
     NacreEdgeTriggerStream,
     /// Start an event stream including Nacre-Niri workspace collection events.
@@ -214,6 +214,9 @@ pub struct NacreCapabilities {
     /// Native screen-edge triggers are enabled.
     #[serde(default)]
     pub edge_triggers: bool,
+    /// Pre-dwell screen-edge hover cues are enabled by configuration.
+    #[serde(default)]
+    pub edge_trigger_cues: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -1835,6 +1838,28 @@ pub enum Event {
         /// Pointer position in output-local logical coordinates.
         position: [f64; 2],
     },
+    /// The pointer entered an enabled native edge trigger band before its dwell completed.
+    EdgeApproach {
+        /// Stable output connector name.
+        output: String,
+        /// Approached output edge.
+        edge: Edge,
+        /// Pointer position in output-local logical coordinates.
+        position: [f64; 2],
+        /// Initial dwell progress, always zero.
+        progress: f64,
+    },
+    /// A pre-dwell edge cue update, emitted at most once per output refresh interval.
+    EdgeHover {
+        /// Stable output connector name.
+        output: String,
+        /// Approached output edge.
+        edge: Edge,
+        /// Pointer position in output-local logical coordinates.
+        position: [f64; 2],
+        /// Fraction of dwell elapsed, clamped to 0..1.
+        progress: f64,
+    },
     /// A previously triggered event-action edge was left or became unavailable.
     ///
     /// The payload uses the same output-local logical coordinates as [`Event::EdgeTriggered`].
@@ -2299,10 +2324,11 @@ mod tests {
             scratchpad: true,
             window_pinning: true,
             edge_triggers: true,
+            edge_trigger_cues: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true}}}"#,
         );
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
@@ -2310,6 +2336,7 @@ mod tests {
         .unwrap();
         assert!(!old_capabilities.scratchpad);
         assert!(!old_capabilities.window_pinning);
+        assert!(!old_capabilities.edge_trigger_cues);
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,
@@ -2346,5 +2373,23 @@ mod tests {
         assert!(serde_json::to_string(&event)
             .unwrap()
             .contains(r#""EdgeLeft":{"output":"DP-1","edge":"Left","position":[12.0,10.0]}"#));
+        let event = Event::EdgeApproach {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [0.0, 10.0],
+            progress: 0.0,
+        };
+        assert!(serde_json::to_string(&event).unwrap().contains(
+            r#""EdgeApproach":{"output":"DP-1","edge":"Left","position":[0.0,10.0],"progress":0.0}"#
+        ));
+        let event = Event::EdgeHover {
+            output: String::from("DP-1"),
+            edge: Edge::Left,
+            position: [2.0, 10.0],
+            progress: 0.5,
+        };
+        assert!(serde_json::to_string(&event).unwrap().contains(
+            r#""EdgeHover":{"output":"DP-1","edge":"Left","position":[2.0,10.0],"progress":0.5}"#
+        ));
     }
 }

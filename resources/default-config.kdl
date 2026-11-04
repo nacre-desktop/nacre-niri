@@ -675,9 +675,11 @@ overview {
 nacre { overview-hover; proportional-x11-widths; edge-triggers; }
 
 // Native edge triggers replace invisible panel edge surfaces. Use the dedicated
-// NacreEdgeTriggerStream to receive EdgeTriggered IPC events.
+// NacreEdgeTriggerStream to receive EdgeApproach/EdgeHover cue events and the
+// eventual EdgeTriggered/EdgeLeft events. Cues are disabled unless `cue` is set.
 // edge-triggers {
-//     left { action { event; }; dwell-time-ms 250; pressure 0; velocity 0; }
+//     cue
+//     left { action { event; }; trigger-distance 10; dwell-time-ms 250; pressure 0; velocity 0; }
 //     right { action { spawn "panel-command" "right"; }; }
 // }
 
