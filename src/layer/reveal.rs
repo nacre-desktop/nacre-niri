@@ -23,6 +23,21 @@ impl Rect {
     }
 }
 
+fn raster_transform(output: Rect, crop: Rect, width: u32, height: u32) -> Transform {
+    let scale_x = width as f32 / crop.w;
+    let scale_y = height as f32 / crop.h;
+    let crop_x = crop.x - output.x;
+    let crop_y = crop.y - output.y;
+    Transform::from_row(
+        scale_x,
+        0.,
+        0.,
+        scale_y,
+        -crop_x * scale_x,
+        -crop_y * scale_y,
+    )
+}
+
 /// Immutable compositor-side reveal descriptor. The animation clock is shared
 /// with the layer's atlas planes; `sample` accepts that clock's eased progress.
 #[derive(Clone, Debug, PartialEq)]
@@ -281,8 +296,6 @@ impl RevealDescriptor {
             return None;
         }
         let crop = Rect::new(left, top, right - left, bottom - top);
-        let crop_x = crop.x - output.x;
-        let crop_y = crop.y - output.y;
         let width = (crop.w * scale).round() as u32;
         let height = (crop.h * scale).round() as u32;
         if width == 0 || height == 0 || u64::from(width) * u64::from(height) * 4 > 64 * 1024 * 1024
@@ -310,7 +323,9 @@ impl RevealDescriptor {
             .ok()?
             .body;
         let body_path = path_from_svg_commands(&format!("{} {hole_path}", contour.body))?;
-        let transform = Transform::from_row(scale, 0., 0., scale, -crop_x * scale, -crop_y * scale);
+        // Match svg_pixmap's root transform: physical raster dimensions determine
+        // each axis scale, which can differ slightly from nominal scale after rounding.
+        let transform = raster_transform(output, crop, width, height);
         let mut fill = Paint::default();
         fill.set_color(tiny_skia::Color::from_rgba8(
             self.fill[0],
@@ -1066,6 +1081,18 @@ mod descriptor_tests {
         let (fractional, _) = descriptor.rasterize(0.5, 1.5, (32., 32.)).unwrap();
         assert_eq!((fractional.width(), fractional.height()), (36, 36));
         assert_eq!(fractional.data()[(18 * 36 + 18) * 4 + 3], 255);
+    }
+
+    #[test]
+    fn fractional_edge_band_uses_svg_raster_ratio_after_rounding() {
+        let scale = 1.5f32;
+        let (a, b) = (424. / scale, 503. / scale);
+        let crop = Rect::new(0., 30. + a, 1048., b - a);
+        let transform = raster_transform(Rect::new(-436., -18., 1920., 1200.), crop, 1572, 79);
+        let (scale_x, scale_y) = transform.get_scale();
+        assert_eq!(scale_x, 1.5);
+        assert_eq!(scale_y, 79. / (b - a));
+        assert_ne!(scale_y, scale);
     }
 
     #[test]

@@ -494,20 +494,12 @@ fn build_reveal_edge_pixels(
     if last - first < 4 {
         return None;
     }
+    let (band_start, band_end) = (first as f32 / scale, last as f32 / scale);
+    let band_length = band_end - band_start;
     let ghost_crop = if spec.vertical {
-        RevealRect::new(
-            crop.x,
-            origin + first as f32 / scale,
-            crop.w,
-            (last - first) as f32 / scale,
-        )
+        RevealRect::new(crop.x, origin + band_start, crop.w, band_length)
     } else {
-        RevealRect::new(
-            origin + first as f32 / scale,
-            crop.y,
-            (last - first) as f32 / scale,
-            crop.h,
-        )
+        RevealRect::new(origin + band_start, crop.y, band_length, crop.h)
     };
     let (band, _) = ghost_descriptor.rasterize_in_crop(
         f64::from(ghost_progress),

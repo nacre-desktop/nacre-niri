@@ -14,7 +14,10 @@ then move the band by the same rounded physical-pixel shift as Bead's MIT
 `0eb9a9a8afdbd8e8a2f6770e1a3b05818af198b0`). The complete upstream MIT notice
 is retained in [`licenses/Bead-MIT.txt`](licenses/Bead-MIT.txt). This preserves
 the baked rim-gradient phase and avoids per-frame
-contour raster/upload on eligible frames. The retained texture pair is capped
+contour raster/upload on eligible frames. Band endpoints retain Bead's f32
+`last / scale - first / scale` arithmetic, and crop transforms use actual
+rounded pixel dimensions divided by the logical crop size, like Bead's
+`svg_pixmap` root transform. The retained texture pair is capped
 at 64 MiB per layer. Each tiny-skia raster pass also holds separate fill and rim
 pixmaps, each subject to the existing 64 MiB per-image guard, and applies the
 SVG group's opacity when compositing the rim layer. Unsupported axes/styles,
