@@ -56,6 +56,7 @@ use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
+pub mod layer_move_grab;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;
@@ -799,7 +800,12 @@ impl State {
                 }
             }
             Action::CloseWindow => {
-                if let Some(mapped) = self.niri.layout.focus() {
+                let promoted = self.niri.keyboard_focus.surface().and_then(|surface| {
+                    self.niri.layer_promote_manager_state.promoted.get(surface)
+                });
+                if let Some(promoted) = promoted {
+                    promoted.layer.layer_surface().send_close();
+                } else if let Some(mapped) = self.niri.layout.focus() {
                     mapped.toplevel().send_close();
                 }
             }

@@ -48,6 +48,9 @@ impl WlrLayerShellHandler for State {
     fn layer_destroyed(&mut self, surface: WlrLayerSurface) {
         let wl_surface = surface.wl_surface();
         self.niri
+            .layer_promote_manager_state
+            .destroy_surface(wl_surface);
+        self.niri
             .layer_motion_manager_state
             .remove_surface(wl_surface, self.niri.clock.now_unadjusted());
         self.niri.unmapped_layer_surfaces.remove(wl_surface);
@@ -105,7 +108,25 @@ impl State {
             return true;
         }
 
+        self.niri.promotion_before_arrange(&root_surface);
         let mut map = layer_map_for_output(&output);
+        // Preserve the actual mapped pose, rather than pending client margin
+        // changes, when this commit hands ownership to floating presentation.
+        // A first content commit has no previous mapped pose and uses its newly
+        // committed placement (including a restored pearl's saved position).
+        let previous_origin = map
+            .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+            .and_then(|layer| {
+                let mapped = self.niri.mapped_layer_surfaces.get(layer)?;
+                let geometry = map.layer_geometry(layer)?;
+                let output_origin = self
+                    .niri
+                    .global_space
+                    .output_geometry(&output)?
+                    .loc
+                    .to_f64();
+                Some(output_origin + geometry.loc.to_f64() + mapped.bob_offset())
+            });
 
         // Arrange the layers before sending the initial configure to respect any size the
         // client may have sent.
@@ -239,6 +260,7 @@ impl State {
         }
 
         // This will call queue_redraw() inside.
+        self.layer_promotion_commit(&root_surface, previous_origin);
         self.niri.output_resized(&output);
 
         true
