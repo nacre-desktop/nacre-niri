@@ -32,10 +32,10 @@ use smithay::input::touch::{
 };
 use smithay::input::SeatHandler;
 use smithay::output::Output;
+use smithay::reexports::wayland_server::backend::DisconnectReason;
 use smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::Resource as _;
-use smithay::reexports::wayland_server::backend::DisconnectReason;
 use smithay::utils::{Logical, Point, Rectangle, Transform, SERIAL_COUNTER};
 use smithay::wayland::keyboard_shortcuts_inhibit::KeyboardShortcutsInhibitor;
 use smithay::wayland::pointer_constraints::{with_pointer_constraint, PointerConstraint};
@@ -866,7 +866,13 @@ impl State {
                         _ => unreachable!(),
                     };
                     let mapped = id
-                        .and_then(|id| self.niri.layout.windows().find(|(_, m)| m.id().get() == id).map(|(_, m)| m))
+                        .and_then(|id| {
+                            self.niri
+                                .layout
+                                .windows()
+                                .find(|(_, m)| m.id().get() == id)
+                                .map(|(_, m)| m)
+                        })
                         .or_else(|| id.is_none().then(|| self.niri.layout.focus()).flatten());
                     if let Some(surface) = mapped
                         .filter(|mapped| !mapped.is_xwayland_satellite())
@@ -884,7 +890,10 @@ impl State {
             Action::SwapWorkspaceWithMonitorNext | Action::SwapWorkspaceWithMonitorPrevious => {
                 let enabled = self.niri.config.borrow().nacre.monitor_workspace_actions;
                 if enabled {
-                    self.niri.layout.swap_workspace_with_monitor(matches!(action, Action::SwapWorkspaceWithMonitorNext));
+                    self.niri.layout.swap_workspace_with_monitor(matches!(
+                        action,
+                        Action::SwapWorkspaceWithMonitorNext
+                    ));
                     self.niri.queue_redraw_all();
                 }
             }
@@ -894,7 +903,9 @@ impl State {
                     config.nacre.monitor_workspace_actions && config.layout.collections.enabled
                 };
                 if enabled {
-                    self.niri.layout.rotate_workspace_sets(matches!(action, Action::RotateWorkspaceSetsNext));
+                    self.niri
+                        .layout
+                        .rotate_workspace_sets(matches!(action, Action::RotateWorkspaceSetsNext));
                     self.niri.queue_redraw_all();
                 }
             }

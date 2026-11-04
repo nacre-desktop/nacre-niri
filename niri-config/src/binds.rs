@@ -462,9 +462,13 @@ impl From<niri_ipc::Action> for Action {
             niri_ipc::Action::ForceCloseWindow { id: None } => Self::ForceCloseWindow,
             niri_ipc::Action::ForceCloseWindow { id: Some(id) } => Self::ForceCloseWindowById(id),
             niri_ipc::Action::RestoreLastHiddenWindow {} => Self::RestoreLastHiddenWindow,
-            niri_ipc::Action::RestoreCurrentWorkspaceHiddenWindows {} => Self::RestoreCurrentWorkspaceHiddenWindows,
+            niri_ipc::Action::RestoreCurrentWorkspaceHiddenWindows {} => {
+                Self::RestoreCurrentWorkspaceHiddenWindows
+            }
             niri_ipc::Action::SwapWorkspaceWithMonitorNext {} => Self::SwapWorkspaceWithMonitorNext,
-            niri_ipc::Action::SwapWorkspaceWithMonitorPrevious {} => Self::SwapWorkspaceWithMonitorPrevious,
+            niri_ipc::Action::SwapWorkspaceWithMonitorPrevious {} => {
+                Self::SwapWorkspaceWithMonitorPrevious
+            }
             niri_ipc::Action::RotateWorkspaceSetsNext {} => Self::RotateWorkspaceSetsNext,
             niri_ipc::Action::RotateWorkspaceSetsPrevious {} => Self::RotateWorkspaceSetsPrevious,
             niri_ipc::Action::FullscreenWindow { id: None } => Self::FullscreenWindow,

@@ -370,7 +370,8 @@ pub enum Action {
     ///
     /// Disconnecting a client closes all of its windows. X11 windows are unsupported.
     ForceCloseWindow {
-        /// Id of the window whose client should be disconnected. If `None`, uses the focused window.
+        /// Id of the window whose client should be disconnected. If `None`, uses the focused
+        /// window.
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
@@ -378,13 +379,15 @@ pub enum Action {
     RestoreLastHiddenWindow {},
     /// Restore all hidden windows belonging to the focused workspace.
     RestoreCurrentWorkspaceHiddenWindows {},
-    /// Atomically swap the focused workspace with the next or previous monitor's focused workspace.
+    /// Atomically swap the focused workspace with the next or previous monitor's focused
+    /// workspace.
     SwapWorkspaceWithMonitorNext {},
     /// Atomically swap the focused workspace with the previous monitor's focused workspace.
     SwapWorkspaceWithMonitorPrevious {},
     /// Rotate workspace sets to the next monitor while preserving physical collection identities.
     RotateWorkspaceSetsNext {},
-    /// Rotate workspace sets to the previous monitor while preserving physical collection identities.
+    /// Rotate workspace sets to the previous monitor while preserving physical collection
+    /// identities.
     RotateWorkspaceSetsPrevious {},
     /// Toggle fullscreen on a window.
     #[cfg_attr(

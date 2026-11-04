@@ -1,5 +1,6 @@
 use niri_config::{Action, Config};
-use smithay::reexports::wayland_server::{backend::ClientId as ServerClientId, Resource as _};
+use smithay::reexports::wayland_server::backend::ClientId as ServerClientId;
+use smithay::reexports::wayland_server::Resource as _;
 
 use super::Fixture;
 
@@ -51,7 +52,12 @@ fn force_close_targets_one_wayland_client_and_config_can_disable_it() {
 
     f.niri_state()
         .do_action(Action::ForceCloseWindowById(second_id), false);
-    assert!(f.niri().display_handle.backend_handle().get_client_data(first_server_client.clone()).is_ok());
+    assert!(f
+        .niri()
+        .display_handle
+        .backend_handle()
+        .get_client_data(first_server_client.clone())
+        .is_ok());
     assert!(f
         .niri()
         .display_handle
@@ -79,5 +85,10 @@ fn force_close_without_focus_and_managed_xwayland_are_noops() {
         .do_action(Action::ForceCloseWindowById(id), false);
     f.roundtrip(client);
     let server_client = server_client_id(&mut f, id);
-    assert!(f.niri().display_handle.backend_handle().get_client_data(server_client).is_ok());
+    assert!(f
+        .niri()
+        .display_handle
+        .backend_handle()
+        .get_client_data(server_client)
+        .is_ok());
 }
