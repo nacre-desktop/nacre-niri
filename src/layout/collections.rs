@@ -1015,10 +1015,7 @@ impl<W: LayoutElement> Layout<W> {
         };
 
         if monitor.active_workspace_ref().id().get() == workspace_id {
-            return Some((
-                1.,
-                smithay::utils::Point::from((transition.offset(), 0.)),
-            ));
+            return Some((1., smithay::utils::Point::from((transition.offset(), 0.))));
         }
 
         let (workspace, x_offset) = self.collection_switch_render_workspace(output)?;
@@ -1052,11 +1049,7 @@ impl<W: LayoutElement> Layout<W> {
             .map(|(_, x_offset)| x_offset)
     }
 
-    pub fn collection_switch_involves_workspace(
-        &self,
-        output: &Output,
-        workspace_id: u64,
-    ) -> bool {
+    pub fn collection_switch_involves_workspace(&self, output: &Output, workspace_id: u64) -> bool {
         let Some(transition) = self
             .collection_switch
             .as_ref()

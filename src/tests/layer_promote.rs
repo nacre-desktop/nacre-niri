@@ -61,9 +61,10 @@ fn panel_on_output(
         .promotion
         .clone();
     let layer = f.client(id).layer(&surface);
-    let buffer = layer
-        .spbm
-        .create_u32_rgba_buffer(color.0, color.1, color.2, color.3, &layer.qh, ());
+    let buffer =
+        layer
+            .spbm
+            .create_u32_rgba_buffer(color.0, color.1, color.2, color.3, &layer.qh, ());
     layer.surface.attach(Some(&buffer), 0, 0);
     layer.set_size(96, 72);
     layer.ack_last_and_commit();
@@ -368,7 +369,8 @@ fn collection_swipe_raster_clips_fitted_promotions_and_repaints_old_pixels() {
     );
     promote(&incoming_proxy, 1);
     commit(&mut f, incoming_client, &incoming_surface);
-    let incoming_workspace = f.niri().layer_promote_manager_state.promoted[&incoming_root].workspace;
+    let incoming_workspace =
+        f.niri().layer_promote_manager_state.promoted[&incoming_root].workspace;
 
     f.add_output(1, (600, 450));
     let output = f.niri_output(1);
@@ -412,24 +414,26 @@ fn collection_swipe_raster_clips_fitted_promotions_and_repaints_old_pixels() {
     {
         let state = f.niri_state();
         let niri = &state.niri;
-        state.backend.with_primary_renderer(|renderer| {
-            let elements = niri.render_to_vec(
-                RenderCtx {
-                    renderer,
-                    target: RenderTarget::Output,
-                    xray: None,
-                },
-                &output,
-                false,
-            );
-            let mut target = renderer.bind(&mut retained).unwrap();
-            damage
-                .render_output(renderer, &mut target, 0, &elements, Color32F::TRANSPARENT)
-                .unwrap();
-            let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
-            baseline = renderer.map_texture(&mapping).unwrap().to_vec();
-        })
-        .unwrap();
+        state
+            .backend
+            .with_primary_renderer(|renderer| {
+                let elements = niri.render_to_vec(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        xray: None,
+                    },
+                    &output,
+                    false,
+                );
+                let mut target = renderer.bind(&mut retained).unwrap();
+                damage
+                    .render_output(renderer, &mut target, 0, &elements, Color32F::TRANSPARENT)
+                    .unwrap();
+                let mapping = copy_framebuffer(renderer, &target, Fourcc::Abgr8888).unwrap();
+                baseline = renderer.map_texture(&mapping).unwrap().to_vec();
+            })
+            .unwrap();
     }
 
     assert!(f.niri().layout.collection_switch_gesture_begin(&output));
@@ -483,7 +487,10 @@ fn collection_swipe_raster_clips_fitted_promotions_and_repaints_old_pixels() {
                 false,
             );
             let full_pixels = raster_pixels(renderer, &output, &mut fresh, &full);
-            assert_eq!(incremental, full_pixels, "incremental repaint differs from fresh raster");
+            assert_eq!(
+                incremental, full_pixels,
+                "incremental repaint differs from fresh raster"
+            );
 
             let source_only: Vec<_> = niri
                 .render_to_vec(

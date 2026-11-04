@@ -74,7 +74,6 @@ use crate::utils::{
     ensure_min_max_size_maybe_zero, output_matches_name, output_size,
     round_logical_in_physical_max1, ResizeEdge,
 };
-
 use crate::window::ResolvedWindowRules;
 
 /// Compute the same scale and offset used to fit a collection workspace into an output during a

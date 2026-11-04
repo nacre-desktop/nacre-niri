@@ -4918,7 +4918,8 @@ impl Niri {
     ) {
         let output_scale = output.current_scale().fractional_scale();
         let output_size = crate::utils::output_size(output);
-        let output_bounds = Rectangle::from_size(output_size).to_physical_precise_round(output_scale);
+        let output_bounds =
+            Rectangle::from_size(output_size).to_physical_precise_round(output_scale);
 
         for p in self.promoted_layers_for_output(output) {
             if let Some(mapped) = self.mapped_layer_surfaces.get(&p.layer) {
@@ -4944,11 +4945,8 @@ impl Niri {
                         let Some(viewport) = viewport else {
                             return;
                         };
-                        let elem = RescaleRenderElement::from_element(
-                            elem,
-                            Point::default(),
-                            fit_scale,
-                        );
+                        let elem =
+                            RescaleRenderElement::from_element(elem, Point::default(), fit_scale);
                         let offset = fit_offset.to_physical_precise_round(output_scale);
                         let elem =
                             RelocateRenderElement::from_element(elem, offset, Relocate::Relative);
