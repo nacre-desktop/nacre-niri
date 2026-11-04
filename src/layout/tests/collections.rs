@@ -456,13 +456,22 @@ fn hiding_last_window_keeps_persistent_slot_with_empty_workspace_above_first() {
     options.layout.empty_workspace_above_first = true;
     layout.update_options(options);
     let retained = layout.monitor_for_output(&output).unwrap().workspaces[2].id();
-    assert_eq!(layout.monitor_for_output(&output).unwrap().workspaces.len(), 3);
+    assert_eq!(
+        layout.monitor_for_output(&output).unwrap().workspaces.len(),
+        3
+    );
     layout.clock.set_complete_instantly(true);
     Op::FocusWorkspaceDown.apply(&mut layout);
     layout.advance_animations();
     layout.update_render_elements(None);
     layout.clock.set_complete_instantly(false);
-    assert_eq!(layout.monitor_for_output(&output).unwrap().active_workspace_idx(), 2);
+    assert_eq!(
+        layout
+            .monitor_for_output(&output)
+            .unwrap()
+            .active_workspace_idx(),
+        2
+    );
 
     layout.move_window_to_scratchpad(Some(&51));
     let monitor = layout.monitor_for_output(&output).unwrap();
@@ -892,7 +901,7 @@ proptest! {
     fn actual_drop_target_correctness_property(
         output_index in 0usize..2,
         row_choice in 0usize..2,
-        column_choice in 0usize..5,
+        column_choice in 0u8..5,
         x_raw in 4_000u16..=61_535,
         y_raw in 4_000u16..=61_535,
     ) {
