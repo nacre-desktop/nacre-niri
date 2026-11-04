@@ -1492,9 +1492,11 @@ impl<W: LayoutElement> Layout<W> {
                             if mon.options.layout.empty_workspace_above_first
                                 && mon.workspaces.len() == 2
                                 && mon.workspace_switch.is_none()
+                                && mon
+                                    .workspaces
+                                    .iter()
+                                    .all(|workspace| !workspace.has_windows_or_name())
                             {
-                                assert!(!mon.workspaces[0].has_windows_or_name());
-                                assert!(!mon.workspaces[1].has_windows_or_name());
                                 mon.workspaces.remove(1);
                                 mon.active_workspace_idx = 0;
                             }
