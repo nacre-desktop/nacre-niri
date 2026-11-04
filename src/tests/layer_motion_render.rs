@@ -944,6 +944,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 .unwrap();
                 let time =
                     Duration::from_secs_f64(frame_json["sample_time_ms"].as_f64().unwrap() / 1000.);
+                let sampled_progress = n(&frame_json["eased_progress"]) as f64;
                 f.niri().clock.set_unadjusted(time);
                 let output = f.niri_output(1);
                 f.niri()
@@ -1070,6 +1071,34 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 println!(
                     "reveal-full-frame {stem} t{timeline}: template_mode={template_mode} max_diff={frame_max} worst={frame_worst:?}"
                 );
+                if frame_max > 1 {
+                    let pixel_index = frame_worst.as_ref().unwrap().0;
+                    let x = pixel_index % atlas_w as usize;
+                    let y = pixel_index / atlas_w as usize;
+                    let atlas_offset = pixel_index * 4;
+                    let atlas_pixel = &atlas[atlas_offset..atlas_offset + 4];
+                    let (direct, crop) = reveal
+                        .rasterize(sampled_progress, scale as f32, (width, height))
+                        .expect("build direct compositor contour diagnostic");
+                    let contour_x = x as i32 - (crop.x as f64 * scale).round() as i32;
+                    let contour_y = y as i32 - (crop.y as f64 * scale).round() as i32;
+                    let contour_pixel = if contour_x >= 0
+                        && contour_y >= 0
+                        && contour_x < direct.width() as i32
+                        && contour_y < direct.height() as i32
+                    {
+                        let offset =
+                            (contour_y as usize * direct.width() as usize + contour_x as usize) * 4;
+                        direct.data()[offset..offset + 4].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+                    println!(
+                        "reveal-full-frame {stem} t{timeline} diagnostic pixel=({x},{y}) template_mode={template_mode} atlas={atlas_pixel:?} direct_contour={contour_pixel:?} compositor={:?} reference={:?}",
+                        &pixels[pixel_index * 4..pixel_index * 4 + 4],
+                        &reference[pixel_index * 4..pixel_index * 4 + 4],
+                    );
+                }
             }
             println!("reveal-full-frame {stem}: max_diff={route_max} worst={route_worst:?}");
             if route_max > 1 {
