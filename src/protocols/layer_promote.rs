@@ -231,7 +231,7 @@ impl Niri {
             })
             && is_mapped(p.layer.wl_surface())
     }
-    pub fn promotion_can_receive_input(&self, p: &PromotedLayer) -> bool {
+    pub fn promotion_workspace_input_eligible(&self, p: &PromotedLayer) -> bool {
         self.promotion_visible(p)
             && !self
                 .layout
@@ -240,6 +240,9 @@ impl Niri {
                 .layout
                 .monitor_for_output(&p.output)
                 .is_some_and(|mon| mon.active_workspace_ref().id().get() == p.workspace)
+    }
+    pub fn promotion_can_receive_input(&self, p: &PromotedLayer) -> bool {
+        self.promotion_workspace_input_eligible(p)
             && !self.screenshot_ui.is_open()
             && !self.exit_confirm_dialog.is_open()
             && !self.window_mru_ui.is_open()
@@ -263,7 +266,7 @@ impl Niri {
         self.layer_promote_manager_state
             .promoted
             .get(surface)
-            .is_none_or(|p| self.promotion_can_receive_input(p))
+            .is_none_or(|p| self.promotion_workspace_input_eligible(p))
     }
     pub fn finish_layer_move(&mut self, surface: &WlSurface) {
         if let Some(p) = self.layer_promote_manager_state.promoted.get_mut(surface) {

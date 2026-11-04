@@ -28,13 +28,6 @@ fn panel(f: &mut Fixture) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromo
     panel_on_output(f, None, (u32::MAX / 2, 0, 0, u32::MAX / 2))
 }
 
-fn panel_with_color(
-    f: &mut Fixture,
-    color: (u32, u32, u32, u32),
-) -> (ClientId, WlSurface, ServerSurface, BeadLayerPromoteV1) {
-    panel_on_output(f, None, color)
-}
-
 fn panel_on_output(
     f: &mut Fixture,
     output_name: Option<&str>,
@@ -356,6 +349,43 @@ fn hidden_incoming_collection_promotion_tracks_swipe_and_cannot_receive_hit_test
         .contents_under(Point::from((20., 20.)))
         .surface
         .is_none());
+}
+
+#[test]
+fn promoted_on_demand_focus_returns_after_exit_dialog_closes() {
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    let layer = f
+        .niri()
+        .mapped_layer_surfaces
+        .keys()
+        .find(|layer| layer.wl_surface() == &root)
+        .unwrap()
+        .clone();
+    f.niri().layer_shell_on_demand_focus = Some(layer);
+    let promotion = f.niri().layer_promote_manager_state.promoted[&root].clone();
+    assert!(f.niri().promotion_workspace_input_eligible(&promotion));
+
+    assert!(f.niri().exit_confirm_dialog.show());
+    f.niri_state().update_keyboard_focus();
+    assert!(!f.niri().promotion_can_receive_input(&promotion));
+    assert!(f.niri().layer_promotion_can_receive_input(&root));
+    assert_eq!(
+        f.niri().keyboard_focus,
+        crate::niri::KeyboardFocus::ExitConfirmDialog
+    );
+    assert!(f.niri().layer_shell_on_demand_focus.is_some());
+
+    assert!(f.niri().exit_confirm_dialog.hide());
+    f.niri_complete_animations();
+    f.niri_state().update_keyboard_focus();
+    assert_eq!(
+        f.niri().keyboard_focus,
+        crate::niri::KeyboardFocus::LayerShell { surface: root }
+    );
 }
 
 #[test]
