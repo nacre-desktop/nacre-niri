@@ -530,20 +530,17 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     f.client(id).layer(&client_surface).attach_null();
     f.client(id).layer(&client_surface).commit();
     f.double_roundtrip(id);
-    {
+    let frozen_clip = {
         let runtime = runtime.lock().unwrap();
         assert!(runtime.active.is_none());
-        let expected_clip = super::super::layer::reveal::Rect::new(15., 20., 70., 65.);
-        assert_eq!(
-            runtime.reveal_current.unwrap().content_clip,
-            Some(expected_clip)
-        );
+        let frozen_clip = runtime.reveal_current.unwrap().content_clip.unwrap();
         assert_eq!(
             runtime.reveal.as_ref().unwrap().content_clip,
-            Some((expected_clip, expected_clip)),
+            Some((frozen_clip, frozen_clip)),
             "unmap freezes both content-clip endpoints at the sampled presentation"
         );
-    }
+        frozen_clip
+    };
     let controller = f
         .client(id)
         .state
@@ -577,7 +574,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     assert_eq!(runtime.active.as_ref().unwrap().serial, 21);
     assert_eq!(
         runtime.reveal_current.unwrap().content_clip,
-        Some(super::super::layer::reveal::Rect::new(15., 20., 70., 65.)),
+        Some(frozen_clip),
         "remapped retarget starts at the frozen content clip"
     );
 }

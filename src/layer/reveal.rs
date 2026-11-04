@@ -587,10 +587,22 @@ fn path(
                     radii,
                 )
             };
+            let previous = points[(i + points.len() - 1) % points.len()];
+            let next = points[(i + 1) % points.len()];
+            let r = if corner_mode == CornerMode::Circular {
+                r.min(((p.0 - previous.0).abs() + (p.1 - previous.1).abs()) / 2.)
+                    .min(((next.0 - p.0).abs() + (next.1 - p.1).abs()) / 2.)
+            } else {
+                r
+            };
             let toward = |q: Point| {
                 let dx = q.0 - p.0;
                 let dy = q.1 - p.1;
-                let cut = r.min((dx.abs() + dy.abs()) / 2.);
+                let cut = if corner_mode == CornerMode::Circular {
+                    r
+                } else {
+                    r.min((dx.abs() + dy.abs()) / 2.)
+                };
                 Point(
                     p.0 + if dx == 0. { 0. } else { dx.signum() * cut },
                     p.1 + if dy == 0. { 0. } else { dy.signum() * cut },
