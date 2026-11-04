@@ -4,7 +4,8 @@ use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::Element as _;
 use smithay::utils::{Scale, Transform};
 
-use super::{client::ClientId, Fixture};
+use super::client::ClientId;
+use super::Fixture;
 use crate::layout::CollectionOverviewRenderElement;
 use crate::niri::OutputRenderElements;
 use crate::render_helpers::{render_to_vec as render_pixels, RenderCtx, RenderTarget};

@@ -623,9 +623,23 @@ fn overview_drag_moves_window_into_hidden_collection() {
 fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
     for source_scale in [1., 1.5] {
         let mut layout = enabled_layout();
-        Op::AddScaledOutput { id: 1, scale: source_scale, layout_config: None }.apply(&mut layout);
-        Op::AddScaledOutput { id: 2, scale: if source_scale == 1. { 1.5 } else { 1. }, layout_config: None }.apply(&mut layout);
-        let output = layout.outputs().find(|output| output.name() == "output1").unwrap().clone();
+        Op::AddScaledOutput {
+            id: 1,
+            scale: source_scale,
+            layout_config: None,
+        }
+        .apply(&mut layout);
+        Op::AddScaledOutput {
+            id: 2,
+            scale: if source_scale == 1. { 1.5 } else { 1. },
+            layout_config: None,
+        }
+        .apply(&mut layout);
+        let output = layout
+            .outputs()
+            .find(|output| output.name() == "output1")
+            .unwrap()
+            .clone();
         add_window(&mut layout, 31);
         let source = layout.collection_for_output(&output).unwrap();
         let target = layout.create_collection(Some("drop-target".into()));
@@ -638,7 +652,9 @@ fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
         layout.clock.set_complete_instantly(true);
         layout.advance_animations();
         layout.clock.set_complete_instantly(false);
-        let preview = layout.collection_previews(&output).into_iter()
+        let preview = layout
+            .collection_previews(&output)
+            .into_iter()
             .find(|preview| preview.id == target)
             .expect("hidden desk preview is present on source output");
         let columns = super::super::collection_overview::columns(
@@ -649,24 +665,39 @@ fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
         );
         let source_column = columns.iter().find(|column| column.id == source).unwrap();
         let from = (source_column.bounds.loc.x + 40., 360.).into();
-        let to = preview.geometry.loc + (preview.geometry.size.w / 2., preview.geometry.size.h / 2.);
+        let to =
+            preview.geometry.loc + (preview.geometry.size.w / 2., preview.geometry.size.h / 2.);
         let target_ws = layout.find_workspace_by_id(target_workspace).unwrap().1;
-        let expected = target_ws.scrolling_insert_position((to - preview.geometry.loc).downscale(preview.zoom));
+        let expected = target_ws
+            .scrolling_insert_position((to - preview.geometry.loc).downscale(preview.zoom));
         let expected_column = match expected {
-            super::super::monitor::InsertPosition::InColumn(column, _) |
-            super::super::monitor::InsertPosition::NewColumn(column) => column,
+            super::super::monitor::InsertPosition::InColumn(column, _)
+            | super::super::monitor::InsertPosition::NewColumn(column) => column,
             super::super::monitor::InsertPosition::Floating => panic!("test windows are tiled"),
         };
-        assert!(target_ws.tiles_with_ipc_layouts().filter_map(|(_, layout)| layout.pos_in_scrolling_layout)
-            .map(|(column, _)| column).max().unwrap_or(0) >= 2);
+        assert!(
+            target_ws
+                .tiles_with_ipc_layouts()
+                .filter_map(|(_, layout)| layout.pos_in_scrolling_layout)
+                .map(|(column, _)| column)
+                .max()
+                .unwrap_or(0)
+                >= 2
+        );
         assert!(layout.interactive_move_begin(31, &output, from));
         assert!(layout.interactive_move_update(&31, (300., 0.).into(), output, to));
         layout.interactive_move_end(&31);
         let dropped = layout.find_workspace_by_id(target_workspace).unwrap().1;
         assert!(dropped.has_window(&31));
-        let dropped_layout = dropped.tiles_with_ipc_layouts()
-            .find(|(tile, _)| tile.window().id() == &31).unwrap().1;
-        assert_eq!(dropped_layout.pos_in_scrolling_layout.unwrap().0 - 1, expected_column);
+        let dropped_layout = dropped
+            .tiles_with_ipc_layouts()
+            .find(|(tile, _)| tile.window().id() == &31)
+            .unwrap()
+            .1;
+        assert_eq!(
+            dropped_layout.pos_in_scrolling_layout.unwrap().0 - 1,
+            expected_column
+        );
         assert_eq!(shown(&layout, "output1"), source);
         layout.verify_invariants();
     }
@@ -675,9 +706,23 @@ fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
 #[test]
 fn empty_hidden_source_is_kept_until_overview_drop_finishes() {
     let mut layout = enabled_layout();
-    Op::AddScaledOutput { id: 1, scale: 1.5, layout_config: None }.apply(&mut layout);
-    Op::AddScaledOutput { id: 2, scale: 1.0, layout_config: None }.apply(&mut layout);
-    let output = layout.outputs().find(|output| output.name() == "output1").unwrap().clone();
+    Op::AddScaledOutput {
+        id: 1,
+        scale: 1.5,
+        layout_config: None,
+    }
+    .apply(&mut layout);
+    Op::AddScaledOutput {
+        id: 2,
+        scale: 1.0,
+        layout_config: None,
+    }
+    .apply(&mut layout);
+    let output = layout
+        .outputs()
+        .find(|output| output.name() == "output1")
+        .unwrap()
+        .clone();
     let source = layout.create_collection(None);
     add_window(&mut layout, 41);
     let target = layout.create_collection(Some("destination".into()));
@@ -692,27 +737,59 @@ fn empty_hidden_source_is_kept_until_overview_drop_finishes() {
     layout.advance_animations();
     layout.clock.set_complete_instantly(false);
     let previews = layout.collection_previews(&output);
-    let source_preview = previews.iter().find(|preview| preview.id == source).unwrap();
-    let target_preview = previews.iter().find(|preview| preview.id == target).unwrap();
+    let source_preview = previews
+        .iter()
+        .find(|preview| preview.id == source)
+        .unwrap();
+    let target_preview = previews
+        .iter()
+        .find(|preview| preview.id == target)
+        .unwrap();
     let from = source_preview.geometry.loc + source_preview.geometry.size.to_point().downscale(2.);
     let to = target_preview.geometry.loc + target_preview.geometry.size.to_point().downscale(2.);
-    let expected = layout.find_workspace_by_id(target_workspace).unwrap().1
-        .scrolling_insert_position((to - target_preview.geometry.loc).downscale(target_preview.zoom));
+    let expected = layout
+        .find_workspace_by_id(target_workspace)
+        .unwrap()
+        .1
+        .scrolling_insert_position(
+            (to - target_preview.geometry.loc).downscale(target_preview.zoom),
+        );
     let expected_column = match expected {
-        super::super::monitor::InsertPosition::InColumn(column, _) |
-        super::super::monitor::InsertPosition::NewColumn(column) => column,
+        super::super::monitor::InsertPosition::InColumn(column, _)
+        | super::super::monitor::InsertPosition::NewColumn(column) => column,
         super::super::monitor::InsertPosition::Floating => panic!("test windows are tiled"),
     };
     assert!(layout.interactive_move_begin(41, &output, from));
     assert!(layout.interactive_move_update(&41, (300., 0.).into(), output, to));
-    assert!(layout.collections().iter().any(|collection| collection.id == source));
-    assert!(layout.collection_workspaces(source).all(|workspace| !workspace.has_windows()));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == source));
+    assert!(layout
+        .collection_workspaces(source)
+        .all(|workspace| !workspace.has_windows()));
     layout.interactive_move_end(&41);
-    assert!(layout.find_workspace_by_id(target_workspace).unwrap().1.has_window(&41));
-    assert!(!layout.collections().iter().any(|collection| collection.id == source));
-    let moved = layout.find_workspace_by_id(target_workspace).unwrap().1.tiles_with_ipc_layouts()
-        .find(|(tile, _)| tile.window().id() == &41).unwrap().1;
-    assert_eq!(moved.pos_in_scrolling_layout.unwrap().0 - 1, expected_column);
+    assert!(layout
+        .find_workspace_by_id(target_workspace)
+        .unwrap()
+        .1
+        .has_window(&41));
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == source));
+    let moved = layout
+        .find_workspace_by_id(target_workspace)
+        .unwrap()
+        .1
+        .tiles_with_ipc_layouts()
+        .find(|(tile, _)| tile.window().id() == &41)
+        .unwrap()
+        .1;
+    assert_eq!(
+        moved.pos_in_scrolling_layout.unwrap().0 - 1,
+        expected_column
+    );
     assert!(layout.collection_workspaces(source).count() == 0);
     assert_ne!(source_workspace, target_workspace);
     layout.verify_invariants();
@@ -874,9 +951,21 @@ fn keyboard_collection_switch_reuses_swipe_transition_and_is_interruptible() {
     layout.focus_collection_next();
     layout.focus_collection_next();
     assert_eq!(shown(&layout, "output1"), second);
-    assert_eq!(layout.collection_switch_pending.as_ref().map(|(_, id, _)| *id), Some(third));
+    assert_eq!(
+        layout
+            .collection_switch_pending
+            .as_ref()
+            .map(|(_, id, _)| *id),
+        Some(third)
+    );
     layout.focus_collection_next();
-    assert_eq!(layout.collection_switch_pending.as_ref().map(|(_, id, _)| *id), Some(first));
+    assert_eq!(
+        layout
+            .collection_switch_pending
+            .as_ref()
+            .map(|(_, id, _)| *id),
+        Some(first)
+    );
     layout.clock.set_unadjusted(Duration::from_secs(5));
     layout.update_collection_switch_render_state();
     assert_eq!(shown(&layout, "output1"), first);

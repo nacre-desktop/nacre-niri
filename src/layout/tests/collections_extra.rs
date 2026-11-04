@@ -83,8 +83,13 @@ fn renamed_runtime_collection_survives_becoming_empty_while_hidden() {
     layout.remove_window(&10, Transaction::new()).unwrap();
     layout.refresh(true);
     layout.verify_invariants();
-    assert!(layout.collections().iter().any(|collection| collection.id == named));
-    assert!(layout.collection_workspaces(named).all(|workspace| !workspace.has_windows()));
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == named));
+    assert!(layout
+        .collection_workspaces(named)
+        .all(|workspace| !workspace.has_windows()));
 
     let unnamed = layout.create_collection(None);
     add_window(&mut layout, 11);
@@ -92,7 +97,10 @@ fn renamed_runtime_collection_survives_becoming_empty_while_hidden() {
     layout.remove_window(&11, Transaction::new()).unwrap();
     layout.refresh(true);
     layout.verify_invariants();
-    assert!(!layout.collections().iter().any(|collection| collection.id == unnamed));
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == unnamed));
 }
 
 #[test]
@@ -139,20 +147,42 @@ fn toggling_collections_restores_original_output_ownership_after_swap() {
 #[test]
 fn new_output_reuses_most_recent_hidden_collection_before_creating_one() {
     let mut layout = collections_layout();
-    check_ops_on_layout(&mut layout, [Op::AddOutput(1), Op::AddOutput(2), Op::AddOutput(3)]);
-    assert_eq!(layout.collections().len(), 3, "a new empty desk is created when no hidden desk exists");
+    check_ops_on_layout(
+        &mut layout,
+        [Op::AddOutput(1), Op::AddOutput(2), Op::AddOutput(3)],
+    );
+    assert_eq!(
+        layout.collections().len(),
+        3,
+        "a new empty desk is created when no hidden desk exists"
+    );
     let active_output = layout.active_output().unwrap().clone();
     let home = layout.collection_for_output(&active_output).unwrap();
     let created = layout.create_collection(Some("recent".into()));
     layout.focus_collection(&WorkspaceReference::Id(home));
-    let original_output = layout.collections.iter().find(|collection| collection.id == created)
-        .unwrap().original_output.clone();
+    let original_output = layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == created)
+        .unwrap()
+        .original_output
+        .clone();
     let count = layout.collections().len();
     check_ops_on_layout(&mut layout, [Op::AddOutput(4)]);
     assert_eq!(layout.collections().len(), count);
-    assert_eq!(layout.collection_for_output(&output(&layout, 4)), Some(created));
-    assert_eq!(layout.collections.iter().find(|collection| collection.id == created)
-        .unwrap().original_output, original_output);
+    assert_eq!(
+        layout.collection_for_output(&output(&layout, 4)),
+        Some(created)
+    );
+    assert_eq!(
+        layout
+            .collections
+            .iter()
+            .find(|collection| collection.id == created)
+            .unwrap()
+            .original_output,
+        original_output
+    );
     layout.verify_invariants();
 }
 

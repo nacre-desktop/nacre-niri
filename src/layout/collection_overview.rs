@@ -17,8 +17,8 @@ use smithay::backend::renderer::{Color32F, ContextId, Renderer as _};
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size, Transform};
 
-use super::monitor::{InsertPosition, MonitorAddWindowTarget};
 use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
+use super::monitor::{InsertPosition, MonitorAddWindowTarget};
 use super::workspace::{Workspace, WorkspaceAddWindowTarget, WorkspaceId, WorkspaceRenderElement};
 use super::{ActivateWindow, HitType, InteractiveMoveData, Layout, LayoutElement};
 use crate::niri_render_elements;
@@ -767,23 +767,36 @@ impl<W: LayoutElement> Layout<W> {
         }
         let pos = moving.pointer_pos_within_output;
         let previews = self.collection_previews(output);
-        let Some(index) = preview_drop_target(&previews, pos) else { return; };
+        let Some(index) = preview_drop_target(&previews, pos) else {
+            return;
+        };
         let preview = &previews[index];
         let local = (pos - preview.geometry.loc).downscale(preview.zoom);
-        let position = if moving.is_floating { InsertPosition::Floating }
-            else { preview.workspace.scrolling_insert_position(local) };
-        let Some(area) = preview.workspace.insert_hint_area(position) else { return; };
+        let position = if moving.is_floating {
+            InsertPosition::Floating
+        } else {
+            preview.workspace.scrolling_insert_position(local)
+        };
+        let Some(area) = preview.workspace.insert_hint_area(position) else {
+            return;
+        };
         let scale = output.current_scale().fractional_scale();
         let transformed_area = Rectangle::new(
             preview.geometry.loc + area.loc.upscale(preview.zoom),
             area.size.upscale(preview.zoom),
-        ).to_physical_precise_round(scale).to_logical(scale);
+        )
+        .to_physical_precise_round(scale)
+        .to_logical(scale);
         let transformed_view = Rectangle::new(
             (preview.geometry.loc - transformed_area.loc),
             preview.workspace.view_size().upscale(preview.zoom),
         );
         let border_width = moving.tile.effective_border_width().unwrap_or(0.);
-        let source_radius = moving.tile.window().geometry_corner_radius().expanded_by(border_width as f32);
+        let source_radius = moving
+            .tile
+            .window()
+            .geometry_corner_radius()
+            .expanded_by(border_width as f32);
         let radius = niri_config::CornerRadius {
             top_left: source_radius.top_left * preview.zoom as f32,
             top_right: source_radius.top_right * preview.zoom as f32,
@@ -791,20 +804,19 @@ impl<W: LayoutElement> Layout<W> {
             bottom_left: source_radius.bottom_left * preview.zoom as f32,
         };
         let mut hint_cache = self.collection_overview.drop_hints.borrow_mut();
-        let hint = hint_cache.entry(output.clone())
+        let hint = hint_cache
+            .entry(output.clone())
             .or_insert_with(|| InsertHintElement::new(self.options.layout.insert_hint));
         hint.update_config(self.options.layout.insert_hint);
-        hint.update_render_elements(
-            transformed_area.size,
-            transformed_view,
-            radius,
-            scale,
-        );
-        let crop = preview.geometry
+        hint.update_render_elements(transformed_area.size, transformed_view, radius, scale);
+        let crop = preview
+            .geometry
             .intersection(Rectangle::from_size(output_size(output)))
             .map(|geometry| geometry.to_physical_precise_round(scale));
         hint.render(renderer, transformed_area.loc, &mut |elem| {
-            if let Some(elem) = crop.and_then(|crop| CropRenderElement::from_element(elem, scale, crop)) {
+            if let Some(elem) =
+                crop.and_then(|crop| CropRenderElement::from_element(elem, scale, crop))
+            {
                 push(CollectionOverviewRenderElement::InsertHint(elem));
             }
         });
@@ -816,7 +828,10 @@ fn preview_drop_target<W: LayoutElement>(
     pos: Point<f64, Logical>,
 ) -> Option<usize> {
     preview_drop_target_geometry(
-        previews.iter().enumerate().map(|(index, preview)| (index, preview.is_scratchpad, preview.geometry)),
+        previews
+            .iter()
+            .enumerate()
+            .map(|(index, preview)| (index, preview.is_scratchpad, preview.geometry)),
         pos,
     )
 }
@@ -840,7 +855,11 @@ fn preview_drop_target_geometry(
 }
 
 impl<W: LayoutElement> Layout<W> {
-    pub(super) fn has_collection_drop_target(&self, output: &Output, pos: Point<f64, Logical>) -> bool {
+    pub(super) fn has_collection_drop_target(
+        &self,
+        output: &Output,
+        pos: Point<f64, Logical>,
+    ) -> bool {
         let previews = self.collection_previews(output);
         preview_drop_target(&previews, pos).is_some()
     }
@@ -981,7 +1000,9 @@ impl Overview {
     ) {
         let workspaces: HashSet<_> = workspaces.collect();
         let outputs: HashSet<_> = outputs.collect();
-        self.drop_hints.borrow_mut().retain(|output, _| outputs.contains(output));
+        self.drop_hints
+            .borrow_mut()
+            .retain(|output, _| outputs.contains(output));
         self.prepared_revisions
             .borrow_mut()
             .retain(|id, _| workspaces.contains(id));
@@ -1150,5 +1171,4 @@ mod tests {
             );
         }
     }
-
 }

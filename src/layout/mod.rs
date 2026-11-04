@@ -3717,48 +3717,48 @@ impl<W: LayoutElement> Layout<W> {
             && self.has_collection_drop_target(&move_.output, move_.pointer_pos_within_output);
         if !over_side_collection {
             if let Some(mon) = self.monitor_for_output_mut(&move_.output) {
-            let zoom = mon.overview_zoom();
-            let (insert_ws, geo) = mon.insert_position(move_.pointer_pos_within_output);
-            match insert_ws {
-                InsertWorkspace::Existing(ws_id) => {
-                    let ws = mon
-                        .workspaces
-                        .iter_mut()
-                        .find(|ws| ws.id() == ws_id)
-                        .unwrap();
-                    let pos_within_workspace =
-                        (move_.pointer_pos_within_output - geo.loc).downscale(zoom);
-                    let position = if move_.is_floating {
-                        InsertPosition::Floating
-                    } else {
-                        ws.scrolling_insert_position(pos_within_workspace)
-                    };
+                let zoom = mon.overview_zoom();
+                let (insert_ws, geo) = mon.insert_position(move_.pointer_pos_within_output);
+                match insert_ws {
+                    InsertWorkspace::Existing(ws_id) => {
+                        let ws = mon
+                            .workspaces
+                            .iter_mut()
+                            .find(|ws| ws.id() == ws_id)
+                            .unwrap();
+                        let pos_within_workspace =
+                            (move_.pointer_pos_within_output - geo.loc).downscale(zoom);
+                        let position = if move_.is_floating {
+                            InsertPosition::Floating
+                        } else {
+                            ws.scrolling_insert_position(pos_within_workspace)
+                        };
 
-                    let border_width = move_.tile.effective_border_width().unwrap_or(0.);
-                    let corner_radius = move_
-                        .tile
-                        .window()
-                        .geometry_corner_radius()
-                        .expanded_by(border_width as f32);
-                    mon.insert_hint = Some(InsertHint {
-                        workspace: insert_ws,
-                        position,
-                        corner_radius,
-                    });
+                        let border_width = move_.tile.effective_border_width().unwrap_or(0.);
+                        let corner_radius = move_
+                            .tile
+                            .window()
+                            .geometry_corner_radius()
+                            .expanded_by(border_width as f32);
+                        mon.insert_hint = Some(InsertHint {
+                            workspace: insert_ws,
+                            position,
+                            corner_radius,
+                        });
+                    }
+                    InsertWorkspace::NewAt(_) => {
+                        let position = if move_.is_floating {
+                            InsertPosition::Floating
+                        } else {
+                            InsertPosition::NewColumn(0)
+                        };
+                        mon.insert_hint = Some(InsertHint {
+                            workspace: insert_ws,
+                            position,
+                            corner_radius: CornerRadius::default(),
+                        });
+                    }
                 }
-                InsertWorkspace::NewAt(_) => {
-                    let position = if move_.is_floating {
-                        InsertPosition::Floating
-                    } else {
-                        InsertPosition::NewColumn(0)
-                    };
-                    mon.insert_hint = Some(InsertHint {
-                        workspace: insert_ws,
-                        position,
-                        corner_radius: CornerRadius::default(),
-                    });
-                }
-            }
             }
         }
 
