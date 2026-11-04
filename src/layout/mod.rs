@@ -3152,6 +3152,14 @@ impl<W: LayoutElement> Layout<W> {
             );
             window_ids.push(window.id());
         }
+        for (index, (id, source, _)) in self.scratchpad_origins.iter().enumerate() {
+            assert!(window_ids.contains(&id), "hidden-window origins cannot outlive a window");
+            assert!(
+                self.scratchpad_origins[..index].iter().all(|(other, _, _)| other != id),
+                "a hidden window must have a single source"
+            );
+            assert_ne!(*source, self.scratchpad.id(), "scratchpad cannot be its own source");
+        }
         let mut seen_workspace_id = HashSet::new();
         let mut seen_workspace_name = Vec::<String>::new();
         assert!(
