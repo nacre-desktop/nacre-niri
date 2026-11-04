@@ -176,7 +176,7 @@ fn assert_pattern_spacing(
     size: smithay::utils::Size<i32, smithay::utils::Physical>,
     bounds: smithay::utils::Rectangle<i32, smithay::utils::Physical>,
     expected: f64,
-) -> Vec<(f64, f64)> {
+) {
     let centers = pattern_centers(pixels, size, bounds)
         .expect("four colored subsurface stripes visible in hidden preview");
     for pair in centers.windows(2) {
@@ -186,7 +186,6 @@ fn assert_pattern_spacing(
             "preview stripe centers should follow target scale and zoom: expected {expected:.2}px, got {distance:.2}px"
         );
     }
-    centers
 }
 
 fn color_present_in_preview(
@@ -437,15 +436,18 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         );
         let moved_source_width = moved_output.current_mode().unwrap().size.w as f64
             / moved_output.current_scale().fractional_scale();
-        let moved_centers = assert_pattern_spacing(
+        assert_pattern_spacing(
             &moved_pixels,
             moved_size,
             moved_preview,
             STRIPE_STRIDE as f64 * moved_preview.size.w as f64 / moved_source_width,
         );
+        let old_stripe_center =
+            color_center(&moved_pixels, moved_size, moved_preview, STRIPE_COLORS[0])
+                .expect("original stripe is visible in the selected preview");
         let expected_moved_center = (
-            moved_centers[0].0 + (520. - 80.) * moved_preview.size.w as f64 / moved_source_width,
-            moved_centers[0].1,
+            old_stripe_center.0 + (520. - 80.) * moved_preview.size.w as f64 / moved_source_width,
+            old_stripe_center.1,
         );
 
         let child = children[0].0.clone();
@@ -493,7 +495,7 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
                 &changed_pixels,
                 changed_size,
                 changed_preview,
-                moved_centers[0],
+                old_stripe_center,
                 STRIPE_COLORS[0]
             ),
             "the previous stripe position no longer shows its old color"
