@@ -687,7 +687,7 @@ fn reveal_tiny_skia_raster_matches_nacre_cpu_on_transparent_atlas_pixels() {
                 let opacity_to = fixed(number(&pose_to["opacity"]));
                 let opacity = opacity_from + (opacity_to - opacity_from) * progress;
                 let opacity = if plane["opacity_mode"]["kind"] == "opaque_above"
-                    && opacity > fixed(number(&plane["opacity_mode"]["threshold"]))
+                    && opacity > number(&plane["opacity_mode"]["threshold"])
                 {
                     1.
                 } else {
@@ -855,8 +855,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
             let to = pose("to");
             let opacity_mode = if plan_plane["opacity_mode"]["kind"] == "opaque_above" {
                 OpacityMode::OpaqueAbove(
-                    (fixed(n(&plan_plane["opacity_mode"]["threshold"])) * 1_000_000.).round()
-                        as u32,
+                    (n(&plan_plane["opacity_mode"]["threshold"]) * 1_000_000.).round() as u32,
                 )
             } else {
                 OpacityMode::Linear
@@ -1070,8 +1069,9 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
 #[test]
 #[ignore = "headless GLES compositor cost benchmark; run explicitly on owner desktop"]
 fn reveal_headless_gles_cost_benchmark() {
-    use smithay::backend::renderer::element::utils::CropRenderElement;
     use std::time::Instant;
+
+    use smithay::backend::renderer::element::utils::CropRenderElement;
 
     const FRAMES: usize = 64;
     let root = std::path::PathBuf::from(
@@ -1133,8 +1133,8 @@ fn reveal_headless_gles_cost_benchmark() {
             };
             let opacity = if plane["opacity_mode"]["kind"] == "opaque_above" {
                 OpacityMode::OpaqueAbove(
-                    (fixture_fixed(fixture_number(&plane["opacity_mode"]["threshold"]))
-                        * 1_000_000.) as u32,
+                    (fixture_number(&plane["opacity_mode"]["threshold"]) * 1_000_000.).round()
+                        as u32,
                 )
             } else {
                 OpacityMode::Linear
