@@ -125,6 +125,14 @@ struct TerminalTextureCache {
     texture: Box<dyn Any>,
 }
 
+impl std::fmt::Debug for TerminalTextureCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalTextureCache")
+            .field("snapshot", &self.snapshot)
+            .finish_non_exhaustive()
+    }
+}
+
 impl std::fmt::Debug for RevealEdgeTextureCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RevealEdgeTextureCache")
@@ -520,7 +528,7 @@ fn build_reveal_edge_pixels(
     };
     let last = first + i64::from(band_extent);
     let full_lead = spec.full_lead;
-    let shift = ((((full_lead - ghost_lead) * scale).round() as i64).max(-first));
+    let shift = (((full_lead - ghost_lead) * scale).round() as i64).max(-first);
     if !reveal_edge_template_matches(&band, &open, first, last, shift, spec.vertical, spec.far) {
         return None;
     }
