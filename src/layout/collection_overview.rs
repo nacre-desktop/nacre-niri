@@ -22,7 +22,7 @@ use super::workspace::{Workspace, WorkspaceAddWindowTarget, WorkspaceId, Workspa
 use super::{ActivateWindow, HitType, InteractiveMoveData, Layout, LayoutElement};
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
-use crate::render_helpers::renderer::{AsGlesRenderer as _, NiriRenderer};
+use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
@@ -173,6 +173,9 @@ impl<W: LayoutElement> Layout<W> {
             return;
         };
         if workspace.overview_revision() != prewarm.revision {
+            // A changing client must not turn this finite opening queue into continuous work.
+            // Its current buffer will use the normal, correctness-preserving reveal path.
+            crate::frame_trace::marker("overview_prewarm_stale");
             return;
         }
 
@@ -199,7 +202,7 @@ impl<W: LayoutElement> Layout<W> {
         self.collection_overview
             .active_warm_attempts
             .set(self.collection_overview.active_warm_attempts.get() + 1);
-        let _result = render_to_texture(
+        let result = render_to_texture(
             ctx.renderer,
             size,
             preview_scale.into(),
@@ -207,8 +210,11 @@ impl<W: LayoutElement> Layout<W> {
             Fourcc::Abgr8888,
             elements.iter().rev(),
         );
+        if result.is_err() {
+            crate::frame_trace::marker("overview_prewarm_failed");
+        }
         #[cfg(test)]
-        if _result.is_ok() {
+        if result.is_ok() {
             self.collection_overview
                 .active_warm_successes
                 .set(self.collection_overview.active_warm_successes.get() + 1);
@@ -962,7 +968,11 @@ impl Overview {
         let mut all = self.active_prewarm.borrow_mut();
         let state = all.entry(output.clone()).or_default();
         let current = (context, scale.to_bits());
-        if state.identity.is_some_and(|previous| previous != current) {
+        if state
+            .identity
+            .as_ref()
+            .is_some_and(|previous| previous != &current)
+        {
             state.attempted.clear();
             state.pending = None;
         }
