@@ -800,6 +800,13 @@ impl Niri {
             return;
         };
         let size = geometry.size.to_f64();
+        let output_origin = [geometry.loc.x as f64, geometry.loc.y as f64];
+        let cue_interval = cue_frame_interval(
+            output
+                .current_mode()
+                .map(|mode| mode.refresh.try_into().unwrap_or(0))
+                .unwrap_or(60_000),
+        );
         let pointer_position = self
             .seat
             .get_pointer()
@@ -914,7 +921,7 @@ impl Niri {
                 output: output_name.clone(),
                 edge,
                 output_size: [size.w, size.h],
-                output_origin: [geometry.loc.x as f64, geometry.loc.y as f64],
+                output_origin,
                 last_position: [position.x, position.y],
                 action,
                 pressure: 0.,
@@ -928,12 +935,7 @@ impl Niri {
                 trigger_distance: edge_band_width(Some(trigger)),
                 trigger_length: edge_span_width(Some(trigger)),
                 cue,
-                cue_interval: cue_frame_interval(
-                    output
-                        .current_mode()
-                        .map(|mode| mode.refresh.try_into().unwrap_or(0))
-                        .unwrap_or(60_000),
-                ),
+                cue_interval,
                 last_cue_position: None,
                 last_cue_progress: None,
             });
