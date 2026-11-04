@@ -201,9 +201,19 @@ fn window_focus_updates_hidden_desk_mru_for_later_hotplug() {
 
     check_ops_on_layout(&mut layout, [Op::RemoveOutput(1)]);
     check_ops_on_layout(&mut layout, [Op::AddOutput(3)]);
-    assert_eq!(layout.collection_for_output(&output(&layout, 3)), Some(recent));
-    assert_eq!(layout.collections.iter().find(|collection| collection.id == recent)
-        .unwrap().original_output, None);
+    assert_eq!(
+        layout.collection_for_output(&output(&layout, 3)),
+        Some(recent)
+    );
+    assert_eq!(
+        layout
+            .collections
+            .iter()
+            .find(|collection| collection.id == recent)
+            .unwrap()
+            .original_output,
+        None
+    );
     assert_ne!(layout.collection_for_output(&output2), Some(recent));
     layout.verify_invariants();
 }

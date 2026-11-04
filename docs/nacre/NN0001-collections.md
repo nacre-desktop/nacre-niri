@@ -92,6 +92,10 @@ overview.
 IPC references additionally support stable IDs. Next/previous wrap in collection
 order. Invalid references are harmless. Moving a window preserves its tile state.
 The move actions target the collection's active workspace.
+Keyboard and IPC desk-focus actions use the swipe's horizontal slide, including
+the same next/previous direction at wraparound. Reversing a switch preserves its
+current position; a new third target waits for the visible pair to settle.
+Disabling animations switches desks immediately.
 Config-declared names are reconciled on reload and remain while empty.
 Legacy workspace move/index operations require a shown collection; hidden named/ID
 references are rejected rather than interpreted on an unrelated monitor. Workspace
@@ -116,11 +120,12 @@ collection event extension to observe those changes.
 ## Empty removal
 
 A shown collection is retained, even when empty. A hidden collection with no windows
-on any workspace is removed, whether detached or user-created, unless declared in
-config. A connected output's automatically created home desk remains available for
-rotation while that output is connected. Runtime-created or renamed collections
-with a non-empty name remain persistent while empty. Clearing the name makes an
-otherwise empty hidden collection eligible for cleanup. Config-declared names
+on any workspace is removed, whether detached or user-created, unless it has a
+name or is declared in config. A connected output's automatically created home
+desk remains available for rotation while that output is connected. Runtime-created
+or renamed collections with a non-empty name remain persistent while empty.
+Clearing the name makes an otherwise empty hidden collection eligible for cleanup.
+Config-declared names
 remain persistent and reconcile by their original configured name. Renaming a
 declared collection changes its runtime name without replacing that configured
 identity, so reloads preserve the runtime name and do not create a duplicate.
