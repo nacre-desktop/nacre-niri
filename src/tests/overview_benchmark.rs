@@ -201,13 +201,15 @@ fn measure_scroll(
         .id()
         .clone();
     let event_start = Instant::now();
-    pointer.axis_source(wl_pointer::AxisSource::Wheel);
     pointer.axis_discrete(
         start_ms as u32 + 1,
         wl_pointer::Axis::VerticalScroll,
         15.0,
         1,
     );
+    // The virtual-pointer frame accumulator drops a source-only request if no
+    // timestamped axis has created the frame yet, so set the source afterward.
+    pointer.axis_source(wl_pointer::AxisSource::Wheel);
     pointer.frame();
     fixture.client(client).connection.flush().unwrap();
     fixture.roundtrip(client);
