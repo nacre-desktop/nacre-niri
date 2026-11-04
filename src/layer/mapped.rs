@@ -1,7 +1,10 @@
+use std::any::Any;
+use std::cell::RefCell;
 use std::sync::{Arc, Mutex};
 
 use niri_config::utils::MergeWith as _;
-use niri_config::{Config, LayerRule};
+use niri_config::{Color, Config, CornerRadius, GradientInterpolation, LayerRule};
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::utils::{
     CropRenderElement, Relocate, RelocateRenderElement, RescaleRenderElement,
@@ -10,21 +13,24 @@ use smithay::backend::renderer::element::{Element, Id, Kind, RenderElement, Unde
 use smithay::backend::renderer::utils::{CommitCounter, DamageSet, OpaqueRegions};
 use smithay::desktop::{LayerSurface, PopupKind, PopupManager, WindowSurfaceType};
 use smithay::utils::user_data::UserDataMap;
-use smithay::utils::{Logical, Point, Rectangle, Scale, Size};
-use smithay::wayland::compositor::{remove_pre_commit_hook, HookId};
+use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
+use smithay::wayland::compositor::{remove_pre_commit_hook, with_states, HookId};
 use smithay::wayland::shell::wlr_layer::{ExclusiveZone, Layer};
 
 use super::motion::{LayerMotion, MotionCurve, MotionPose, OpacityMode};
+use super::reveal::{Rect as RevealRect, RevealDescriptor};
 use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
 use crate::protocols::layer_motion::{LayerMotionRuntime, MotionPlane};
 use crate::render_helpers::background_effect::BackgroundEffectElement;
+use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
 use crate::render_helpers::shadow::ShadowRenderElement;
 use crate::render_helpers::solid_color::{SolidColorBuffer, SolidColorRenderElement};
 use crate::render_helpers::surface::push_elements_from_surface_tree;
+use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::{background_effect, RenderCtx};
 use crate::utils::{baba_is_float_offset, round_logical_in_physical};
@@ -66,12 +72,43 @@ pub struct MappedLayer {
     /// Optional protocol-driven atlas animation shared with its controller.
     motion: Option<Arc<Mutex<LayerMotionRuntime>>>,
     promotion_motion: Option<LayerMotion>,
+    reveal_texture_cache: RefCell<Vec<RevealTextureCache>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct RevealTextureCacheKey {
+    descriptor: RevealDescriptor,
+    progress: u64,
+    scale: u32,
+    surface_width: u32,
+    surface_height: u32,
+    location_x: u64,
+    location_y: u64,
+}
+
+struct RevealTextureCache {
+    key: RevealTextureCacheKey,
+    texture: Box<dyn Any>,
+    shadow: Option<ShadowRenderElement>,
+    crop: RevealRect,
+}
+
+impl std::fmt::Debug for RevealTextureCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RevealTextureCache")
+            .field("key", &self.key)
+            .field("shadow", &self.shadow.is_some())
+            .field("crop", &self.crop)
+            .finish_non_exhaustive()
+    }
 }
 
 niri_render_elements! {
     LayerSurfaceRenderElement<R> => {
         Wayland = WaylandSurfaceRenderElement<R>,
         MotionPlane = MotionPlaneRenderElement<R>,
+        Border = BorderRenderElement,
+        Reveal = TextureRenderElement<R::NiriTextureId>,
         SolidColor = SolidColorRenderElement,
         Shadow = ShadowRenderElement,
         BackgroundEffect = BackgroundEffectElement,
@@ -90,6 +127,20 @@ pub struct MotionPlaneRenderElement<R: NiriRenderer> {
 }
 
 type LayerMotionSnapshot = (Vec<MotionPlane>, Vec<(u32, MotionPose)>);
+
+fn to_physical_cover(
+    rect: Rectangle<f64, Logical>,
+    scale: Scale<f64>,
+) -> Rectangle<i32, smithay::utils::Physical> {
+    let left = (rect.loc.x * scale.x).floor() as i32;
+    let top = (rect.loc.y * scale.y).floor() as i32;
+    let right = ((rect.loc.x + rect.size.w) * scale.x).ceil() as i32;
+    let bottom = ((rect.loc.y + rect.size.h) * scale.y).ceil() as i32;
+    Rectangle::new(
+        Point::from((left, top)),
+        Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),
+    )
+}
 
 impl<R: NiriRenderer> MotionPlaneRenderElement<R> {
     fn new(
@@ -194,6 +245,7 @@ impl MappedLayer {
             clock,
             motion: None,
             promotion_motion: None,
+            reveal_texture_cache: RefCell::new(Vec::new()),
         }
     }
 
@@ -257,6 +309,7 @@ impl MappedLayer {
         let motion = self.motion.as_ref()?;
         let runtime = motion.lock().unwrap();
         if runtime.planes.is_empty() {
+            self.reveal_texture_cache.borrow_mut().clear();
             return None;
         }
         let poses = runtime
@@ -267,12 +320,303 @@ impl MappedLayer {
         Some((runtime.planes.clone(), poses))
     }
 
+    fn reveal_snapshot(&self) -> Option<(RevealDescriptor, f64, f64)> {
+        let motion = self.motion.as_ref()?;
+        let runtime = motion.lock().unwrap();
+        let reveal = runtime.reveal.clone()?;
+        let (progress, opacity) = if let Some(active) = runtime.active.as_ref() {
+            let progress = active.progress(self.clock.now_unadjusted());
+            let opacity = active
+                .sample(self.clock.now_unadjusted())
+                .into_iter()
+                .find(|(id, _)| *id == reveal.opacity_plane)
+                .map_or(1., |(_, pose)| pose.opacity);
+            (progress, opacity)
+        } else {
+            let opacity = runtime
+                .current
+                .iter()
+                .find(|(id, _)| *id == reveal.opacity_plane)
+                .map_or(1., |(_, pose)| pose.opacity);
+            (1., opacity)
+        };
+        Some((reveal, progress, opacity))
+    }
+
+    fn render_reveal<R: NiriRenderer>(
+        &self,
+        renderer: &mut R,
+        location: Point<f64, Logical>,
+        scale: Scale<f64>,
+        alpha: f32,
+        push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
+    ) {
+        let Some((reveal, progress, opacity)) = self.reveal_snapshot() else {
+            self.reveal_texture_cache.borrow_mut().clear();
+            return;
+        };
+        if !reveal.visible {
+            self.reveal_texture_cache.borrow_mut().clear();
+            return;
+        }
+        let Some(surface_geo) = with_states(&self.surface.wl_surface(), crate::utils::surface_geo)
+        else {
+            return;
+        };
+        if reveal.fill[3] == 0
+            && reveal
+                .rim
+                .as_ref()
+                .is_none_or(|rim| rim.width == 0. || rim.opacity == 0.)
+            && reveal.shadow.is_none()
+        {
+            return;
+        }
+        if reveal.static_rects.is_empty()
+            && reveal.holes.is_empty()
+            && reveal.corner_mode == super::reveal::CornerMode::Circular
+            && reveal.rim.is_none()
+        {
+            let body = reveal.sample(progress).body;
+            let crop = reveal.crop;
+            let size = Size::from((crop.w as f64, crop.h as f64));
+            if size.w <= 0. || size.h <= 0. {
+                return;
+            }
+            let mut radii = reveal.sample(progress).radii;
+            if body.x <= reveal.output_bounds.x && reveal.square_edges & 1 != 0 {
+                radii[0] = 0.;
+                radii[3] = 0.;
+            }
+            if body.y <= reveal.output_bounds.y && reveal.square_edges & 2 != 0 {
+                radii[0] = 0.;
+                radii[1] = 0.;
+            }
+            if body.x + body.w >= reveal.output_bounds.x + reveal.output_bounds.w
+                && reveal.square_edges & 4 != 0
+            {
+                radii[1] = 0.;
+                radii[2] = 0.;
+            }
+            if body.y + body.h >= reveal.output_bounds.y + reveal.output_bounds.h
+                && reveal.square_edges & 8 != 0
+            {
+                radii[2] = 0.;
+                radii[3] = 0.;
+            }
+            let maximum_radius = (body.w.min(body.h) / 2.).max(0.);
+            radii
+                .iter_mut()
+                .for_each(|radius| *radius = radius.min(maximum_radius));
+            let radius = CornerRadius {
+                top_left: radii[0],
+                top_right: radii[1],
+                bottom_right: radii[2],
+                bottom_left: radii[3],
+            };
+            let area = Rectangle::from_size(size);
+            let geometry = Rectangle::new(
+                Point::from(((body.x - crop.x) as f64, (body.y - crop.y) as f64)),
+                Size::from((body.w as f64, body.h as f64)),
+            );
+            let color = Color::from_rgba8_unpremul(
+                reveal.fill[0],
+                reveal.fill[1],
+                reveal.fill[2],
+                reveal.fill[3],
+            );
+            let border = BorderRenderElement::new(
+                size,
+                area,
+                GradientInterpolation::default(),
+                color,
+                color,
+                0.,
+                geometry,
+                0.,
+                radius,
+                scale.x as f32,
+                alpha * opacity as f32,
+            )
+            .with_location(location + Point::from((crop.x as f64, crop.y as f64)));
+            push(border.into());
+            if let Some(shadow) = self.create_reveal_shadow(&reveal, progress, location, scale) {
+                push(shadow.with_alpha(alpha * opacity as f32).into());
+            }
+            self.reveal_texture_cache.borrow_mut().clear();
+            return;
+        }
+        let key = RevealTextureCacheKey {
+            descriptor: reveal.clone(),
+            progress: progress.to_bits(),
+            scale: (scale.x as f32).to_bits(),
+            surface_width: (surface_geo.size.w as f32).to_bits(),
+            surface_height: (surface_geo.size.h as f32).to_bits(),
+            location_x: location.x.to_bits(),
+            location_y: location.y.to_bits(),
+        };
+        let cached = self.reveal_texture_cache.borrow().iter().find_map(|entry| {
+            if entry.key != key {
+                return None;
+            }
+            let texture = entry
+                .texture
+                .downcast_ref::<TextureBuffer<R::NiriTextureId>>()?;
+            texture
+                .belongs_to_renderer(renderer)
+                .then(|| (texture.clone(), entry.shadow.clone(), entry.crop))
+        });
+        let (buffer, crop, cached_shadow) = if let Some((buffer, shadow, crop)) = cached {
+            (buffer, crop, shadow)
+        } else {
+            let Some((pixmap, crop)) = reveal.rasterize(
+                progress,
+                scale.x as f32,
+                (surface_geo.size.w as f32, surface_geo.size.h as f32),
+            ) else {
+                return;
+            };
+            let size = (pixmap.width(), pixmap.height());
+            let Ok(buffer) = TextureBuffer::from_memory(
+                renderer,
+                pixmap.data(),
+                Fourcc::Abgr8888,
+                Size::from((size.0 as i32, size.1 as i32)),
+                false,
+                scale,
+                Transform::Normal,
+                Vec::new(),
+            ) else {
+                return;
+            };
+            let shadow = self.create_reveal_shadow(&reveal, progress, location, scale);
+            let mut cache = self.reveal_texture_cache.borrow_mut();
+            cache.retain(|entry| entry.key != key);
+            cache.push(RevealTextureCache {
+                key,
+                texture: Box::new(buffer.clone()),
+                shadow: shadow.clone(),
+                crop,
+            });
+            if cache.len() > 1 {
+                cache.remove(0);
+            }
+            (buffer, crop, shadow)
+        };
+        let element = TextureRenderElement::from_texture_buffer(
+            buffer,
+            location + Point::from((crop.x as f64, crop.y as f64)),
+            alpha * opacity as f32,
+            None,
+            None,
+            Kind::Unspecified,
+        );
+        push(element.into());
+        if let Some(shadow) = cached_shadow {
+            push(shadow.with_alpha(alpha * opacity as f32).into());
+        }
+    }
+
+    fn create_reveal_shadow(
+        &self,
+        reveal: &RevealDescriptor,
+        progress: f64,
+        location: Point<f64, Logical>,
+        scale: Scale<f64>,
+    ) -> Option<ShadowRenderElement> {
+        let shadow = reveal.shadow.as_ref()?;
+        if !reveal.static_rects.is_empty()
+            || !reveal.holes.is_empty()
+            || reveal.corner_mode != super::reveal::CornerMode::Circular
+        {
+            return None;
+        }
+        let body = reveal.sample(progress).body;
+        // The token is already Gaussian standard deviation, as used by
+        // Bead's SVG feGaussianBlur and Niri's rounded-box shadow shader.
+        let sigma = shadow.blur_radius;
+        let scale = scale.x as f32;
+        let ceil = |value: f32| (value * scale).ceil() / scale;
+        let extent = ceil(sigma * 3.);
+        let spread = ceil(shadow.spread.abs()).copysign(shadow.spread);
+        let offset: Point<f32, Logical> =
+            Point::from((ceil(shadow.offset.0), ceil(shadow.offset.1)));
+        let positive_spread = spread.max(0.);
+        let negative_spread = (-spread).max(0.);
+        let size = Size::from((
+            (body.w + positive_spread * 2. + extent * 2.) as f64,
+            (body.h + positive_spread * 2. + extent * 2.) as f64,
+        ));
+        let shape_width = body.w + spread * 2.;
+        let shape_height = body.h + spread * 2.;
+        let shape_size = Size::from((shape_width as f64, shape_height as f64));
+        if size.w <= 0. || size.h <= 0. || shape_width <= 0. || shape_height <= 0. {
+            return None;
+        }
+        let shape_loc = Point::from((
+            (extent + negative_spread) as f64,
+            (extent + negative_spread) as f64,
+        ));
+        let window_loc = Point::from((
+            (extent + positive_spread - offset.x) as f64,
+            (extent + positive_spread - offset.y) as f64,
+        ));
+        let sampled = reveal.sample(progress);
+        let window_radius = CornerRadius {
+            top_left: sampled.radii[0],
+            top_right: sampled.radii[1],
+            bottom_right: sampled.radii[2],
+            bottom_left: sampled.radii[3],
+        }
+        .fit_to(body.w, body.h);
+        let shadow_radius = window_radius
+            .expanded_by(spread)
+            .fit_to(shape_width, shape_height);
+        Some(
+            ShadowRenderElement::new(
+                size,
+                Rectangle::new(shape_loc, shape_size),
+                Color::from_rgba8_unpremul(
+                    shadow.color[0],
+                    shadow.color[1],
+                    shadow.color[2],
+                    shadow.color[3],
+                ),
+                sigma,
+                shadow_radius,
+                scale,
+                Rectangle::new(window_loc, Size::from((body.w as f64, body.h as f64))),
+                window_radius,
+                1.,
+            )
+            .with_location(
+                location
+                    + Point::from((
+                        (body.x - extent - positive_spread + offset.x) as f64,
+                        (body.y - extent - positive_spread + offset.y) as f64,
+                    )),
+            ),
+        )
+    }
+
     /// `None` means ordinary layer hit testing; `Some(None)` means the animated
     /// atlas does not cover this point; `Some(Some(point))` maps into atlas input.
     pub fn motion_input_point(
         &self,
         point: Point<f64, Logical>,
     ) -> Option<Option<Point<f64, Logical>>> {
+        if let Some(motion) = &self.motion {
+            let runtime = motion.lock().unwrap();
+            if let Some(reveal) = &runtime.reveal {
+                let progress = runtime
+                    .active
+                    .as_ref()
+                    .map_or(1., |active| active.progress(self.clock.now_unadjusted()));
+                if !reveal.contains((point.x, point.y), progress) {
+                    return Some(None);
+                }
+            }
+        }
         let (planes, poses) = self.motion_snapshot()?;
         let pose_for = |id| {
             poses
@@ -465,6 +809,7 @@ impl MappedLayer {
                 &poses,
                 push,
             );
+            self.render_reveal(ctx.renderer, location, scale, alpha, push);
         } else {
             // Layer surfaces don't have extra geometry like windows.
             let buf_pos = location;
@@ -523,6 +868,19 @@ impl MappedLayer {
     ) {
         let root_location = location.to_physical_precise_round(scale);
         let root_id = Id::from_wayland_resource(surface);
+        let reveal_state = self.reveal_snapshot();
+        let animated_content_clip = reveal_state.as_ref().and_then(|(reveal, progress, _)| {
+            reveal
+                .visible
+                .then(|| reveal.sample(*progress).content_clip)
+                .flatten()
+                .map(|clip| {
+                    Rectangle::new(
+                        Point::from((clip.x as f64, clip.y as f64)),
+                        Size::from((clip.w as f64, clip.h as f64)),
+                    )
+                })
+        });
         for plane in planes {
             let Some((_, pose)) = poses.iter().find(|(id, _)| *id == plane.id) else {
                 continue;
@@ -541,8 +899,16 @@ impl MappedLayer {
             let destination_logical =
                 Rectangle::new(location + pose.destination.loc, pose.destination.size);
             let destination_physical = destination_logical.to_physical_precise_round(scale);
-            let clip_logical = Rectangle::new(location + pose.clip.loc, pose.clip.size);
-            let clip_physical = clip_logical.to_physical_precise_round(scale);
+            let mut clip_logical = Rectangle::new(location + pose.clip.loc, pose.clip.size);
+            if let Some(reveal_clip) = animated_content_clip {
+                let Some(intersection) = clip_logical
+                    .intersection(Rectangle::new(location + reveal_clip.loc, reveal_clip.size))
+                else {
+                    continue;
+                };
+                clip_logical = intersection;
+            }
+            let clip_physical = to_physical_cover(clip_logical, scale);
             let Some(visible_physical) = destination_physical.intersection(clip_physical) else {
                 continue;
             };
@@ -585,10 +951,9 @@ impl MappedLayer {
                         return;
                     };
                     let damage = plane.damage.render(visible_logical);
-                    push(
-                        MotionPlaneRenderElement::new(inner, plane.render_id.clone(), damage)
-                            .into(),
-                    );
+                    let element =
+                        MotionPlaneRenderElement::new(inner, plane.render_id.clone(), damage);
+                    push(element.into());
                 },
             );
         }

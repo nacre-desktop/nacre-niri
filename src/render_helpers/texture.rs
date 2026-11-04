@@ -32,6 +32,10 @@ pub struct TextureRenderElement<T: Texture> {
 }
 
 impl<T: Texture> TextureBuffer<T> {
+    pub fn belongs_to_renderer<R: Renderer<TextureId = T>>(&self, renderer: &R) -> bool {
+        self.renderer_context_id == renderer.context_id()
+    }
+
     pub fn from_texture<R: Renderer<TextureId = T>>(
         renderer: &R,
         texture: T,
