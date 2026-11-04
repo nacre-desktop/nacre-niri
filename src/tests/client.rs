@@ -119,7 +119,7 @@ pub struct State {
     pub seat: Option<WlSeat>,
     pub pointer: Option<WlPointer>,
     pub pointer_events: Vec<wl_pointer::Event>,
-    pub released_buffers: usize,
+    pub released_buffers: Vec<WlBuffer>,
     pub promotions: Vec<LayerPromotionController>,
 
     pub windows: Vec<Window>,
@@ -267,7 +267,7 @@ impl Client {
             seat: None,
             pointer: None,
             pointer_events: Vec::new(),
-            released_buffers: 0,
+            released_buffers: Vec::new(),
             promotions: Vec::new(),
             windows: Vec::new(),
             layers: Vec::new(),
@@ -927,14 +927,14 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
 impl Dispatch<WlBuffer, ()> for State {
     fn event(
         state: &mut Self,
-        _proxy: &WlBuffer,
+        proxy: &WlBuffer,
         event: <WlBuffer as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            wl_buffer::Event::Release => state.released_buffers += 1,
+            wl_buffer::Event::Release => state.released_buffers.push(proxy.clone()),
             _ => unreachable!(),
         }
     }

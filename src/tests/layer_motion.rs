@@ -502,7 +502,6 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         .create_rgba_shm_buffer(100, 100, &terminal_bytes);
     motion_proxy.set_reveal_terminal_buffer(Some(&terminal_buffer), 100., 100.);
     motion_proxy.animate(20, 150, 0);
-    let releases_before_terminal_commit = f.client(id).state.released_buffers;
 
     let layer = f.client(id).layer(&client_surface);
     layer.attach_new_buffer();
@@ -510,7 +509,10 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
     assert!(
-        f.client(id).state.released_buffers > releases_before_terminal_commit,
+        f.client(id)
+            .state
+            .released_buffers
+            .contains(&terminal_buffer),
         "compositor releases copied terminal SHM buffer"
     );
     let root_surface = mapped_surface(&f);
@@ -642,6 +644,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     motion_proxy.set_reveal_terminal_buffer(Some(&stale_buffer), 100., 100.);
     f.client(id).layer(&client_surface).commit();
     f.double_roundtrip(id);
+    assert!(f.client(id).state.released_buffers.contains(&stale_buffer));
     {
         let runtime = runtime.lock().unwrap();
         assert_eq!(
