@@ -442,6 +442,7 @@ fn empty_laptop_home_remains_available_and_empty_virtual_desk_expires() {
 fn hiding_last_window_keeps_persistent_slot_with_empty_workspace_above_first() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);
+    layout.create_collection(Some("persistent-home".into()));
     add_window(&mut layout, 51);
     let output = layout.outputs().next().unwrap().clone();
     layout
