@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
-use niri_config::Config;
 use niri_config::animations::{Curve, EasingParams, Kind};
+use niri_config::Config;
 use smithay::backend::allocator::Fourcc;
 use smithay::utils::{Scale, Transform};
 
@@ -295,9 +295,17 @@ fn egl_benchmark_overview_first_vs_second_wheel_scroll() {
     }
 
     let frame_period = Duration::from_nanos(1_000_000_000 / 120);
+    let starting_workspace = fixture.niri().layout.active_workspace().unwrap().id();
     let (first, first_assembly, first_draw) =
         measure_scroll(&mut fixture, client, &pointer, 1000, frame_period, "first");
+    // Replay the same camera path and source windows. A second scroll into a different cold row
+    // could hide a first-use regression by making the comparison frame slower too.
+    fixture.niri().layout.switch_workspace(3);
     fixture.niri_complete_animations();
+    assert_eq!(
+        fixture.niri().layout.active_workspace().unwrap().id(),
+        starting_workspace
+    );
     let (second, second_assembly, second_draw) =
         measure_scroll(&mut fixture, client, &pointer, 2000, frame_period, "second");
     let margin = 1.0_f64.max(second * 0.2);

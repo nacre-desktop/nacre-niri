@@ -14,11 +14,11 @@ fn fixture() -> Fixture {
     let config = Config::parse_mem(
         r#"
 output "headless-1" { scale 1.5; }
-workspace "desk-0" { open-on-output "headless-1" }
-workspace "desk-1" { open-on-output "headless-1" }
-workspace "desk-2" { open-on-output "headless-1" }
-workspace "desk-3" { open-on-output "headless-1" }
-workspace "desk-4" { open-on-output "headless-1" }
+workspace "desk-0" { open-on-output "headless-1"; }
+workspace "desk-1" { open-on-output "headless-1"; }
+workspace "desk-2" { open-on-output "headless-1"; }
+workspace "desk-3" { open-on-output "headless-1"; }
+workspace "desk-4" { open-on-output "headless-1"; }
 "#,
     )
     .unwrap();
@@ -174,11 +174,11 @@ fn egl_overview_prewarm_imports_an_uncached_offscreen_client_surface() {
     let config = Config::parse_mem(
         r#"
 output "headless-1" { scale 1.5; }
-workspace "desk-0" { open-on-output "headless-1" }
-workspace "desk-1" { open-on-output "headless-1" }
-workspace "desk-2" { open-on-output "headless-1" }
-workspace "desk-3" { open-on-output "headless-1" }
-workspace "desk-4" { open-on-output "headless-1" }
+workspace "desk-0" { open-on-output "headless-1"; }
+workspace "desk-1" { open-on-output "headless-1"; }
+workspace "desk-2" { open-on-output "headless-1"; }
+workspace "desk-3" { open-on-output "headless-1"; }
+workspace "desk-4" { open-on-output "headless-1"; }
 "#,
     )
     .unwrap();
