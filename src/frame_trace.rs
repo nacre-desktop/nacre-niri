@@ -29,13 +29,14 @@ pub(crate) fn overview_open() {
     }
 }
 
-pub(crate) fn overview_scroll() {
+pub(crate) fn overview_scroll(axis: &'static str, ticks: i8) {
     if enabled() {
-        marker(if SCROLLED.replace(true) {
+        let event = if SCROLLED.replace(true) {
             "overview_scroll"
         } else {
             "overview_first_scroll"
-        });
+        };
+        info!(target: "nacre_niri_frame_trace", event, axis, ticks, frame = FRAME.get(), overview = OVERVIEW.get());
     }
 }
 

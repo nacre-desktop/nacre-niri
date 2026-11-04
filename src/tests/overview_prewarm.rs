@@ -17,7 +17,12 @@ workspace "desk-4" { open-on-output "headless-1" }
     )
     .unwrap();
     let mut fixture = Fixture::with_config(config);
-    fixture.niri_state().backend.headless().add_renderer().unwrap();
+    fixture
+        .niri_state()
+        .backend
+        .headless()
+        .add_renderer()
+        .unwrap();
     fixture.add_output(1, (1200, 800));
     fixture.niri().layout.switch_workspace(2);
     fixture.niri_complete_animations();

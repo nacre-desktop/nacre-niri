@@ -1659,10 +1659,7 @@ impl<W: LayoutElement> Monitor<W> {
         self.workspaces_render_geo_at(zoom)
     }
 
-    fn workspaces_render_geo_at(
-        &self,
-        zoom: f64,
-    ) -> impl Iterator<Item = Rectangle<f64, Logical>> {
+    fn workspaces_render_geo_at(&self, zoom: f64) -> impl Iterator<Item = Rectangle<f64, Logical>> {
         let scale = self.scale.fractional_scale();
 
         let ws_size = self.workspace_size(zoom);
@@ -1730,9 +1727,7 @@ impl<W: LayoutElement> Monitor<W> {
     /// Return the closest workspace immediately outside the visible desk stack in each
     /// direction. Overview scrolling renders these workspaces only after they enter the output,
     /// so their render elements and imports can be prepared ahead of that first reveal.
-    pub(super) fn overview_prewarm_candidates(
-        &self,
-    ) -> Vec<(WorkspaceId, u64)> {
+    pub(super) fn overview_prewarm_candidates(&self) -> Vec<(WorkspaceId, u64)> {
         let current = self.overview_prewarm_pair(self.overview_zoom());
         let settled_zoom = compute_overview_zoom(&self.options, Some(1.));
         let settled = self.overview_prewarm_pair(settled_zoom);
@@ -1754,10 +1749,7 @@ impl<W: LayoutElement> Monitor<W> {
             })
     }
 
-    fn overview_prewarm_pair(
-        &self,
-        zoom: f64,
-    ) -> [Option<WorkspaceId>; 2] {
+    fn overview_prewarm_pair(&self, zoom: f64) -> [Option<WorkspaceId>; 2] {
         let output_geo = Rectangle::from_size(self.view_size);
         let mut above = None;
         let mut below = None;
@@ -1786,7 +1778,10 @@ impl<W: LayoutElement> Monitor<W> {
             }
         }
 
-        [above.map(|(workspace, _)| workspace), below.map(|(workspace, _)| workspace)]
+        [
+            above.map(|(workspace, _)| workspace),
+            below.map(|(workspace, _)| workspace),
+        ]
     }
 
     pub fn workspace_under(

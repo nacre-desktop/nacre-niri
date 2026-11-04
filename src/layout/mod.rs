@@ -3667,10 +3667,8 @@ impl<W: LayoutElement> Layout<W> {
                         .schedule_active_prewarm(&mon.output, candidates)
                     {
                         let _trace = crate::frame_trace::span("overview_prewarm_prepare");
-                        if let Some(workspace) = mon
-                            .workspaces
-                            .iter_mut()
-                            .find(|ws| ws.id() == workspace)
+                        if let Some(workspace) =
+                            mon.workspaces.iter_mut().find(|ws| ws.id() == workspace)
                         {
                             workspace.update_render_elements(false);
                         }

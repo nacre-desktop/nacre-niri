@@ -149,11 +149,7 @@ impl<W: LayoutElement> Layout<W> {
     /// Rendering uses the regular workspace elements and output target, so imports and GPU draw
     /// paths run before the workspace is revealed. The returned sync point is intentionally
     /// dropped without waiting or reading back.
-    pub fn prewarm_overview<R: NiriRenderer>(
-        &self,
-        mut ctx: RenderCtx<R>,
-        output: &Output,
-    ) {
+    pub fn prewarm_overview<R: NiriRenderer>(&self, mut ctx: RenderCtx<R>, output: &Output) {
         if ctx.target != RenderTarget::Output || !self.overview_open {
             return;
         }
@@ -932,17 +928,20 @@ impl Overview {
     }
 
     pub(super) fn active_prewarm_pending(&self, output: &Output) -> bool {
-        self.active_prewarm.borrow().get(output).is_some_and(|state| {
-            state.pending.is_some()
-                || state.candidates.as_ref().is_some_and(|candidates| {
-                    candidates.iter().any(|candidate| {
-                        !state.attempted.contains(&ActivePrewarmKey {
-                            workspace: candidate.workspace,
-                            revision: candidate.revision,
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .is_some_and(|state| {
+                state.pending.is_some()
+                    || state.candidates.as_ref().is_some_and(|candidates| {
+                        candidates.iter().any(|candidate| {
+                            !state.attempted.contains(&ActivePrewarmKey {
+                                workspace: candidate.workspace,
+                                revision: candidate.revision,
+                            })
                         })
                     })
-                })
-        })
+            })
     }
 
     #[cfg(test)]
@@ -1024,6 +1023,7 @@ impl Overview {
         if let Some(cached) = self.textures.borrow().iter().find(|entry| entry.key == key) {
             return Some(cached.buffer.clone());
         }
+        let _trace = crate::frame_trace::span("overview_preview_cache_miss");
         let mut elements: Vec<
             HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
         > = Vec::new();
@@ -1146,6 +1146,7 @@ impl Overview {
             labels.clear();
         }
         if !labels.contains_key(&key) {
+            let _trace = crate::frame_trace::span("overview_label_cache_miss");
             let surface =
                 ImageSurface::create(cairo::Format::ARgb32, width, (32. * scale).ceil() as i32)
                     .ok()?;

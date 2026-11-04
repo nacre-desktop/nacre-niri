@@ -4533,7 +4533,13 @@ impl Niri {
         let state = self.output_state.get(output).unwrap();
         ctx.xray = Some(&state.xray);
 
-        self.render_inner(ctx, output, include_pointer, push);
+        self.render_inner(ctx.r(), output, include_pointer, push);
+
+        // Prewarm only the real output, while the xray sources are still populated. Capture
+        // targets retain their own privacy rules and never consume the output's warmup queue.
+        if !self.is_locked() {
+            self.layout.prewarm_overview(ctx.r(), output);
+        }
 
         self.clear_xray_elements(output);
     }
@@ -5058,8 +5064,12 @@ impl Niri {
 
         let mut res = RenderResult::Skipped;
         if self.monitors_active {
+            let prewarm_pending = !self.is_locked()
+                && self.config.borrow().debug.preview_render.is_none()
+                && self.layout.overview_prewarm_pending(output);
             let state = self.output_state.get_mut(output).unwrap();
             state.unfinished_animations_remain = self.layout.are_animations_ongoing(Some(output));
+            state.unfinished_animations_remain |= prewarm_pending;
             state.unfinished_animations_remain |=
                 self.config_error_notification.are_animations_ongoing();
             state.unfinished_animations_remain |= self.exit_confirm_dialog.are_animations_ongoing();
