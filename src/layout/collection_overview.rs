@@ -39,7 +39,7 @@ pub(super) struct Overview {
     preview_geometry: RefCell<HashMap<Vec<u64>, Vec<PreviewGeometry>>>,
     prepared_revisions: RefCell<HashMap<WorkspaceId, u64>>,
     textures: RefCell<Vec<PreviewTexture>>,
-    drop_hint: RefCell<Option<InsertHintElement>>,
+    drop_hints: RefCell<HashMap<Output, InsertHintElement>>,
     #[cfg(test)]
     preparations: Cell<u64>,
     #[cfg(test)]
@@ -779,21 +779,32 @@ impl<W: LayoutElement> Layout<W> {
             area.size.upscale(preview.zoom),
         ).to_physical_precise_round(scale).to_logical(scale);
         let transformed_view = Rectangle::new(
-            transformed_area.loc.upscale(-1.),
+            (preview.geometry.loc - transformed_area.loc),
             preview.workspace.view_size().upscale(preview.zoom),
         );
-        let mut hint_cache = self.collection_overview.drop_hint.borrow_mut();
-        let hint = hint_cache.get_or_insert_with(|| InsertHintElement::new(self.options.layout.insert_hint));
+        let border_width = moving.tile.effective_border_width().unwrap_or(0.);
+        let source_radius = moving.tile.window().geometry_corner_radius().expanded_by(border_width as f32);
+        let radius = niri_config::CornerRadius {
+            top_left: source_radius.top_left * preview.zoom as f32,
+            top_right: source_radius.top_right * preview.zoom as f32,
+            bottom_right: source_radius.bottom_right * preview.zoom as f32,
+            bottom_left: source_radius.bottom_left * preview.zoom as f32,
+        };
+        let mut hint_cache = self.collection_overview.drop_hints.borrow_mut();
+        let hint = hint_cache.entry(output.clone())
+            .or_insert_with(|| InsertHintElement::new(self.options.layout.insert_hint));
         hint.update_config(self.options.layout.insert_hint);
         hint.update_render_elements(
             transformed_area.size,
             transformed_view,
-            moving.tile.window().geometry_corner_radius(),
+            radius,
             scale,
         );
-        let crop = Rectangle::from_size(output_size(output)).to_physical_precise_round(scale);
+        let crop = preview.geometry
+            .intersection(Rectangle::from_size(output_size(output)))
+            .map(|geometry| geometry.to_physical_precise_round(scale));
         hint.render(renderer, transformed_area.loc, &mut |elem| {
-            if let Some(elem) = CropRenderElement::from_element(elem, scale, crop) {
+            if let Some(elem) = crop.and_then(|crop| CropRenderElement::from_element(elem, scale, crop)) {
                 push(CollectionOverviewRenderElement::InsertHint(elem));
             }
         });
@@ -804,14 +815,35 @@ fn preview_drop_target<W: LayoutElement>(
     previews: &[Preview<'_, W>],
     pos: Point<f64, Logical>,
 ) -> Option<usize> {
-    previews.iter().enumerate()
-        .filter(|(_, preview)| !preview.is_scratchpad)
-        .filter(|(_, preview)| pos.x >= preview.geometry.loc.x && pos.x < preview.geometry.loc.x + preview.geometry.size.w)
+    preview_drop_target_geometry(
+        previews.iter().enumerate().map(|(index, preview)| (index, preview.is_scratchpad, preview.geometry)),
+        pos,
+    )
+}
+
+fn preview_drop_target_geometry(
+    previews: impl Iterator<Item = (usize, bool, Rectangle<f64, Logical>)>,
+    pos: Point<f64, Logical>,
+) -> Option<usize> {
+    previews
+        .filter_map(|(index, is_scratchpad, geometry)| {
+            (!is_scratchpad && pos.x >= geometry.loc.x && pos.x < geometry.loc.x + geometry.size.w)
+                .then_some((index, geometry))
+        })
         .min_by(|(_, a), (_, b)| {
-            let distance = |preview: &Preview<'_, W>| (pos.y - preview.geometry.loc.y - preview.geometry.size.h / 2.).abs();
+            let distance = |geometry: &Rectangle<f64, Logical>| {
+                (pos.y - geometry.loc.y - geometry.size.h / 2.).abs()
+            };
             distance(a).total_cmp(&distance(b))
         })
         .map(|(index, _)| index)
+}
+
+impl<W: LayoutElement> Layout<W> {
+    pub(super) fn has_collection_drop_target(&self, output: &Output, pos: Point<f64, Logical>) -> bool {
+        let previews = self.collection_previews(output);
+        preview_drop_target(&previews, pos).is_some()
+    }
 }
 
 impl Overview {
@@ -936,6 +968,9 @@ impl Overview {
         self.preview_geometry.borrow_mut().clear();
         self.prepared_revisions.borrow_mut().clear();
         self.textures.borrow_mut().clear();
+        for hint in self.drop_hints.borrow_mut().values_mut() {
+            hint.update_shaders();
+        }
     }
 
     pub(super) fn retain_sources(
@@ -1091,6 +1126,7 @@ pub(super) fn columns(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn columns_fit_and_hit_distinct_collection() {
@@ -1111,6 +1147,42 @@ mod tests {
                 columns[0].bounds.loc.x + columns[0].bounds.size.w / 2.,
                 640.
             );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig { cases: 100_000, .. ProptestConfig::default() })]
+        #[test]
+        fn drop_target_correctness_property(
+            target in 0usize..4,
+            x_fraction in 0.01f64..0.99,
+            y_fraction in 0.01f64..0.99,
+            output_scale in prop_oneof![Just(1.0f64), Just(1.5f64)],
+        ) {
+            // Two desks with two workspace rows each, plus a scratchpad preview. Coordinates are
+            // logical after the NN0012 output transform; simulate physical pointer coordinates
+            // at both output scales before hit testing.
+            let geometries = [
+                (false, Rectangle::new((100., 80.).into(), (240., 160.).into())),
+                (false, Rectangle::new((100., 260.).into(), (240., 160.).into())),
+                (false, Rectangle::new((420., 120.).into(), (240., 160.).into())),
+                (false, Rectangle::new((420., 300.).into(), (240., 160.).into())),
+                (true, Rectangle::new((720., 100.).into(), (160., 120.).into())),
+            ];
+            let selected = target % 4;
+            let bounds = geometries[selected].1;
+            let physical = Point::<f64, Logical>::from((
+                (bounds.loc.x + bounds.size.w * x_fraction) * output_scale,
+                (bounds.loc.y + bounds.size.h * y_fraction) * output_scale,
+            ));
+            let pointer = physical.downscale(output_scale);
+            let resolved = preview_drop_target_geometry(
+                geometries.iter().enumerate().map(|(index, (scratchpad, geometry))| {
+                    (index, *scratchpad, *geometry)
+                }),
+                pointer,
+            ).unwrap();
+            prop_assert_eq!(resolved, selected);
         }
     }
 }

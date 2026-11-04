@@ -371,6 +371,7 @@ pub struct Layout<W: LayoutElement> {
     collection_overview: collection_overview::Overview,
     /// Full-size horizontal switch between the active collection and its adjacent desk.
     collection_switch: Option<CollectionSwitchTransition>,
+    collection_switch_pending: Option<(Output, u64, bool)>,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -770,6 +771,7 @@ impl<W: LayoutElement> Layout<W> {
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
             collection_switch: None,
+            collection_switch_pending: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -814,6 +816,7 @@ impl<W: LayoutElement> Layout<W> {
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
             collection_switch: None,
+            collection_switch_pending: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
@@ -3710,7 +3713,10 @@ impl<W: LayoutElement> Layout<W> {
 
         let _span = tracy_client::span!("Layout::update_insert_hint::update");
 
-        if let Some(mon) = self.monitor_for_output_mut(&move_.output) {
+        let over_side_collection = self.collection_overview_is_open()
+            && self.has_collection_drop_target(&move_.output, move_.pointer_pos_within_output);
+        if !over_side_collection {
+            if let Some(mon) = self.monitor_for_output_mut(&move_.output) {
             let zoom = mon.overview_zoom();
             let (insert_ws, geo) = mon.insert_position(move_.pointer_pos_within_output);
             match insert_ws {
@@ -3752,6 +3758,7 @@ impl<W: LayoutElement> Layout<W> {
                         corner_radius: CornerRadius::default(),
                     });
                 }
+            }
             }
         }
 
@@ -5649,6 +5656,9 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_overview(&mut self) {
         self.overview_open = !self.overview_open;
+        if self.overview_open {
+            self.collection_overview.clear();
+        }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());
         let to = if self.overview_open { 1. } else { 0. };
