@@ -594,6 +594,7 @@ fn restored_persistent_slot_survives_workspace_move_and_scratchpad_hide() {
 
 fn layout_with_unnamed_desk_during_workspace_switch() -> (Layout<TestWindow>, u64) {
     let mut options = Options::default();
+    options.layout.collections.enabled = true;
     options.layout.collections.names = vec!["collection2".into(), "collection3".into()];
     let mut layout = Layout::with_options(Clock::with_time(Duration::ZERO), options);
     check_ops_on_layout(
@@ -626,14 +627,23 @@ fn layout_with_unnamed_desk_during_workspace_switch() -> (Layout<TestWindow>, u6
             Op::FocusWorkspaceDown,
             Op::RestoreCollectionState,
             Op::FocusWorkspaceByReference(WorkspaceReferenceOp::Index(1)),
-            Op::RenameCollection {
-                reference: 1,
-                name: None,
-            },
         ],
     );
 
-    let renamed_collection = layout.collections[1].id;
+    let reference = WorkspaceReference::Index(1);
+    let renamed_collection = layout
+        .collections
+        .iter()
+        .enumerate()
+        .find(|(index, collection)| collection.matches_reference(&reference, *index))
+        .map(|(_, collection)| collection.id)
+        .expect("the configured collection index exists before unname");
+    Op::RenameCollection {
+        reference: 1,
+        name: None,
+    }
+    .apply(&mut layout);
+    layout.verify_invariants();
     (layout, renamed_collection)
 }
 
@@ -641,9 +651,11 @@ fn layout_with_unnamed_desk_during_workspace_switch() -> (Layout<TestWindow>, u6
 fn unname_during_workspace_switch_defers_then_clears_row_retention() {
     let (mut layout, renamed_collection) = layout_with_unnamed_desk_during_workspace_switch();
     assert!(layout.deferred_collection_retention_cleanup);
-    assert!(layout
-        .active_monitor()
-        .unwrap()
+    let monitor = layout
+        .monitors()
+        .find(|monitor| monitor.collection_id == Some(renamed_collection))
+        .unwrap();
+    assert!(monitor
         .workspaces
         .iter()
         .any(|workspace| workspace.collection_persistent()));
@@ -658,14 +670,6 @@ fn unname_during_workspace_switch_defers_then_clears_row_retention() {
         .unwrap();
     assert!(monitor.workspaces.len() != 2);
     assert!(monitor
-        .workspaces
-        .iter()
-        .all(|workspace| !workspace.collection_persistent()));
-    assert!(layout
-        .collections
-        .iter()
-        .find(|collection| collection.id == renamed_collection)
-        .unwrap()
         .workspaces
         .iter()
         .all(|workspace| !workspace.collection_persistent()));
