@@ -47,9 +47,9 @@ impl<W: LayoutElement> Layout<W> {
         }
     }
 
-    /// Rotate only the shown collections. Hidden desks, home-output identity, pinned overlays,
-    /// and the physically focused output are unaffected.
-    pub fn rotate_collections(&mut self, next: bool) {
+    /// Rotate the shown workspace sets, explicitly adopting their destination outputs as home.
+    /// Collection identities, hidden desks, pinned overlays, and physical focus stay in place.
+    pub fn rotate_workspace_sets(&mut self, next: bool) {
         if !self.options.layout.collections.enabled {
             return;
         }
@@ -70,11 +70,13 @@ impl<W: LayoutElement> Layout<W> {
         for target in order {
             let (a, b) = two_monitors(monitors, ring[0], target);
             std::mem::swap(&mut a.workspaces, &mut b.workspaces);
-            std::mem::swap(&mut a.collection_id, &mut b.collection_id);
             std::mem::swap(&mut a.active_workspace_idx, &mut b.active_workspace_idx);
             std::mem::swap(&mut a.previous_workspace_id, &mut b.previous_workspace_id);
         }
         for monitor in monitors {
+            for workspace in &mut monitor.workspaces {
+                workspace.original_output = OutputId::new(&monitor.output);
+            }
             rebind_stack(monitor);
         }
     }

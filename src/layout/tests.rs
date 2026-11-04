@@ -494,7 +494,7 @@ enum Op {
     FocusCollectionById(#[proptest(strategy = "0..=4usize")] usize),
     CycleCollection(bool),
     SwapWorkspaceWithMonitor(bool),
-    RotateCollections(bool),
+    RotateWorkspaceSets(bool),
     RestoreLastHidden,
     RestoreCurrentWorkspaceHidden,
     MoveWindowToCollection(#[proptest(strategy = "1..=5u8")] u8),
@@ -950,7 +950,7 @@ impl Op {
             Op::RestoreLastHidden => layout.restore_last_hidden_window(),
             Op::RestoreCurrentWorkspaceHidden => layout.restore_current_workspace_hidden_windows(),
             Op::SwapWorkspaceWithMonitor(next) => layout.swap_workspace_with_monitor(next),
-            Op::RotateCollections(next) => layout.rotate_collections(next),
+            Op::RotateWorkspaceSets(next) => layout.rotate_workspace_sets(next),
             Op::CycleCollection(next) => {
                 if next {
                     layout.focus_collection_next();

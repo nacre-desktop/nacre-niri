@@ -73,7 +73,7 @@ fn monitor_workspace_exchange_of_empty_boundary_preserves_all_windows() {
 }
 
 #[test]
-fn collection_rotation_preserves_hidden_desks_pins_selection_and_home_identity() {
+fn workspace_set_rotation_preserves_hidden_desks_pins_selection_and_collection_identity() {
     let mut layout = layout(true, false);
     populate(&mut layout, 3);
     layout.toggle_window_pinned(Some(&1));
@@ -85,16 +85,17 @@ fn collection_rotation_preserves_hidden_desks_pins_selection_and_home_identity()
     let hidden_stack: Vec<_> = layout.collection_workspaces(hidden).map(Workspace::id).collect();
     let before: Vec<_> = (1..=3).map(|id| (monitor(&layout, id).collection_id, selected(&layout, id).0)).collect();
     let homes: Vec<_> = layout.collections.iter().map(|c| (c.id, c.original_output.clone())).collect();
-    layout.rotate_collections(true);
+    layout.rotate_workspace_sets(true);
     for id in 1..=3 {
-        assert_eq!((monitor(&layout, id).collection_id, selected(&layout, id).0), before[(id + 1) % 3]);
+        assert_eq!(monitor(&layout, id).collection_id, before[id - 1].0);
+        assert_eq!(selected(&layout, id).0, before[(id + 1) % 3].1);
     }
     assert!(monitor(&layout, 1).pinned_workspace.has_window(&1));
     assert_eq!(layout.active_output().unwrap().name(), "output1");
     assert_eq!(layout.collection_workspaces(hidden).map(Workspace::id).collect::<Vec<_>>(), hidden_stack);
     assert_eq!(layout.collections.iter().map(|c| (c.id, c.original_output.clone())).collect::<Vec<_>>(), homes);
     layout.verify_invariants();
-    layout.rotate_collections(false);
+    layout.rotate_workspace_sets(false);
     assert_eq!((1..=3).map(|id| (monitor(&layout, id).collection_id, selected(&layout, id).0)).collect::<Vec<_>>(), before);
     layout.verify_invariants();
 }
@@ -118,10 +119,10 @@ fn monitor_actions_survive_hotplug_zero_outputs_and_disabled_collections() {
     for collections in [false, true] {
         let mut layout = layout(collections, true);
         layout.swap_workspace_with_monitor(true);
-        layout.rotate_collections(false);
+        layout.rotate_workspace_sets(false);
         populate(&mut layout, 3);
         let before: Vec<_> = (1..=3).map(|id| selected(&layout, id).0).collect();
-        layout.rotate_collections(true);
+        layout.rotate_workspace_sets(true);
         if !collections {
             assert_eq!((1..=3).map(|id| selected(&layout, id).0).collect::<Vec<_>>(), before);
         }
@@ -129,7 +130,7 @@ fn monitor_actions_survive_hotplug_zero_outputs_and_disabled_collections() {
         for id in [2, 3, 1] {
             Op::RemoveOutput(id).apply(&mut layout);
             layout.swap_workspace_with_monitor(true);
-            layout.rotate_collections(false);
+            layout.rotate_workspace_sets(false);
             layout.verify_invariants();
         }
         assert_eq!(layout.outputs().count(), 0);
@@ -161,11 +162,58 @@ fn monitor_exchange_keeps_unequal_indices_and_rebinds_different_output_scales() 
     assert_eq!(selected(&layout, 1), (b.0, a.1));
     assert_eq!(selected(&layout, 2), (a.0, b.1));
     layout.verify_invariants();
-    layout.rotate_collections(true);
+    layout.rotate_workspace_sets(true);
     layout.verify_invariants();
-    layout.rotate_collections(false);
+    layout.rotate_workspace_sets(false);
     layout.swap_workspace_with_monitor(false);
     assert_eq!(selected(&layout, 1), a);
     assert_eq!(selected(&layout, 2), b);
     layout.verify_invariants();
+}
+
+#[test]
+fn explicit_workspace_set_moves_survive_reload_and_destination_hotplug() {
+    for collections in [false, true] {
+        for rotate in [false, true] {
+            // Set rotation requires collections; selected exchange also supports upstream mode.
+            if rotate && !collections {
+                continue;
+            }
+            let mut layout = layout(collections, false);
+            populate(&mut layout, 2);
+            for id in 1..=2 {
+                let m = layout.monitors_mut().find(|m| m.output_name() == &format!("output{id}")).unwrap();
+                m.workspaces[m.active_workspace_idx].name = Some(format!("set{id}"));
+            }
+            if rotate {
+                layout.rotate_workspace_sets(true);
+            } else {
+                layout.swap_workspace_with_monitor(true);
+            }
+            // Model Nacre's saved declarations and subsequent config reload: both named sets
+            // are declared at their new destinations. Existing workspace identities survive.
+            let mut config = Config::default();
+            for (name, destination) in [("set1", "output2"), ("set2", "output1")] {
+                let workspace = WorkspaceConfig {
+                    name: WorkspaceName(name.into()),
+                    open_on_output: Some(destination.into()),
+                    layout: None,
+                };
+                layout.ensure_named_workspace(&workspace);
+                config.workspaces.push(workspace);
+            }
+            config.layout.collections.enabled = collections;
+            layout.update_config(&config);
+            let destination = monitor(&layout, 2).output.clone();
+            layout.remove_output(&destination);
+            layout.verify_invariants();
+            layout.add_output(destination, None);
+            for (id, name) in [(1, "set2"), (2, "set1")] {
+                assert!(monitor(&layout, id).workspaces.iter().any(|workspace| workspace.name().is_some_and(|candidate| candidate == name)));
+            }
+            assert!(layout.has_window(&1));
+            assert!(layout.has_window(&2));
+            layout.verify_invariants();
+        }
+    }
 }
