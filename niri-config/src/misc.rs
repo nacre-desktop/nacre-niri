@@ -237,6 +237,9 @@ pub struct EdgeTrigger {
     /// Defaults to one pixel to preserve the native edge trigger behavior.
     #[knuffel(child, unwrap(argument))]
     pub trigger_distance: Option<FloatOrInt<1, 10_000>>,
+    /// Centered span along the output edge that accepts the trigger; omitted means the full edge.
+    #[knuffel(child, unwrap(argument))]
+    pub trigger_length: Option<FloatOrInt<1, 1_000_000>>,
 }
 
 /// Global edge trigger policy. Output blocks may override individual edges.

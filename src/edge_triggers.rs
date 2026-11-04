@@ -47,6 +47,12 @@ fn edge_band_width(trigger: Option<&niri_config::EdgeTrigger>) -> Option<f64> {
         .map(|distance| distance.0)
 }
 
+fn edge_span_width(trigger: Option<&niri_config::EdgeTrigger>) -> Option<f64> {
+    trigger
+        .and_then(|trigger| trigger.trigger_length)
+        .map(|length| length.0)
+}
+
 fn cue_frame_interval(refresh_millihz: u32) -> Duration {
     if refresh_millihz == 0 {
         Duration::from_nanos(16_666_667)
@@ -194,6 +200,32 @@ pub fn is_inside_edge_with_distance(
     }
 }
 
+/// Checks whether the pointer is within a centered along-edge span, when one is configured.
+pub fn is_inside_edge_span(
+    size: [f64; 2],
+    position: [f64; 2],
+    edge: Edge,
+    length: Option<f64>,
+) -> bool {
+    let Some(length) = length else {
+        return true;
+    };
+    if !length.is_finite() || length <= 0. {
+        return false;
+    }
+    let (extent, coordinate) = match edge {
+        Edge::Left | Edge::Right => (size[1], position[1]),
+        Edge::Top | Edge::Bottom => (size[0], position[0]),
+    };
+    if !extent.is_finite() || extent <= 0. || !coordinate.is_finite() {
+        return false;
+    }
+    let length = length.min(extent);
+    let start = (extent - length) / 2.;
+    let end = (extent + length) / 2.;
+    coordinate >= start && coordinate < end
+}
+
 /// Positive movement toward the selected edge, in logical pixels.
 pub fn inward_delta(edge: Edge, delta: [f64; 2]) -> f64 {
     match edge {
@@ -270,6 +302,7 @@ mod tests {
             pressure: None,
             velocity: None,
             trigger_distance: None,
+            trigger_length: None,
         }
     }
 
@@ -438,6 +471,22 @@ mod tests {
     }
 
     #[test]
+    fn configured_edge_spans_are_centered_half_open_and_clipped_to_small_outputs() {
+        let size = [100., 80.];
+        assert!(!is_inside_edge_span(size, [0., 29.9], Edge::Left, Some(20.)));
+        assert!(is_inside_edge_span(size, [0., 30.], Edge::Left, Some(20.)));
+        assert!(is_inside_edge_span(size, [99., 49.9], Edge::Right, Some(20.)));
+        assert!(!is_inside_edge_span(size, [99., 50.], Edge::Right, Some(20.)));
+        assert!(!is_inside_edge_span(size, [29.9, 0.], Edge::Top, Some(40.)));
+        assert!(is_inside_edge_span(size, [30., 0.], Edge::Top, Some(40.)));
+        assert!(is_inside_edge_span(size, [69.9, 79.], Edge::Bottom, Some(40.)));
+        assert!(!is_inside_edge_span(size, [70., 79.], Edge::Bottom, Some(40.)));
+        assert!(is_inside_edge_span([100., 12.], [0., 11.9], Edge::Left, Some(144.)));
+        assert!(!is_inside_edge_span([100., 12.], [0., 12.], Edge::Left, Some(144.)));
+        assert!(is_inside_edge_span(size, [0., 79.], Edge::Left, None));
+    }
+
+    #[test]
     fn cue_interval_uses_refresh_and_falls_back_to_60hz_without_a_mode_rate() {
         assert!((16_666_666..=16_666_667).contains(&cue_frame_interval(60_000).as_nanos()));
         assert!((6_944_444..=6_944_445).contains(&cue_frame_interval(144_000).as_nanos()));
@@ -515,6 +564,7 @@ pub(crate) struct EdgeTriggerCandidate {
     pub(crate) armed_at: Option<Instant>,
     pub(crate) dwell_time: Duration,
     trigger_distance: Option<f64>,
+    trigger_length: Option<f64>,
     cue: bool,
     cue_interval: Duration,
     last_cue_position: Option<[f64; 2]>,
@@ -610,6 +660,12 @@ impl Niri {
                 [local.x, local.y],
                 candidate.edge,
                 candidate.trigger_distance,
+            )
+            || !crate::edge_triggers::is_inside_edge_span(
+                [size.w, size.h],
+                [local.x, local.y],
+                candidate.edge,
+                candidate.trigger_length,
             )
             || self.edge_trigger_is_suppressed(output)
         {
@@ -722,11 +778,41 @@ impl Niri {
             ],
         );
         let edges = self.edge_triggers_for_output(output);
+        let edge_lengths = [
+            edge_span_width(edges.left.as_ref()),
+            edge_span_width(edges.right.as_ref()),
+            edge_span_width(edges.top.as_ref()),
+            edge_span_width(edges.bottom.as_ref()),
+        ];
         let enabled = [
-            edges.left.as_ref().is_some_and(|trigger| !trigger.off),
-            edges.right.as_ref().is_some_and(|trigger| !trigger.off),
-            edges.top.as_ref().is_some_and(|trigger| !trigger.off),
-            edges.bottom.as_ref().is_some_and(|trigger| !trigger.off),
+            edges.left.as_ref().is_some_and(|trigger| !trigger.off)
+                && crate::edge_triggers::is_inside_edge_span(
+                    [size.w, size.h],
+                    [local.x, local.y],
+                    niri_ipc::Edge::Left,
+                    edge_lengths[0],
+                ),
+            edges.right.as_ref().is_some_and(|trigger| !trigger.off)
+                && crate::edge_triggers::is_inside_edge_span(
+                    [size.w, size.h],
+                    [local.x, local.y],
+                    niri_ipc::Edge::Right,
+                    edge_lengths[1],
+                ),
+            edges.top.as_ref().is_some_and(|trigger| !trigger.off)
+                && crate::edge_triggers::is_inside_edge_span(
+                    [size.w, size.h],
+                    [local.x, local.y],
+                    niri_ipc::Edge::Top,
+                    edge_lengths[2],
+                ),
+            edges.bottom.as_ref().is_some_and(|trigger| !trigger.off)
+                && crate::edge_triggers::is_inside_edge_span(
+                    [size.w, size.h],
+                    [local.x, local.y],
+                    niri_ipc::Edge::Bottom,
+                    edge_lengths[3],
+                ),
         ];
         let edge_distances = [
             edge_band_width(edges.left.as_ref()),
@@ -805,6 +891,7 @@ impl Niri {
                 armed_at: None,
                 dwell_time: Duration::from_millis(u64::from(trigger.dwell_time_ms.unwrap_or(250))),
                 trigger_distance: edge_band_width(Some(trigger)),
+                trigger_length: edge_span_width(Some(trigger)),
                 cue,
                 cue_interval: cue_frame_interval(
                     output
@@ -966,6 +1053,12 @@ impl Niri {
             candidate.edge,
             candidate.trigger_distance,
         );
+        let inside_span = crate::edge_triggers::is_inside_edge_span(
+            [size.w, size.h],
+            [local.x, local.y],
+            candidate.edge,
+            candidate.trigger_length,
+        );
         let edges = self.edge_triggers_for_output(output);
         let enabled = match candidate.edge {
             niri_ipc::Edge::Left => edges.left,
@@ -977,6 +1070,7 @@ impl Niri {
         if !self.config.borrow().nacre.edge_triggers
             || output.name() != candidate.output
             || !inside
+            || !inside_span
             || !enabled
             || self.edge_trigger_is_suppressed(output)
         {
@@ -1023,6 +1117,7 @@ mod edge_trigger_runtime_tests {
             pressure: None,
             velocity: None,
             trigger_distance: None,
+            trigger_length: None,
         });
         let mut fixture = Fixture::with_config(config);
         fixture.add_output(1, (1920, 1080));
@@ -1051,10 +1146,63 @@ mod edge_trigger_runtime_tests {
             pressure: None,
             velocity: None,
             trigger_distance: Some(niri_config::FloatOrInt(10.)),
+            trigger_length: None,
         });
         let mut fixture = Fixture::with_config(config);
         fixture.add_output(1, (1920, 1080));
         fixture
+    }
+
+    #[test]
+    fn centered_lip_span_gates_candidate_and_reentry_restarts_approach() {
+        let mut fixture = cue_configured_fixture();
+        fixture
+            .niri()
+            .config
+            .borrow_mut()
+            .edge_triggers
+            .left
+            .as_mut()
+            .unwrap()
+            .trigger_length = Some(niri_config::FloatOrInt(144.));
+        let events = attach_edge_events(&mut fixture);
+        let outside = left_edge_position(&fixture, 1) + Point::new(5., 0.);
+        enter_left_edge(fixture.niri(), outside);
+        assert!(fixture.niri().edge_trigger_candidate.is_none());
+        assert!(events.try_recv().is_err(), "outside the centered lip must not approach");
+
+        let center = left_edge_position(&fixture, 1) + Point::new(5., 490.);
+        enter_left_edge(fixture.niri(), center);
+        let Ok(niri_ipc::Event::EdgeApproach { progress, position, .. }) = events.try_recv() else {
+            panic!("entering the centered lip did not emit EdgeApproach");
+        };
+        assert_eq!(progress, 0.);
+        assert_eq!(position, [5., 540.]);
+        let first_generation = fixture.niri().edge_trigger_candidate.as_ref().unwrap().generation;
+
+        let left_span = center + Point::new(0., -72.1);
+        fixture
+            .niri()
+            .update_edge_trigger(left_span, Point::new(0., -72.1));
+        assert!(matches!(events.try_recv(), Ok(niri_ipc::Event::EdgeLeft { .. })));
+        assert!(fixture.niri().edge_trigger_candidate.is_none());
+
+        let reentered = center + Point::new(0., -72.);
+        enter_left_edge(fixture.niri(), reentered);
+        let Ok(niri_ipc::Event::EdgeApproach { progress, position, .. }) = events.try_recv() else {
+            panic!("re-entering the centered lip did not start a fresh approach");
+        };
+        assert_eq!(progress, 0.);
+        assert_eq!(position, [5., 468.]);
+        let niri = fixture.niri();
+        let candidate = niri.edge_trigger_candidate.as_ref().unwrap();
+        assert_ne!(candidate.generation, first_generation);
+        assert!(niri.edge_trigger_cue_tick(candidate.generation, reentered, false));
+        let Ok(niri_ipc::Event::EdgeHover { progress, .. }) = events.try_recv() else {
+            panic!("fresh candidate did not publish dwell progress");
+        };
+        assert!(progress < 0.1);
+        assert!(events.try_recv().is_err(), "re-entry must not trigger immediately");
     }
 
     fn attach_edge_events(fixture: &mut Fixture) -> async_channel::Receiver<niri_ipc::Event> {
@@ -1295,6 +1443,7 @@ mod edge_trigger_runtime_tests {
             pressure: None,
             velocity: None,
             trigger_distance: None,
+            trigger_length: None,
         });
         config.outputs.0.push(niri_config::Output {
             name: String::from("headless-2"),

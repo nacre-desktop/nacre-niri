@@ -16,12 +16,18 @@ positions less than 10 pixels from the left/top or at least output-size minus
 one-pixel native edge band. Nacre's generated configuration sets this width to
 the matching frame-lip thickness.
 
+The optional `trigger-length` field limits activation to a centered span along
+the output edge. Its inner bound is half-open, and a span longer than the output
+is clipped to the output size. Omitted values keep the full-edge activation
+behavior. Nacre's generated configuration uses `144` logical pixels for the
+side lips and `208` for the top lip by default.
+
 ```kdl
 edge-triggers {
     cue
-    left { action { event; }; trigger-distance 10; dwell-time-ms 350; }
-    right { action { event; }; trigger-distance 10; dwell-time-ms 350; }
-    top { action { event; }; trigger-distance 10; dwell-time-ms 350; }
+    left { action { event; }; trigger-distance 10; trigger-length 144; dwell-time-ms 350; }
+    right { action { event; }; trigger-distance 10; trigger-length 144; dwell-time-ms 350; }
+    top { action { event; }; trigger-distance 10; trigger-length 208; dwell-time-ms 350; }
 }
 
 output "DP-1" {

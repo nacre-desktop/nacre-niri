@@ -679,7 +679,7 @@ nacre { overview-hover; proportional-x11-widths; edge-triggers; }
 // eventual EdgeTriggered/EdgeLeft events. Cues are disabled unless `cue` is set.
 // edge-triggers {
 //     cue
-//     left { action { event; }; trigger-distance 10; dwell-time-ms 250; pressure 0; velocity 0; }
+//     left { action { event; }; trigger-distance 10; trigger-length 144; dwell-time-ms 250; pressure 0; velocity 0; }
 //     right { action { spawn "panel-command" "right"; }; }
 // }
 
