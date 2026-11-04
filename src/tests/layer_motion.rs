@@ -341,9 +341,12 @@ fn reveal_samples_geometry_clip_and_tracking_mode_across_reopen_retarget() {
     f.client(id).layer(&client_surface).commit();
     f.double_roundtrip(id);
     let runtime = runtime.lock().unwrap();
-    let reopening = runtime.reveal_current.unwrap().body;
-    assert!((reopening.x - 10.).abs() < 0.1 && (reopening.y - 10.).abs() < 0.1);
-    assert!(reopening.w < 1. && reopening.h < 1.);
+    let reopening = runtime.reveal.as_ref().unwrap().sample(0.).body;
+    assert_eq!(
+        reopening,
+        super::super::layer::reveal::Rect::new(10., 10., 0., 0.),
+        "reopen descriptor starts at the exact previously closed body"
+    );
     assert!(runtime.reveal.as_ref().unwrap().visible);
 }
 
@@ -556,7 +559,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     motion_proxy.set_plane_from(7, -80., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.set_plane_to(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.set_reveal_content_clip(15., 20., 70., 65., 50., 60., 20., 20.);
-    motion_proxy.animate(21, 100, 0);
+    motion_proxy.animate(21, 100, 1);
     let layer = f.client(id).layer(&client_surface);
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Top),
@@ -573,7 +576,7 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     let runtime = runtime.lock().unwrap();
     assert_eq!(runtime.active.as_ref().unwrap().serial, 21);
     assert_eq!(
-        runtime.reveal_current.unwrap().content_clip,
+        runtime.reveal.as_ref().unwrap().sample(0.).content_clip,
         Some(frozen_clip),
         "remapped retarget starts at the frozen content clip"
     );

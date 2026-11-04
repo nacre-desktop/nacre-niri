@@ -1009,8 +1009,19 @@ mod descriptor_tests {
         descriptor.corner_mode = CornerMode::Circular;
         descriptor.fill = [255, 255, 255, 255];
         let (pixmap, _) = descriptor.rasterize(0., 1., (20., 4.)).unwrap();
-        assert_eq!((pixmap.width(), pixmap.height()), (20, 4));
-        assert!(pixmap.data().chunks_exact(4).any(|pixel| pixel[3] == 255));
+        let alpha = pixmap
+            .data()
+            .chunks_exact(4)
+            .map(|pixel| pixel[3])
+            .collect::<Vec<_>>();
+        assert!(alpha.iter().any(|&alpha| 0 < alpha && alpha < 255));
+        assert!(!alpha.contains(&255));
+
+        descriptor.animated_from = Rect::new(1., 1., 18., 2.);
+        descriptor.animated_to = descriptor.animated_from;
+        let (full_height, _) = descriptor.rasterize(0., 1., (20., 4.)).unwrap();
+        assert_eq!((full_height.width(), full_height.height()), (20, 4));
+        assert_eq!(full_height.data()[(2 * 20 + 10) * 4 + 3], 255);
     }
 
     #[test]
