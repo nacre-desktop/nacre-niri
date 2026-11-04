@@ -952,7 +952,16 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                     .unwrap()
                     .frame_clock
                     .presented(time);
-                let (pixels, build_wall, build_cpu, submit_wall, submit_cpu, map_wall, map_cpu) = {
+                let (
+                    pixels,
+                    template_mode,
+                    build_wall,
+                    build_cpu,
+                    submit_wall,
+                    submit_cpu,
+                    map_wall,
+                    map_cpu,
+                ) = {
                     let state = f.niri_state();
                     let (backend, niri) = (&mut state.backend, &mut state.niri);
                     backend
@@ -981,6 +990,12 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                             );
                             let build_wall = build_wall_start.elapsed();
                             let build_cpu = thread_cpu_time() - build_cpu_start;
+                            let template_mode = elements.iter().any(|element| {
+                                matches!(
+                                    element,
+                                    crate::layer::mapped::LayerSurfaceRenderElement::RevealClip(_)
+                                )
+                            });
                             let submit_cpu_start = thread_cpu_time();
                             let submit_wall_start = Instant::now();
                             let mapping = render_helpers::render_and_download(
@@ -1004,6 +1019,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                             let map_cpu = thread_cpu_time() - map_cpu_start;
                             (
                                 pixels,
+                                template_mode,
                                 build_wall,
                                 build_cpu,
                                 submit_wall,
@@ -1023,10 +1039,21 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                 let (reference, ref_width, ref_height) =
                     png_rgba(&root.join(format!("{stem}-t{timeline}.png")));
                 assert_eq!((ref_width, ref_height), (atlas_w, atlas_h));
+                let mut frame_max = 0u8;
+                let mut frame_worst = None;
                 for index in (0..pixels.len()).step_by(4) {
                     for channel in 0..4 {
                         let difference =
                             pixels[index + channel].abs_diff(reference[index + channel]);
+                        if difference > frame_max {
+                            frame_max = difference;
+                            frame_worst = Some((
+                                index / 4,
+                                channel,
+                                pixels[index..index + 4].to_vec(),
+                                reference[index..index + 4].to_vec(),
+                            ));
+                        }
                         if difference > route_max {
                             route_max = difference;
                             route_worst = Some((
@@ -1040,6 +1067,9 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                         compared += 1;
                     }
                 }
+                println!(
+                    "reveal-full-frame {stem} t{timeline}: template_mode={template_mode} max_diff={frame_max} worst={frame_worst:?}"
+                );
             }
             println!("reveal-full-frame {stem}: max_diff={route_max} worst={route_worst:?}");
             if route_max > 1 {

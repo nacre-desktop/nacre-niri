@@ -323,7 +323,6 @@ impl RevealDescriptor {
         if let Some(rim) = &self.rim {
             if rim.width > 0. && rim.opacity > 0. {
                 let path = path_from_svg_commands(&contour.rim)?;
-                let mut rim_pixmap = Pixmap::new(width, height)?;
                 let stops = (0..3)
                     .map(|i| {
                         GradientStop::new(
@@ -344,32 +343,92 @@ impl RevealDescriptor {
                 paint.shader =
                     LinearGradient::new(start, end, stops, SpreadMode::Pad, Transform::identity())?;
                 paint.anti_alias = true;
-                rim_pixmap.stroke_path(
-                    &path,
-                    &paint,
-                    &Stroke {
-                        width: rim.width,
-                        line_cap: LineCap::Butt,
-                        ..Stroke::default()
-                    },
-                    transform,
-                    None,
-                );
-                pixmap.draw_pixmap(
-                    0,
-                    0,
-                    rim_pixmap.as_ref(),
-                    &PixmapPaint {
-                        opacity: rim.opacity,
-                        ..Default::default()
-                    },
-                    Transform::identity(),
-                    None,
-                );
+                let stroke = Stroke {
+                    width: rim.width,
+                    line_cap: LineCap::Butt,
+                    ..Stroke::default()
+                };
+                draw_rim_group(&mut pixmap, &path, &paint, &stroke, transform, rim.opacity);
             }
         }
         Some((pixmap, crop))
     }
+}
+
+fn draw_rim_group(
+    target: &mut Pixmap,
+    path: &Path,
+    paint: &Paint<'_>,
+    stroke: &Stroke,
+    transform: Transform,
+    opacity: f32,
+) {
+    let group_paint = PixmapPaint {
+        opacity,
+        quality: tiny_skia::FilterQuality::Nearest,
+        ..Default::default()
+    };
+    let isolated = (|| {
+        let stroked = path.stroke(stroke, 1.)?;
+        let bbox = stroked.compute_tight_bounds()?.transform(transform)?;
+        let x = (bbox.x().floor() as i32).checked_sub(2)?;
+        let y = (bbox.y().floor() as i32).checked_sub(2)?;
+        let width = (bbox.width().ceil() as u32).checked_add(4)?;
+        let height = (bbox.height().ceil() as u32).checked_add(4)?;
+        let mut bounds = tiny_skia::IntRect::from_xywh(x, y, width, height)?;
+        let canvas_width = target.width();
+        let canvas_height = target.height();
+        let max_bounds = tiny_skia::IntRect::from_xywh(
+            -(canvas_width as i32) * 2,
+            -(canvas_height as i32) * 2,
+            canvas_width.checked_mul(5)?,
+            canvas_height.checked_mul(5)?,
+        )?;
+        bounds = fit_int_rect(bounds, max_bounds)?;
+        let byte_len = u64::from(bounds.width()) * u64::from(bounds.height()) * 4;
+        if byte_len > 64 * 1024 * 1024 {
+            return None;
+        }
+        let shift = Transform::from_translate(-(bounds.x() as f32), -(bounds.y() as f32));
+        let layer_transform = shift.pre_concat(transform);
+        let mut layer = Pixmap::new(bounds.width(), bounds.height())?;
+        layer.stroke_path(path, paint, stroke, layer_transform, None);
+        Some((layer, bounds.x(), bounds.y()))
+    })();
+
+    if let Some((layer, x, y)) = isolated {
+        target.draw_pixmap(
+            x,
+            y,
+            layer.as_ref(),
+            &group_paint,
+            Transform::identity(),
+            None,
+        );
+    } else if let Some(mut layer) = Pixmap::new(target.width(), target.height()) {
+        // Keep a bounded crop-sized group if the legacy expanded stroke layer is oversized.
+        layer.stroke_path(path, paint, stroke, transform, None);
+        target.draw_pixmap(
+            0,
+            0,
+            layer.as_ref(),
+            &group_paint,
+            Transform::identity(),
+            None,
+        );
+    }
+}
+
+fn fit_int_rect(
+    rect: tiny_skia::IntRect,
+    bounds: tiny_skia::IntRect,
+) -> Option<tiny_skia::IntRect> {
+    tiny_skia::IntRect::from_ltrb(
+        rect.left().max(bounds.left()),
+        rect.top().max(bounds.top()),
+        rect.right().min(bounds.right()),
+        rect.bottom().min(bounds.bottom()),
+    )
 }
 
 fn path_contains_even_odd(path: &Path, point: (f64, f64)) -> bool {
