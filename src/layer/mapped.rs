@@ -136,7 +136,7 @@ impl std::fmt::Debug for RevealEdgeTextureCache {
 const REVEAL_EDGE_INSIDE: f32 = 44.;
 const REVEAL_EDGE_OUTSIDE: f32 = 8.;
 const REVEAL_EDGE_MIN_REVEALED: f32 = REVEAL_EDGE_INSIDE + 40.;
-const REVEAL_EDGE_CACHE_LIMIT: usize = 64 * 1024 * 1024;
+pub(crate) const REVEAL_EDGE_CACHE_LIMIT: usize = 64 * 1024 * 1024;
 
 struct RevealEdgeSpec {
     vertical: bool,
@@ -262,7 +262,7 @@ fn reveal_edge_clip_pixels(
     let top = (clip.y * scale_y).floor() as i32;
     let right = ((clip.x + clip.w) * scale_x).ceil() as i32;
     let bottom = ((clip.y + clip.h) * scale_y).ceil() as i32;
-    let location = location.to_physical_precise_round(scale);
+    let location: Point<i32, smithay::utils::Physical> = location.to_physical_precise_round(scale);
     Rectangle::new(
         Point::from((location.x + left, location.y + top)),
         Size::from((right.saturating_sub(left), bottom.saturating_sub(top))),

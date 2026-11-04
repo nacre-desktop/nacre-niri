@@ -1352,7 +1352,7 @@ fn reveal_headless_gles_cost_benchmark() {
                     case.scale,
                     case.width,
                     case.height,
-                    REVEAL_EDGE_CACHE_LIMIT,
+                    crate::layer::mapped::REVEAL_EDGE_CACHE_LIMIT,
                 );
                 if let Some((element_wall, element_cpu, draw_wall, draw_cpu, fence_wall, fence_cpu)) =
                     first_template_frame
