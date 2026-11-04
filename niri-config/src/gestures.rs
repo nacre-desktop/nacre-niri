@@ -5,6 +5,7 @@ use crate::FloatOrInt;
 pub struct Gestures {
     pub dnd_edge_view_scroll: DndEdgeViewScroll,
     pub dnd_edge_workspace_switch: DndEdgeWorkspaceSwitch,
+    pub collection_switch: CollectionSwitch,
     pub hot_corners: HotCorners,
 }
 
@@ -15,6 +16,8 @@ pub struct GesturesPart {
     #[knuffel(child)]
     pub dnd_edge_workspace_switch: Option<DndEdgeWorkspaceSwitchPart>,
     #[knuffel(child)]
+    pub collection_switch: Option<CollectionSwitchPart>,
+    #[knuffel(child)]
     pub hot_corners: Option<HotCorners>,
 }
 
@@ -24,8 +27,50 @@ impl MergeWith<GesturesPart> for Gestures {
             (self, part),
             dnd_edge_view_scroll,
             dnd_edge_workspace_switch,
+            collection_switch,
         );
         merge_clone!((self, part), hot_corners);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CollectionSwitch {
+    pub on: bool,
+    pub fingers: u8,
+}
+
+impl Default for CollectionSwitch {
+    fn default() -> Self {
+        Self {
+            on: true,
+            fingers: 4,
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
+pub struct CollectionSwitchPart {
+    #[knuffel(child)]
+    pub on: bool,
+    #[knuffel(child)]
+    pub off: bool,
+    #[knuffel(child, unwrap(argument))]
+    pub fingers: Option<u8>,
+}
+
+impl MergeWith<CollectionSwitchPart> for CollectionSwitch {
+    fn merge_with(&mut self, part: &CollectionSwitchPart) {
+        self.on |= part.on;
+        if part.off {
+            self.on = false;
+        }
+        merge_clone!((self, part), fingers);
+    }
+}
+
+impl CollectionSwitch {
+    pub fn has_supported_finger_count(self) -> bool {
+        matches!(self.fingers, 4 | 5)
     }
 }
 

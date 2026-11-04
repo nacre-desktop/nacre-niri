@@ -690,6 +690,73 @@ mod tests {
     }
 
     #[test]
+    fn decodes_collection_rename_action() {
+        let config = do_parse(
+            r#"
+            binds {
+                Mod+Shift+N {
+                    set-collection-name "work" "research";
+                }
+            }
+            "#,
+        );
+        assert_eq!(
+            config.binds.0[0].action,
+            Action::SetCollectionName(
+                WorkspaceReference::Name("work".into()),
+                Some("research".into())
+            )
+        );
+    }
+
+    #[test]
+    fn collection_switch_gesture_config_preserves_supported_counts_and_rejects_unsupported_at_runtime(
+    ) {
+        let config = do_parse(
+            r#"
+            gestures {
+                collection-switch {
+                    fingers 5
+                }
+            }
+            "#,
+        );
+        assert!(config.gestures.collection_switch.on);
+        assert_eq!(config.gestures.collection_switch.fingers, 5);
+        assert!(config
+            .gestures
+            .collection_switch
+            .has_supported_finger_count());
+
+        let disabled = do_parse(
+            r#"
+            gestures {
+                collection-switch {
+                    off
+                    fingers 4
+                }
+            }
+            "#,
+        );
+        assert!(!disabled.gestures.collection_switch.on);
+        assert_eq!(disabled.gestures.collection_switch.fingers, 4);
+
+        let unsupported = do_parse(
+            r#"
+            gestures {
+                collection-switch {
+                    fingers 3
+                }
+            }
+            "#,
+        );
+        assert!(!unsupported
+            .gestures
+            .collection_switch
+            .has_supported_finger_count());
+    }
+
+    #[test]
     fn nacre_overview_hover_defaults_on_and_can_be_disabled() {
         assert!(do_parse("").nacre.overview_hover);
         assert!(do_parse("nacre { overview-hover; }").nacre.overview_hover);
@@ -1864,6 +1931,10 @@ mod tests {
                     trigger_height: 50.0,
                     delay_ms: 100,
                     max_speed: 1500.0,
+                },
+                collection_switch: CollectionSwitch {
+                    on: true,
+                    fingers: 4,
                 },
                 hot_corners: HotCorners {
                     off: false,

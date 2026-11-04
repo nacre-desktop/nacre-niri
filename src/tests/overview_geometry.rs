@@ -510,6 +510,156 @@ fn egl_overview_emits_consistent_workspace_and_window_geometry_on_both_outputs()
 }
 
 #[test]
+fn egl_collection_swipe_clips_each_full_desk_on_fractional_and_other_output_scales() {
+    let mut fixture = fixture();
+    let client = fixture.add_client();
+    let output1 = fixture.niri_output(1);
+    let output2 = fixture.niri_output(2);
+
+    fixture.niri().layout.focus_output(&output1);
+    for _ in 0..3 {
+        create_window(&mut fixture, client, 800, 1100);
+    }
+    let source_ids = native_content_ids(&output_elements(&mut fixture, 1).0);
+    fixture.niri().layout.focus_output(&output2);
+    for _ in 0..3 {
+        create_window(&mut fixture, client, 1100, 1300);
+    }
+    let incoming_ids = native_content_ids(&output_elements(&mut fixture, 2).0);
+    fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
+
+    assert!(fixture
+        .niri()
+        .layout
+        .collection_switch_gesture_begin(&output1));
+    fixture
+        .niri()
+        .layout
+        .collection_switch_gesture_update(-150., Duration::from_millis(10));
+
+    let (elements, scale) = output_elements(&mut fixture, 1);
+    assert_eq!(scale, 1.5);
+    assert_unique_ids(&elements);
+    let rendered_ids = native_content_ids(&elements);
+    assert!(!source_ids.is_empty() && !incoming_ids.is_empty() && !rendered_ids.is_empty());
+
+    let output = fixture.niri_output(1);
+    let size = output.current_mode().unwrap().size;
+    let pixels = fixture
+        .niri_state()
+        .backend
+        .with_primary_renderer(|renderer| {
+            render_pixels(
+                renderer,
+                size,
+                Scale::from(scale),
+                Transform::Normal,
+                Fourcc::Abgr8888,
+                elements.iter().rev(),
+            )
+            .unwrap()
+        })
+        .unwrap();
+    let has_window_pixels = |x_start: i32, x_end: i32, y_start: i32, y_end: i32| {
+        (y_start..y_end).any(|y| {
+            (x_start..x_end).any(|x| {
+                let offset = (y as usize * size.w as usize + x as usize) * 4;
+                pixels[offset..offset + 3]
+                    .iter()
+                    .any(|channel| *channel > 200)
+            })
+        })
+    };
+    assert!(
+        has_window_pixels(0, 1440, 0, size.h),
+        "outgoing desk windows were hidden by its background"
+    );
+    assert!(
+        has_window_pixels(1440, 2880, 0, size.h),
+        "incoming desk window was hidden by its background"
+    );
+    assert!(
+        has_window_pixels(1440, 2880, 1550, 1700),
+        "bottom part of a window on the larger incoming source was clipped before scaling"
+    );
+
+    // At half progress the two full-size desks meet at the midpoint of the 2880-pixel output.
+    // Each cropped monitor element must stay entirely on its own side, even though each desk has
+    // three horizontally overflowing columns and the incoming source uses output 2's geometry.
+    let midpoint = 1440;
+    for element in &elements {
+        if !matches!(element, OutputRenderElements::Monitor(_)) {
+            continue;
+        }
+        let geometry = element.geometry(Scale::from(scale));
+        let right = geometry.loc.x + geometry.size.w;
+        assert!(
+            geometry.loc.x >= 0 && right <= 2880,
+            "element escaped the output"
+        );
+        assert!(
+            right <= midpoint || geometry.loc.x >= midpoint,
+            "monitor element crossed the desk boundary: {geometry:?}"
+        );
+    }
+
+    // Reverse the direction. Output 1's smaller workspace now enters output 2, which uses a
+    // larger logical viewport at scale 1.0; the final output crop must still keep both desks apart.
+    fixture.niri().layout.collection_switch_gesture_end(true);
+    fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
+    assert!(fixture
+        .niri()
+        .layout
+        .collection_switch_gesture_begin(&output2));
+    fixture
+        .niri()
+        .layout
+        .collection_switch_gesture_update(-150., Duration::from_millis(10));
+    let (reverse_elements, reverse_scale) = output_elements(&mut fixture, 2);
+    assert_eq!(reverse_scale, 1.0);
+    assert_unique_ids(&reverse_elements);
+    let reverse_size = output2.current_mode().unwrap().size;
+    let reverse_pixels = fixture
+        .niri_state()
+        .backend
+        .with_primary_renderer(|renderer| {
+            render_pixels(
+                renderer,
+                reverse_size,
+                Scale::from(reverse_scale),
+                Transform::Normal,
+                Fourcc::Abgr8888,
+                reverse_elements.iter().rev(),
+            )
+            .unwrap()
+        })
+        .unwrap();
+    let has_reverse_window_pixels = |x_start: i32, x_end: i32, y_start: i32, y_end: i32| {
+        (y_start..y_end).any(|y| {
+            (x_start..x_end).any(|x| {
+                let offset = (y as usize * reverse_size.w as usize + x as usize) * 4;
+                reverse_pixels[offset..offset + 3]
+                    .iter()
+                    .any(|channel| *channel > 200)
+            })
+        })
+    };
+    assert!(has_reverse_window_pixels(1720, 3440, 0, reverse_size.h));
+    assert!(has_reverse_window_pixels(3000, 3440, 1300, 1440));
+    for element in &reverse_elements {
+        if !matches!(element, OutputRenderElements::Monitor(_)) {
+            continue;
+        }
+        let geometry = element.geometry(Scale::from(reverse_scale));
+        let right = geometry.loc.x + geometry.size.w;
+        assert!(geometry.loc.x >= 0 && right <= 3440);
+        assert!(right <= 1720 || geometry.loc.x >= 1720);
+    }
+}
+
+#[test]
 fn egl_overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() {
     let mut fixture = fixture_with_workspace_shadow(false);
     let client = fixture.add_client();

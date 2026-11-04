@@ -269,6 +269,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop
         .run(None, &mut state, |state| state.refresh_and_flush_clients())
         .unwrap();
+    state.niri.persist_collection_state();
+    state.niri.finish_collection_state_writer();
 
     Ok(())
 }

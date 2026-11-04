@@ -34,7 +34,7 @@ use crate::utils::{
 };
 
 /// Amount of touchpad movement to scroll the height of one workspace.
-const WORKSPACE_GESTURE_MOVEMENT: f64 = 300.;
+pub(super) const WORKSPACE_GESTURE_MOVEMENT: f64 = 300.;
 
 const WORKSPACE_GESTURE_RUBBER_BAND: RubberBand = RubberBand {
     stiffness: 0.5,
@@ -87,6 +87,9 @@ pub struct Monitor<W: LayoutElement> {
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
     overview_progress: Option<OverviewProgress>,
+    /// Horizontal translation for an in-progress full-desk collection switch.
+    pub(super) collection_switch_offset_x: f64,
+    pub(super) collection_switch_active: bool,
     /// Clock for driving animations.
     pub(super) clock: Clock,
     /// Configurable properties of the layout as received from the parent layout.
@@ -365,6 +368,8 @@ impl<W: LayoutElement> Monitor<W> {
             insert_hint_render_loc: None,
             overview_open: false,
             overview_progress: None,
+            collection_switch_offset_x: 0.,
+            collection_switch_active: false,
             workspace_switch: None,
             clock,
             base_options,
@@ -756,9 +761,12 @@ impl<W: LayoutElement> Monitor<W> {
 
         // Special case handling when empty_workspace_above_first is set and all workspaces
         // are empty.
-        if self.options.layout.empty_workspace_above_first && self.workspaces.len() == 2 {
-            assert!(!self.workspaces[0].has_windows_or_name());
-            assert!(!self.workspaces[1].has_windows_or_name());
+        if self.options.layout.empty_workspace_above_first
+            && self.workspaces.len() == 2
+            && self.workspaces.iter().all(|workspace| {
+                !workspace.has_workspace_contents() && !workspace.collection_persistent()
+            })
+        {
             self.workspaces.remove(1);
             self.active_workspace_idx = 0;
         }
@@ -881,7 +889,7 @@ impl<W: LayoutElement> Monitor<W> {
         // If empty_workspace_above_first is set and the first workspace is now no longer empty,
         // add a new empty workspace on top.
         if self.options.layout.empty_workspace_above_first
-            && self.workspaces[0].has_windows_or_name()
+            && self.workspaces[0].has_workspace_contents()
         {
             self.add_workspace_top();
         }
@@ -1362,7 +1370,10 @@ impl<W: LayoutElement> Monitor<W> {
         {
             if options.layout.empty_workspace_above_first {
                 self.add_workspace_top();
-            } else if self.workspace_switch.is_none() && self.active_workspace_idx != 0 {
+            } else if self.workspace_switch.is_none()
+                && self.active_workspace_idx != 0
+                && !self.workspaces[0].collection_persistent()
+            {
                 self.workspaces.remove(0);
                 self.active_workspace_idx = self.active_workspace_idx.saturating_sub(1);
             }
@@ -1655,6 +1666,7 @@ impl<W: LayoutElement> Monitor<W> {
         let static_offset = static_offset
             .to_physical_precise_round(scale)
             .to_logical(scale);
+        let collection_switch_offset_x = self.collection_switch_offset_x;
 
         let first_ws_y = -self.workspace_render_idx() * ws_height_with_gap;
         let first_ws_y = round_logical_in_physical(scale, first_ws_y);
@@ -1662,7 +1674,7 @@ impl<W: LayoutElement> Monitor<W> {
         // Return position for one-past-last workspace too.
         (0..=self.workspaces.len()).map(move |idx| {
             let y = first_ws_y + idx as f64 * ws_height_with_gap;
-            let loc = Point::from((0., y)) + static_offset;
+            let loc = Point::from((collection_switch_offset_x, y)) + static_offset;
 
             // Even though all components that go into loc are rounded to physical pixels, the
             // floating point addition may lose precision. This can result for example in the
@@ -1851,6 +1863,7 @@ impl<W: LayoutElement> Monitor<W> {
         &self,
         mut ctx: RenderCtx<R>,
         focus_ring: bool,
+        collection_switch_workspace: Option<(&Workspace<W>, f64)>,
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
         let _span = tracy_client::span!("Monitor::render_workspaces");
@@ -1869,7 +1882,10 @@ impl<W: LayoutElement> Monitor<W> {
         // rendering for maximized GTK windows.
         //
         // FIXME: use proper bounds after fixing the Crop element.
-        let crop_bounds = if self.workspace_switch.is_some() || self.overview_progress.is_some() {
+        let crop_bounds = if self.workspace_switch.is_some()
+            || self.overview_progress.is_some()
+            || self.collection_switch_active
+        {
             Rectangle::new(
                 Point::from((-i32::MAX / 2, 0)),
                 Size::from((i32::MAX, height)),
@@ -1903,11 +1919,16 @@ impl<W: LayoutElement> Monitor<W> {
         // that overflow would cover the margins and side columns. Clip in final output pixels,
         // after the normal workspace transform, so shader source coordinates and damage use the
         // same rounding as the workspace background. Keep ordinary workspace switching unchanged.
-        let clip_to_workspace =
-            self.options.layout.collections.enabled && self.overview_progress.is_some();
+        let clip_to_workspace = self.options.layout.collections.enabled
+            && self.overview_progress.is_some()
+            && !self.collection_switch_active;
 
         for (ws, geo) in self.workspaces_with_render_geo() {
-            let viewport = if clip_to_workspace {
+            let viewport = if self.collection_switch_active {
+                let output_bounds = Rectangle::from_size(output_size(&self.output))
+                    .to_physical_precise_round(scale);
+                output_bounds.intersection(geo.to_physical_precise_round(scale))
+            } else if clip_to_workspace {
                 let background = MonitorInnerRenderElement::SolidColor(ws.render_background());
                 let background = scale_relocate(geo, background).geometry(scale.into());
                 let Some(viewport) = background.intersection(geo.to_physical_precise_round(scale))
@@ -1953,6 +1974,70 @@ impl<W: LayoutElement> Monitor<W> {
             }
 
             ws.render_scrolling(ctx.r(), xray_pos, focus_ring, push!());
+        }
+
+        if let Some((workspace, x_offset)) = collection_switch_workspace {
+            self.render_collection_switch_workspace(ctx.r(), workspace, x_offset, focus_ring, push);
+        }
+    }
+
+    fn render_collection_switch_workspace<R: NiriRenderer>(
+        &self,
+        mut ctx: RenderCtx<R>,
+        workspace: &Workspace<W>,
+        x_offset: f64,
+        focus_ring: bool,
+        push: &mut dyn FnMut(MonitorRenderElement<R>),
+    ) {
+        let scale = self.scale.fractional_scale();
+        let output_bounds =
+            Rectangle::from_size(output_size(&self.output)).to_physical_precise_round(scale);
+        let workspace_bounds = Rectangle::new(
+            Point::from((x_offset, 0.)).to_physical_precise_round(scale),
+            output_size(&self.output).to_physical_precise_round(scale),
+        );
+        let Some(viewport) = output_bounds.intersection(workspace_bounds) else {
+            return;
+        };
+        let source_size = workspace.view_size();
+        let source_height = source_size.to_physical_precise_round(scale).h;
+        let source_crop = Rectangle::new(
+            Point::from((-i32::MAX / 2, 0)),
+            Size::from((i32::MAX, source_height)),
+        );
+        let destination_size = output_size(&self.output);
+        let fitted_scale =
+            (destination_size.w / source_size.w).max(destination_size.h / source_size.h);
+        let fitted_offset = Point::from((
+            x_offset + (destination_size.w - source_size.w * fitted_scale) / 2.,
+            (destination_size.h - source_size.h * fitted_scale) / 2.,
+        ));
+        let offset = fitted_offset.to_physical_precise_round(scale);
+        let xray_pos = XrayPos::new(fitted_offset, fitted_scale);
+
+        let mut push_element = |element: WorkspaceRenderElement<R>| {
+            let Some(element) = CropRenderElement::from_element(element, scale, source_crop) else {
+                return;
+            };
+            let element = MonitorInnerRenderElement::Workspace(element);
+            let element =
+                RescaleRenderElement::from_element(element, Point::default(), fitted_scale);
+            let element = RelocateRenderElement::from_element(element, offset, Relocate::Relative);
+            if let Some(element) = CropRenderElement::from_element(element, scale, viewport) {
+                push(MonitorRenderElement::ViewportClipped(element));
+            }
+        };
+
+        workspace.render_floating(ctx.r(), xray_pos, focus_ring, &mut push_element);
+        workspace.render_scrolling(ctx.r(), xray_pos, focus_ring, &mut push_element);
+
+        let background = MonitorInnerRenderElement::SolidColor(workspace.render_background());
+        let background =
+            RescaleRenderElement::from_element(background, Point::default(), fitted_scale);
+        let background =
+            RelocateRenderElement::from_element(background, offset, Relocate::Relative);
+        if let Some(background) = CropRenderElement::from_element(background, scale, viewport) {
+            push(MonitorRenderElement::ViewportClipped(background));
         }
     }
 
@@ -2341,8 +2426,12 @@ impl<W: LayoutElement> Monitor<W> {
 
         if self.options.layout.empty_workspace_above_first {
             assert!(
-                self.workspaces.len() != 2,
-                "if empty_workspace_above_first is set there must be just 1 or 3+ workspaces"
+                self.workspaces.len() != 2
+                    || self
+                        .workspaces
+                        .iter()
+                        .any(|workspace| workspace.collection_persistent()),
+                "two empty workspaces require a retained persisted slot"
             )
         }
 

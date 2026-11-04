@@ -7,6 +7,7 @@ mod scratchpad_pin;
 mod server;
 
 mod animations;
+mod collection_persistence;
 mod floating;
 mod fullscreen;
 mod layer_motion;

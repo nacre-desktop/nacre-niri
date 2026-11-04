@@ -112,6 +112,8 @@ pub struct Workspace<W: LayoutElement> {
 
     /// Unique ID of this workspace.
     id: WorkspaceId,
+    /// Empty slot retained because its owning named collection has persisted order/routes.
+    collection_persistent: bool,
 
     /// Changes to source contents or layout, excluding periodic render preparation.
     overview_revision: u64,
@@ -277,6 +279,7 @@ impl<W: LayoutElement> Workspace<W> {
             name: config.map(|c| c.name.0),
             layout_config,
             id: WorkspaceId::next(),
+            collection_persistent: false,
             overview_revision: 0,
             overview_urgencies: Vec::new(),
         }
@@ -343,6 +346,7 @@ impl<W: LayoutElement> Workspace<W> {
             name: config.map(|c| c.name.0),
             layout_config,
             id: WorkspaceId::next(),
+            collection_persistent: false,
             overview_revision: 0,
             overview_urgencies: Vec::new(),
         }
@@ -370,7 +374,19 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn has_windows_or_name(&self) -> bool {
+        self.has_workspace_contents() || self.collection_persistent
+    }
+
+    pub(super) fn has_workspace_contents(&self) -> bool {
         self.has_windows() || self.name.is_some()
+    }
+
+    pub(super) fn set_collection_persistent(&mut self, persistent: bool) {
+        self.collection_persistent = persistent;
+    }
+
+    pub(super) fn collection_persistent(&self) -> bool {
+        self.collection_persistent
     }
 
     pub fn scale(&self) -> smithay::output::Scale {

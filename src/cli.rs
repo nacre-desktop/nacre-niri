@@ -228,6 +228,33 @@ mod collection_cli_tests {
         assert!(
             matches!(action, niri_ipc::Action::CreateCollection { name: Some(name) } if name == "work")
         );
+
+        let Cli {
+            subcommand:
+                Some(Sub::Msg {
+                    msg: Msg::Action { action },
+                    ..
+                }),
+            ..
+        } = Cli::try_parse_from([
+            "niri",
+            "msg",
+            "action",
+            "set-collection-name",
+            "work",
+            "research",
+        ])
+        .unwrap()
+        else {
+            panic!("expected set-collection-name action")
+        };
+        assert!(matches!(
+            action,
+            niri_ipc::Action::SetCollectionName {
+                reference: WorkspaceReferenceArg::Name(reference),
+                name: Some(name)
+            } if reference == "work" && name == "research"
+        ));
     }
 
     #[test]

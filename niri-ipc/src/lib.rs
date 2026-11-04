@@ -121,6 +121,8 @@ pub enum Request {
     EventStream,
     /// Start an event stream that includes overview preview hover changes.
     NacreOverviewHoverStream,
+    /// Start an event stream including both overview hover and collection events.
+    NacreOverviewHoverStreamWithCollections,
     /// Start a regular event stream that opts in to native screen-edge trigger events.
     ///
     /// The initial standard state snapshot is sent first. `EdgeTriggered` and `EdgeLeft` events
@@ -556,6 +558,15 @@ pub enum Action {
     /// Create a collection with an optional name.
     CreateCollection {
         /// Optional name for the new collection.
+        #[cfg_attr(feature = "clap", arg())]
+        name: Option<String>,
+    },
+    /// Set or clear a collection's user-visible name.
+    SetCollectionName {
+        /// Index, name, or stable ID of the collection to rename.
+        #[cfg_attr(feature = "clap", arg())]
+        reference: WorkspaceReferenceArg,
+        /// New name, or `None` to clear the name.
         #[cfg_attr(feature = "clap", arg())]
         name: Option<String>,
     },
@@ -1712,6 +1723,11 @@ pub enum Event {
     CollectionsChanged {
         /// Complete replacement collection state.
         collections: Vec<Collection>,
+    },
+    /// A collection became visible on an output.
+    CollectionActivated {
+        /// Stable identifier of the activated collection.
+        id: u64,
     },
     /// The workspace urgency changed.
     WorkspaceUrgencyChanged {

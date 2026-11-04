@@ -70,6 +70,45 @@ pub mod touch_resize_grab;
 
 use backend_ext::{NiriInputBackend as InputBackend, NiriInputDevice as _};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionSwipeAxis {
+    Horizontal,
+    Vertical,
+}
+
+fn classify_collection_swipe(x: f64, y: f64) -> Option<CollectionSwipeAxis> {
+    if x * x + y * y < 16. * 16. {
+        None
+    } else if x.abs() > y.abs() {
+        Some(CollectionSwipeAxis::Horizontal)
+    } else {
+        Some(CollectionSwipeAxis::Vertical)
+    }
+}
+
+fn collection_swipe_pan_delta(raw_delta_x: f64, natural_scroll: bool) -> f64 {
+    if natural_scroll {
+        raw_delta_x
+    } else {
+        -raw_delta_x
+    }
+}
+
+fn should_recognize_collection_swipe(
+    fingers: u32,
+    configured_fingers: u8,
+    enabled: bool,
+    supported_count: bool,
+    collections_available: bool,
+    overview_open: bool,
+) -> bool {
+    enabled
+        && supported_count
+        && fingers == u32::from(configured_fingers)
+        && collections_available
+        && !overview_open
+}
+
 pub const DOUBLE_CLICK_TIME: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1524,6 +1563,12 @@ impl State {
                 self.maybe_warp_cursor_to_focus();
                 self.niri.layer_shell_on_demand_focus = None;
                 self.niri.queue_redraw_all();
+            }
+            Action::SetCollectionName(reference, name) => {
+                if self.niri.layout.set_collection_name(&reference, name) {
+                    self.niri.queue_redraw_all();
+                    self.ipc_refresh_layout();
+                }
             }
             Action::MoveWindowToCollectionNext => {
                 self.niri.layout.move_window_to_collection_next();
@@ -3857,11 +3902,49 @@ impl State {
             // We handled this event.
             return;
         } else if event.fingers() == 4 {
+            let config = self.niri.config.borrow().gestures.collection_switch;
+            let output = self.niri.output_under_cursor();
+            if should_recognize_collection_swipe(
+                event.fingers(),
+                config.fingers,
+                config.on,
+                config.has_supported_finger_count(),
+                output.as_ref().is_some_and(|output| {
+                    self.niri.layout.collection_switch_gesture_available(output)
+                }),
+                self.niri.layout.is_overview_open(),
+            ) {
+                self.niri.gesture_swipe_collection_cumulative = Some((0., 0.));
+                self.niri.gesture_swipe_collection_output = output;
+                self.niri.gesture_swipe_collection_mode =
+                    Some(crate::niri::CollectionSwipeMode::Recognizing);
+                return;
+            }
+
             self.niri.layout.overview_gesture_begin();
             self.niri.queue_redraw_all();
 
             // We handled this event.
             return;
+        } else {
+            let config = self.niri.config.borrow().gestures.collection_switch;
+            let output = self.niri.output_under_cursor();
+            if should_recognize_collection_swipe(
+                event.fingers(),
+                config.fingers,
+                config.on,
+                config.has_supported_finger_count(),
+                output.as_ref().is_some_and(|output| {
+                    self.niri.layout.collection_switch_gesture_available(output)
+                }),
+                self.niri.layout.is_overview_open(),
+            ) {
+                self.niri.gesture_swipe_collection_cumulative = Some((0., 0.));
+                self.niri.gesture_swipe_collection_output = output;
+                self.niri.gesture_swipe_collection_mode =
+                    Some(crate::niri::CollectionSwipeMode::Recognizing);
+                return;
+            }
         }
 
         let serial = SERIAL_COUNTER.next_serial();
@@ -3898,13 +3981,80 @@ impl State {
         }
 
         let uninverted_delta_y = delta_y;
+        let raw_delta_x = delta_x;
 
         let device = event.device();
-        if let Some(device) = (&device as &dyn Any).downcast_ref::<input::Device>() {
-            if device.config_scroll_natural_scroll_enabled() {
-                delta_x = -delta_x;
-                delta_y = -delta_y;
+        let natural_scroll = (&device as &dyn Any)
+            .downcast_ref::<input::Device>()
+            .is_some_and(|device| device.config_scroll_natural_scroll_enabled());
+        if natural_scroll {
+            delta_x = -delta_x;
+            delta_y = -delta_y;
+        }
+        let collection_pan_delta = collection_swipe_pan_delta(raw_delta_x, natural_scroll);
+
+        if let Some(crate::niri::CollectionSwipeMode::Recognizing) =
+            self.niri.gesture_swipe_collection_mode
+        {
+            let Some((sum_x, sum_y)) = self.niri.gesture_swipe_collection_cumulative.as_mut()
+            else {
+                self.niri.gesture_swipe_collection_mode = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            };
+            *sum_x += delta_x;
+            *sum_y += uninverted_delta_y;
+            let (sum_x, sum_y) = (*sum_x, *sum_y);
+            let Some(axis) = classify_collection_swipe(sum_x, sum_y) else {
+                return;
+            };
+            self.niri.gesture_swipe_collection_cumulative = None;
+            if axis == CollectionSwipeAxis::Horizontal {
+                let Some(output) = self.niri.gesture_swipe_collection_output.clone() else {
+                    self.niri.gesture_swipe_collection_mode = None;
+                    return;
+                };
+                if !self.niri.layout.collection_switch_gesture_begin(&output) {
+                    self.niri.gesture_swipe_collection_mode = None;
+                    self.niri.gesture_swipe_collection_output = None;
+                    return;
+                }
+                self.niri.gesture_swipe_collection_mode =
+                    Some(crate::niri::CollectionSwipeMode::Switching);
+                if let Some(output) = self.niri.layout.collection_switch_gesture_update(
+                    collection_pan_delta,
+                    Duration::from_micros(event.time()),
+                ) {
+                    self.niri.queue_redraw(&output);
+                }
+                return;
             }
+
+            self.niri.gesture_swipe_collection_mode = None;
+            self.niri.gesture_swipe_collection_output = None;
+            self.niri.layout.overview_gesture_begin();
+            if self
+                .niri
+                .layout
+                .overview_gesture_update(-sum_y, Duration::from_micros(event.time()))
+                .is_some_and(|redraw| redraw)
+            {
+                self.niri.queue_redraw_all();
+            }
+            return;
+        }
+
+        if matches!(
+            self.niri.gesture_swipe_collection_mode,
+            Some(crate::niri::CollectionSwipeMode::Switching)
+        ) {
+            if let Some(output) = self.niri.layout.collection_switch_gesture_update(
+                collection_pan_delta,
+                Duration::from_micros(event.time()),
+            ) {
+                self.niri.queue_redraw(&output);
+            }
+            return;
         }
 
         let is_overview_open = self.niri.layout.is_overview_open();
@@ -4011,6 +4161,27 @@ impl State {
 
     fn on_gesture_swipe_end<I: InputBackend>(&mut self, event: I::GestureSwipeEndEvent) {
         self.niri.gesture_swipe_3f_cumulative = None;
+
+        match self.niri.gesture_swipe_collection_mode.take() {
+            Some(crate::niri::CollectionSwipeMode::Switching) => {
+                if let Some(output) = self
+                    .niri
+                    .layout
+                    .collection_switch_gesture_end(event.cancelled())
+                {
+                    self.niri.queue_redraw(&output);
+                }
+                self.niri.gesture_swipe_collection_cumulative = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            }
+            Some(crate::niri::CollectionSwipeMode::Recognizing) => {
+                self.niri.gesture_swipe_collection_cumulative = None;
+                self.niri.gesture_swipe_collection_output = None;
+                return;
+            }
+            None => {}
+        }
 
         let mut handled = false;
         let res = self.niri.layout.workspace_switch_gesture_end(Some(true));
@@ -5188,6 +5359,56 @@ mod tests {
 
     use super::*;
     use crate::animation::Clock;
+
+    #[test]
+    fn collection_swipe_axis_recognition_preserves_vertical_overview_and_threshold() {
+        assert_eq!(
+            classify_collection_swipe(15., 0.),
+            None,
+            "sub-threshold motion remains undecided"
+        );
+        assert_eq!(
+            classify_collection_swipe(-20., 4.),
+            Some(CollectionSwipeAxis::Horizontal)
+        );
+        assert_eq!(
+            classify_collection_swipe(3., 20.),
+            Some(CollectionSwipeAxis::Vertical)
+        );
+    }
+
+    #[test]
+    fn collection_swipe_recognition_respects_enable_fingers_and_layout_state() {
+        let available = true;
+        let closed = false;
+        assert!(should_recognize_collection_swipe(
+            4, 4, true, true, available, closed
+        ));
+        assert!(should_recognize_collection_swipe(
+            5, 5, true, true, available, closed
+        ));
+        assert!(!should_recognize_collection_swipe(
+            3, 3, true, false, available, closed
+        ));
+        assert!(!should_recognize_collection_swipe(
+            4, 4, false, true, available, closed
+        ));
+        assert!(!should_recognize_collection_swipe(
+            4, 4, true, true, false, closed
+        ));
+        assert!(!should_recognize_collection_swipe(
+            4, 4, true, true, available, true
+        ));
+    }
+
+    #[test]
+    fn collection_swipe_pan_matches_native_direction_with_natural_scroll() {
+        let raw_finger_right = 12.;
+        assert_eq!(collection_swipe_pan_delta(raw_finger_right, false), -12.);
+        assert_eq!(collection_swipe_pan_delta(raw_finger_right, true), 12.);
+        assert_eq!(collection_swipe_pan_delta(-raw_finger_right, false), 12.);
+        assert_eq!(collection_swipe_pan_delta(-raw_finger_right, true), -12.);
+    }
 
     #[test]
     fn bindings_suppress_keys() {

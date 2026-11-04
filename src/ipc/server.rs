@@ -242,7 +242,11 @@ impl IpcServer {
 }
 
 fn stream_event_allowed(event: &Event, include_collections: bool) -> bool {
-    include_collections || !matches!(event, Event::CollectionsChanged { .. })
+    include_collections
+        || !matches!(
+            event,
+            Event::CollectionsChanged { .. } | Event::CollectionActivated { .. }
+        )
 }
 
 fn event_stream_snapshot(state: &EventStreamState, include_collections: bool) -> Vec<Event> {
@@ -295,6 +299,13 @@ mod tests {
             .iter()
             .any(|event| matches!(event, Event::CollectionsChanged { .. })));
         assert_eq!(extension.len(), legacy.len() + 1);
+    }
+
+    #[test]
+    fn collection_activations_are_opt_in_with_collection_snapshots() {
+        let event = Event::CollectionActivated { id: 41 };
+        assert!(!super::stream_event_allowed(&event, false));
+        assert!(super::stream_event_allowed(&event, true));
     }
 
     #[test]
@@ -531,16 +542,25 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             .context("error parsing request")
             .map_err(|err| err.to_string());
         let requested_error = matches!(request, Ok(Request::ReturnError));
-        let requested_hover = matches!(request, Ok(Request::NacreOverviewHoverStream));
+        let requested_hover = matches!(
+            request,
+            Ok(Request::NacreOverviewHoverStream)
+                | Ok(Request::NacreOverviewHoverStreamWithCollections)
+        );
         let requested_edges = matches!(request, Ok(Request::NacreEdgeTriggerStream));
         let requested_event_stream = matches!(
             request,
             Ok(Request::EventStream
                 | Request::EventStreamWithCollections
                 | Request::NacreOverviewHoverStream
+                | Request::NacreOverviewHoverStreamWithCollections
                 | Request::NacreEdgeTriggerStream)
         );
-        let include_collections = matches!(request, Ok(Request::EventStreamWithCollections));
+        let include_collections = matches!(
+            request,
+            Ok(Request::EventStreamWithCollections)
+                | Ok(Request::NacreOverviewHoverStreamWithCollections)
+        );
 
         let reply = match request {
             Ok(request) => process(&ctx, request).await,
@@ -837,10 +857,15 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             Response::FocusedOutput(output)
         }
         Request::EventStream | Request::EventStreamWithCollections => Response::Handled,
-        Request::NacreOverviewHoverStream => {
+        request @ (Request::NacreOverviewHoverStream
+        | Request::NacreOverviewHoverStreamWithCollections) => {
             let (tx, rx) = async_channel::bounded(1);
             ctx.event_loop.insert_idle(move |state| {
-                let enabled = state.niri.config.borrow().nacre.overview_hover;
+                let config = state.niri.config.borrow();
+                let enabled = config.nacre.overview_hover
+                    && (!matches!(request, Request::NacreOverviewHoverStreamWithCollections)
+                        || config.layout.collections.enabled);
+                drop(config);
                 let id = if enabled
                     && state.niri.layout.is_overview_open()
                     && state.niri.pointer_visibility.is_visible()
@@ -858,7 +883,9 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 let _ = tx.send_blocking(enabled);
             });
             if !rx.recv().await.unwrap_or(false) {
-                return Err(String::from("Nacre overview hover is disabled"));
+                return Err(String::from(
+                    "Nacre overview hover or collection events are disabled",
+                ));
             }
             Response::Handled
         }
@@ -1031,9 +1058,32 @@ impl State {
         let collections = self.niri.layout.collections();
         let mut state = server.event_stream_state.borrow_mut();
         if state.collections.collections != collections {
+            let old_by_output: std::collections::HashMap<_, _> = state
+                .collections
+                .collections
+                .iter()
+                .filter_map(|collection| {
+                    collection
+                        .output
+                        .as_ref()
+                        .map(|output| (output.clone(), collection.id))
+                })
+                .collect();
+            let activated: Vec<_> = collections
+                .iter()
+                .filter(|collection| {
+                    collection.output.as_ref().is_some_and(|output| {
+                        old_by_output.get(output).copied() != Some(collection.id)
+                    })
+                })
+                .map(|collection| collection.id)
+                .collect();
             let event = Event::CollectionsChanged { collections };
             state.collections.apply(event.clone());
             server.send_event(event);
+            for id in activated {
+                server.send_event(Event::CollectionActivated { id });
+            }
         }
     }
 

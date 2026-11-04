@@ -117,6 +117,7 @@ use crate::a11y::A11y;
 use crate::animation::Clock;
 use crate::backend::tty::SurfaceDmabufFeedback;
 use crate::backend::{Backend, Headless, RenderResult, Tty, Winit};
+use crate::collection_state_writer::CollectionStateWriter;
 use crate::cursor::{CursorManager, CursorTextureCache, RenderCursor, XCursor};
 #[cfg(feature = "dbus")]
 use crate::dbus::freedesktop_locale1::Locale1ToNiri;
@@ -138,6 +139,7 @@ use crate::input::{
 use crate::ipc::server::IpcServer;
 use crate::layer::mapped::LayerSurfaceRenderElement;
 use crate::layer::MappedLayer;
+use crate::layout::collection_persistence::{PersistedCollections, PersistedWindowRoute};
 use crate::layout::tile::TileRenderElement;
 use crate::layout::workspace::{Workspace, WorkspaceId};
 use crate::layout::{
@@ -183,7 +185,7 @@ use crate::utils::xwayland::satellite::Satellite;
 use crate::utils::{
     center, center_f64, expand_home, get_monotonic_time, ipc_transform_to_smithay, is_mapped,
     logical_output, make_screenshot_path, output_matches_name, output_size, panel_orientation,
-    send_scale_transform, write_png_rgba8, xwayland,
+    send_scale_transform, with_toplevel_role, write_png_rgba8, xwayland,
 };
 use crate::window::mapped::MappedId;
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped, WindowRef};
@@ -231,6 +233,9 @@ pub struct Niri {
     // Each workspace corresponds to a Space. Each workspace generally has one Output mapped to it,
     // however it may have none (when there are no outputs connected) or multiple (when mirroring).
     pub layout: Layout<Mapped>,
+    /// None means state could not be read and must not be overwritten.
+    pub(crate) collection_persistence: Option<PersistedCollections>,
+    collection_state_writer: Option<CollectionStateWriter>,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
     // according to their global position.
@@ -380,6 +385,9 @@ pub struct Niri {
     pub(crate) edge_trigger_last_motion: Option<(Point<f64, Logical>, Instant)>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
+    pub gesture_swipe_collection_cumulative: Option<(f64, f64)>,
+    pub gesture_swipe_collection_output: Option<Output>,
+    pub gesture_swipe_collection_mode: Option<CollectionSwipeMode>,
     pub overview_scroll_swipe_gesture: ScrollSwipeGesture,
     pub vertical_wheel_tracker: ScrollTracker,
     pub horizontal_wheel_tracker: ScrollTracker,
@@ -424,6 +432,12 @@ pub struct Niri {
 
     #[cfg(feature = "xdp-gnome-screencast")]
     pub casting: Screencasting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollectionSwipeMode {
+    Recognizing,
+    Switching,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1462,6 +1476,18 @@ impl State {
 
         self.niri.clear_edge_trigger();
         self.niri.edge_trigger_last_motion = None;
+        let collection_gesture = config.gestures.collection_switch;
+        if !collection_gesture.on
+            || !collection_gesture.has_supported_finger_count()
+            || !config.layout.collections.enabled
+        {
+            if let Some(output) = self.niri.layout.cancel_collection_switch() {
+                self.niri.queue_redraw(&output);
+            }
+            self.niri.gesture_swipe_collection_mode = None;
+            self.niri.gesture_swipe_collection_cumulative = None;
+            self.niri.gesture_swipe_collection_output = None;
+        }
         if !crate::edge_triggers::event_source_available(&config) {
             if let Some(server) = &self.niri.ipc_server {
                 server.disconnect_edge_trigger_clients();
@@ -2320,7 +2346,40 @@ impl Niri {
         animation_clock.set_rate(rate);
         animation_clock.set_complete_instantly(config_.animations.off);
 
-        let layout = Layout::new(animation_clock.clone(), &config_);
+        let mut layout = Layout::new(animation_clock.clone(), &config_);
+        let collection_persistence = if cfg!(test) || !config_.layout.collections.enabled {
+            None
+        } else {
+            match PersistedCollections::load() {
+                Ok(Some(mut persisted)) => layout
+                    .restore_persisted_collections(&mut persisted)
+                    .then_some(persisted),
+                Ok(None) => {
+                    let mut persisted = PersistedCollections::empty();
+                    layout
+                        .restore_persisted_collections(&mut persisted)
+                        .then_some(persisted)
+                }
+                Err(error) => {
+                    warn!(
+                        ?error,
+                        "could not load named collection state; preserving the state file"
+                    );
+                    None
+                }
+            }
+        };
+        let collection_state_writer = if collection_persistence.is_some() && !cfg!(test) {
+            match CollectionStateWriter::new() {
+                Ok(writer) => Some(writer),
+                Err(error) => {
+                    warn!(?error, "could not start named collection state writer");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let (blocker_cleared_tx, blocker_cleared_rx) = mpsc::channel();
 
@@ -2506,6 +2565,16 @@ impl Niri {
             )
             .unwrap();
 
+        event_loop
+            .insert_source(
+                Timer::from_duration(Duration::from_secs(1)),
+                |_, _, state| {
+                    state.niri.persist_collection_state();
+                    TimeoutAction::ToDuration(Duration::from_secs(1))
+                },
+            )
+            .unwrap();
+
         let socket_name = create_wayland_socket.then(|| {
             let socket_source = ListeningSocketSource::new_auto().unwrap();
             let socket_name = socket_source.socket_name().to_os_string();
@@ -2574,6 +2643,8 @@ impl Niri {
             clock: animation_clock,
 
             layout,
+            collection_persistence,
+            collection_state_writer,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
@@ -2663,6 +2734,9 @@ impl Niri {
             edge_trigger_last_motion: None,
             tablet_cursor_location: None,
             gesture_swipe_3f_cumulative: None,
+            gesture_swipe_collection_cumulative: None,
+            gesture_swipe_collection_output: None,
+            gesture_swipe_collection_mode: None,
             overview_scroll_swipe_gesture: ScrollSwipeGesture::new(),
             vertical_wheel_tracker: ScrollTracker::new(120),
             horizontal_wheel_tracker: ScrollTracker::new(120),
@@ -2712,6 +2786,78 @@ impl Niri {
         niri.reset_pointer_inactivity_timer();
 
         niri
+    }
+
+    pub fn persist_collection_state(&mut self) {
+        if !self.config.borrow().layout.collections.enabled {
+            self.collection_persistence = None;
+            return;
+        }
+        let Some(previous) = self.collection_persistence.as_ref().cloned() else {
+            return;
+        };
+        let mut next = previous.clone();
+        next.collections = self.layout.persisted_collection_snapshot();
+        let locations = self.layout.persisted_workspace_locations();
+        next.migrate_routes_to_runtime_locations(&previous, &locations);
+
+        let mut live_routes = Vec::new();
+        self.layout.with_windows(|mapped, _, workspace_id, _| {
+            let Some(workspace_id) = workspace_id else {
+                return;
+            };
+            let Some((collection, workspace)) = locations.get(&workspace_id) else {
+                return;
+            };
+            let route = with_toplevel_role(mapped.toplevel(), |role| {
+                let app_id = role.app_id.clone().filter(|id| !id.is_empty());
+                let title = role.title.clone().filter(|title| !title.is_empty());
+                if app_id.is_none() {
+                    return None;
+                }
+                Some(PersistedWindowRoute {
+                    app_id,
+                    title,
+                    collection: collection.clone(),
+                    workspace: workspace.clone(),
+                })
+            });
+            if let Some(route) = route {
+                live_routes.push(route);
+            }
+        });
+        next.replace_live_routes(live_routes);
+        next.retain_routed_empty_workspaces();
+        next.fit_for_persistence();
+
+        if next.same_persisted_state(&previous) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+            return;
+        }
+        if cfg!(test) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+            return;
+        }
+        let Some(writer) = &self.collection_state_writer else {
+            warn!("named collection state writer is unavailable");
+            return;
+        };
+        if writer.enqueue(next.clone()) {
+            self.layout.retain_persisted_workspace_slots(&next);
+            self.collection_persistence = Some(next);
+        } else {
+            warn!("named collection state writer is stopping");
+        }
+    }
+
+    pub fn finish_collection_state_writer(&mut self) {
+        if let Some(writer) = self.collection_state_writer.take() {
+            if let Err(error) = writer.finish() {
+                warn!(%error, "could not flush named collection state");
+            }
+        }
     }
 
     pub fn insert_client(&mut self, client: NewClient) {
@@ -4575,7 +4721,10 @@ impl Niri {
                         push(elem.into())
                     });
             }
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            let switch_workspace = self.layout.collection_switch_render_workspace(output);
+            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+                push(elem.into())
+            });
 
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
@@ -4634,7 +4783,10 @@ impl Niri {
                         push(elem.into())
                     });
             }
-            mon.render_workspaces(ctx.r(), focus_ring, &mut |elem| push(elem.into()));
+            let switch_workspace = self.layout.collection_switch_render_workspace(output);
+            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+                push(elem.into())
+            });
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 // The render element namespace. This will be set to the workspace index for

@@ -14,6 +14,8 @@ use smithay::utils::Rectangle;
 use super::*;
 
 mod animations;
+#[path = "tests/collection_persistence.rs"]
+mod collection_persistence_tests;
 mod collections;
 mod collections_extra;
 mod fullscreen;
@@ -479,6 +481,13 @@ enum Op {
     },
     RemoveOutput(#[proptest(strategy = "1..=5usize")] usize),
     CreateCollection(#[proptest(strategy = "prop::option::of(1..=5usize)")] Option<usize>),
+    RenameCollection {
+        #[proptest(strategy = "1..=5u8")]
+        reference: u8,
+        #[proptest(strategy = "prop::option::of(1..=5usize)")]
+        name: Option<usize>,
+    },
+    RestoreCollectionState,
     FocusCollection(#[proptest(strategy = "1..=5u8")] u8),
     FocusCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
     FocusCollectionById(#[proptest(strategy = "0..=4usize")] usize),
@@ -888,6 +897,38 @@ impl Op {
         match self {
             Op::CreateCollection(name) => {
                 layout.create_collection(name.map(|id| format!("collection{id}")));
+            }
+            Op::RenameCollection { reference, name } => {
+                layout.set_collection_name(
+                    &WorkspaceReference::Index(reference),
+                    name.map(|id| format!("desk{id}")),
+                );
+            }
+            Op::RestoreCollectionState => {
+                let mut persisted =
+                    crate::layout::collection_persistence::PersistedCollections::empty();
+                persisted.collections = layout.persisted_collection_snapshot();
+                let output_ids: Vec<_> = (1..=5)
+                    .filter(|id| {
+                        layout
+                            .outputs()
+                            .any(|output| output.name() == format!("output{id}"))
+                    })
+                    .collect();
+                let window_ids: Vec<_> = layout
+                    .windows()
+                    .map(|(_, window)| window.id().clone())
+                    .collect();
+                for id in window_ids {
+                    layout.remove_window(&id, Transaction::new());
+                }
+                for id in &output_ids {
+                    Op::RemoveOutput(*id).apply(layout);
+                }
+                layout.restore_persisted_collections(&mut persisted);
+                for id in output_ids {
+                    Op::AddOutput(id).apply(layout);
+                }
             }
             Op::FocusCollection(index) => {
                 layout.focus_collection(&WorkspaceReference::Index(index));

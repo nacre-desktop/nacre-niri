@@ -5,6 +5,7 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 use smithay::wayland::xdg_activation::XdgActivationTokenData;
 
 use super::ResolvedWindowRules;
+use crate::layout::workspace::WorkspaceId;
 
 #[derive(Debug)]
 pub struct Unmapped {
@@ -67,6 +68,9 @@ pub enum InitialConfigureState {
 
         /// Workspace to open this window on.
         workspace_name: Option<String>,
+
+        /// Best-effort saved collection/workspace target, including unnamed workspace slots.
+        persisted_workspace_id: Option<WorkspaceId>,
 
         /// Whether the window should be maximized.
         ///
