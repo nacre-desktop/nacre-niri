@@ -723,7 +723,7 @@ proptest! {
     #[test]
     fn actual_drop_target_correctness_property(
         samples in prop::collection::vec(
-            (0usize..2, 0usize..3, 16u16..=49_151, 16u16..=49_151),
+            (0usize..2, 0usize..2, 0usize..3, 16u16..=65_519, 16u16..=65_519),
             100_000..=100_000,
         )
     ) {
@@ -744,31 +744,42 @@ proptest! {
             for seed in 0..3 {
                 add_window(&mut layout, 200 + index * 10 + seed);
             }
+            let target_workspace = layout.collection_active_workspace(target).unwrap();
+            let second_workspace = super::super::workspace::Workspace::new_no_outputs(
+                layout.clock.clone(),
+                layout.options.clone(),
+            );
+            let second_workspace_id = second_workspace.id();
+            layout.collections.iter_mut().find(|collection| collection.id == target)
+                .unwrap().workspaces.push(second_workspace);
+            layout.move_to_workspace(Some(&(202 + index * 10)), 1, ActivateWindow::No);
             layout.focus_collection(&WorkspaceReference::Id(home));
-            endpoints.push((home, source, target, moved_window));
+            endpoints.push((home, source, target, moved_window, [target_workspace, second_workspace_id]));
         }
         layout.open_overview();
         layout.clock.set_complete_instantly(true);
         layout.advance_animations();
         layout.clock.set_complete_instantly(false);
 
-        for (iteration, (output_index, column_choice, x_raw, y_raw)) in samples.into_iter().enumerate() {
-            let (home, source, target, moved_window) = endpoints[output_index];
+        for (iteration, (output_index, row_choice, column_choice, x_raw, y_raw)) in samples.into_iter().enumerate() {
+            let (home, source, target, moved_window, target_rows) = endpoints[output_index];
             let output = outputs[output_index].clone();
-            let target_workspace = layout.collection_active_workspace(target).unwrap();
+            let target_workspace = target_rows[row_choice];
             let x_fraction = f64::from(x_raw) / 65_535.;
             let y_fraction = f64::from(y_raw) / 65_535.;
             let (start, hovered_screen, expected_column) = {
                 let previews = layout.collection_previews(&output);
                 let source_geometry = previews.iter().find(|preview| preview.id == source).unwrap().geometry;
-                let target_preview = previews.iter().find(|preview| preview.id == target).unwrap();
+                let target_preview = previews.iter().find(|preview| {
+                    preview.id == target && preview.workspace.id() == target_workspace
+                }).unwrap();
                 let target_geometry = target_preview.geometry;
                 let target_zoom = target_preview.zoom;
                 let target_ws = layout.find_workspace_by_id(target_workspace).unwrap().1;
                 let tiles: Vec<_> = target_ws.tiles_with_ipc_layouts()
                     .filter_map(|(_, info)| info.tile_pos_in_workspace_view.map(|position| (info.tile_size, position)))
                     .collect();
-                prop_assert!(tiles.len() >= 3);
+                prop_assert!(!tiles.is_empty());
                 let (tile_size, tile_pos) = &tiles[column_choice % tiles.len()];
                 let local = Point::from((
                     tile_pos.0 + tile_size.0 * x_fraction,

@@ -1126,7 +1126,6 @@ pub(super) fn columns(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn columns_fit_and_hit_distinct_collection() {
@@ -1150,39 +1149,4 @@ mod tests {
         }
     }
 
-    proptest! {
-        #![proptest_config(ProptestConfig { cases: 100_000, .. ProptestConfig::default() })]
-        #[test]
-        fn drop_target_correctness_property(
-            target in 0usize..4,
-            x_fraction in 0.01f64..0.99,
-            y_fraction in 0.01f64..0.99,
-            output_scale in prop_oneof![Just(1.0f64), Just(1.5f64)],
-        ) {
-            // Two desks with two workspace rows each, plus a scratchpad preview. Coordinates are
-            // logical after the NN0012 output transform; simulate physical pointer coordinates
-            // at both output scales before hit testing.
-            let geometries = [
-                (false, Rectangle::new((100., 80.).into(), (240., 160.).into())),
-                (false, Rectangle::new((100., 260.).into(), (240., 160.).into())),
-                (false, Rectangle::new((420., 120.).into(), (240., 160.).into())),
-                (false, Rectangle::new((420., 300.).into(), (240., 160.).into())),
-                (true, Rectangle::new((720., 100.).into(), (160., 120.).into())),
-            ];
-            let selected = target % 4;
-            let bounds = geometries[selected].1;
-            let physical = Point::<f64, Logical>::from((
-                (bounds.loc.x + bounds.size.w * x_fraction) * output_scale,
-                (bounds.loc.y + bounds.size.h * y_fraction) * output_scale,
-            ));
-            let pointer = physical.downscale(output_scale);
-            let resolved = preview_drop_target_geometry(
-                geometries.iter().enumerate().map(|(index, (scratchpad, geometry))| {
-                    (index, *scratchpad, *geometry)
-                }),
-                pointer,
-            ).unwrap();
-            prop_assert_eq!(resolved, selected);
-        }
-    }
 }
