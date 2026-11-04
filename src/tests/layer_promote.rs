@@ -533,32 +533,32 @@ fn collection_swipe_raster_clips_fitted_promotions_and_repaints_old_pixels() {
             // At 180 logical px only the outgoing red panel should remain; at 220 only
             // the incoming blue panel should remain. Their desk boundary is x=200.
             assert_eq!(
-                pixel_at(&incremental, 600, 270, 60),
-                pixel_at(&source_pixels, 600, 270, 60)
+                pixel_at(&incremental, 600, 270, 45),
+                pixel_at(&source_pixels, 600, 270, 45)
             );
             assert_ne!(
-                pixel_at(&incremental, 600, 270, 60),
-                pixel_at(&base_pixels, 600, 270, 60)
+                pixel_at(&incremental, 600, 270, 45),
+                pixel_at(&base_pixels, 600, 270, 45)
             );
             assert_eq!(
-                pixel_at(&incremental, 600, 330, 60),
-                pixel_at(&incoming_pixels, 600, 330, 60)
+                pixel_at(&incremental, 600, 330, 45),
+                pixel_at(&incoming_pixels, 600, 330, 45)
             );
             assert_ne!(
-                pixel_at(&incremental, 600, 330, 60),
-                pixel_at(&base_pixels, 600, 330, 60)
+                pixel_at(&incremental, 600, 330, 45),
+                pixel_at(&base_pixels, 600, 330, 45)
             );
             assert_ne!(
-                pixel_at(&incremental, 600, 270, 60),
-                pixel_at(&incremental, 600, 330, 60)
+                pixel_at(&incremental, 600, 270, 45),
+                pixel_at(&incremental, 600, 330, 45)
             );
             assert_eq!(
-                pixel_at(&source_pixels, 600, 330, 60),
-                pixel_at(&base_pixels, 600, 330, 60)
+                pixel_at(&source_pixels, 600, 330, 45),
+                pixel_at(&base_pixels, 600, 330, 45)
             );
             assert_eq!(
-                pixel_at(&incoming_pixels, 600, 270, 60),
-                pixel_at(&base_pixels, 600, 270, 60)
+                pixel_at(&incoming_pixels, 600, 270, 45),
+                pixel_at(&base_pixels, 600, 270, 45)
             );
             // The outgoing panel's pre-swipe location is cleared after the transition moves it.
             assert_eq!(
