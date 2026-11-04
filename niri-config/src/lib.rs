@@ -1999,6 +1999,9 @@ mod tests {
                 window_pinning: true,
                 proportional_x11_widths: true,
                 edge_triggers: true,
+                window_restore: true,
+                force_close: true,
+                monitor_workspace_actions: true,
             },
             environment: Environment(
                 [
