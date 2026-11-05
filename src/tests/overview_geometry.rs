@@ -828,6 +828,11 @@ fn egl_collection_columns_preserve_stock_stack_geometry_at_both_output_scales() 
         for fixture in [&mut stock, &mut no_side, &mut with_side] {
             set_time(fixture.niri(), Duration::from_millis(millis));
             fixture.niri().advance_animations();
+            let expected_zoom = 1. - (millis as f64 / 1000.) * (1. - 0.5);
+            assert!(
+                (fixture.niri().layout.overview_zoom() - expected_zoom).abs() < 1e-6,
+                "overview animation did not reach {millis} ms"
+            );
         }
         for idx in [1, 2] {
             let output = no_side.niri_output(idx);
@@ -906,6 +911,7 @@ fn geometry_fixture(collections: bool, with_side_columns: bool) -> Fixture {
         fixture.niri().layout.focus_output(&output1);
     }
     fixture.niri_complete_animations();
+    set_time(fixture.niri(), Duration::ZERO);
     fixture.niri().layout.open_overview();
     fixture
 }
