@@ -341,7 +341,7 @@ fn color_near(
 
 #[test]
 fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_zoom() {
-    for (source_index, target_index, source_scale) in [(1_u8, 2_u8, 1.5_f64), (2, 1, 1.0)] {
+    for (source_index, target_index) in [(1_u8, 2_u8), (2, 1)] {
         let mut fixture = fixture();
         let client = fixture.add_client();
         let source_output = fixture.niri_output(source_index);
@@ -374,8 +374,15 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
         fixture.niri_complete_animations();
         let (pixels, size, previews) = render_target_preview(&mut fixture, target_index);
         let preview = matching_preview(&pixels, size, &previews);
-        let source_width = source_output.current_mode().unwrap().size.w as f64 / source_scale;
-        let expected_stride = STRIPE_STRIDE as f64 * preview.size.w as f64 / source_width;
+        // The preview may be cropped by the target output edge. Its visible element bounds then
+        // report only the cropped width, so derive pixel spacing from the source logical
+        // coordinates and the native overview zoom instead of the visible crop width.
+        let preview_scale = fixture.niri().layout.overview_zoom()
+            * fixture
+                .niri_output(target_index)
+                .current_scale()
+                .fractional_scale();
+        let expected_stride = STRIPE_STRIDE as f64 * preview_scale;
         assert_pattern_spacing(&pixels, size, preview, expected_stride);
 
         let built = fixture.niri().layout.collection_overview_cache_counts();
@@ -434,19 +441,22 @@ fn egl_hidden_collection_preview_rebases_surface_positions_at_target_scale_and_z
             after_scale_change.1 > after_reopen.1,
             "moving a desk to another scale and size rebuilds its hidden preview"
         );
-        let moved_source_width = moved_output.current_mode().unwrap().size.w as f64
-            / moved_output.current_scale().fractional_scale();
+        let moved_preview_scale = fixture.niri().layout.overview_zoom()
+            * fixture
+                .niri_output(source_index)
+                .current_scale()
+                .fractional_scale();
         assert_pattern_spacing(
             &moved_pixels,
             moved_size,
             moved_preview,
-            STRIPE_STRIDE as f64 * moved_preview.size.w as f64 / moved_source_width,
+            STRIPE_STRIDE as f64 * moved_preview_scale,
         );
         let old_stripe_center =
             color_center(&moved_pixels, moved_size, moved_preview, STRIPE_COLORS[0])
                 .expect("original stripe is visible in the selected preview");
         let expected_moved_center = (
-            old_stripe_center.0 + (520. - 80.) * moved_preview.size.w as f64 / moved_source_width,
+            old_stripe_center.0 + (520. - 80.) * moved_preview_scale,
             old_stripe_center.1,
         );
 
