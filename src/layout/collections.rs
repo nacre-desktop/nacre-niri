@@ -292,17 +292,6 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
-        let deferred_monitor_cleanup = self.monitors().any(|monitor| {
-            monitor.workspace_switch.is_some()
-                && monitor
-                    .collection_id
-                    .is_some_and(|id| nonpersistent_ids.contains(&id))
-                && monitor
-                    .workspaces
-                    .iter()
-                    .any(|workspace| workspace.collection_persistent())
-        });
-        self.deferred_collection_retention_cleanup = deferred_monitor_cleanup;
         for collection in &mut self.collections {
             if !nonpersistent_ids.contains(&collection.id) {
                 continue;
@@ -333,11 +322,26 @@ impl<W: LayoutElement> Layout<W> {
                     .all(|workspace| !workspace.has_workspace_contents())
             {
                 monitor.workspace_switch = None;
+                // The switch no longer needs the retention markers deferred above.
+                for workspace in &mut monitor.workspaces {
+                    workspace.set_collection_persistent(false);
+                }
             }
             if monitor.workspace_switch.is_none() {
                 monitor.clean_up_workspaces();
             }
         }
+        let deferred_monitor_cleanup = self.monitors().any(|monitor| {
+            monitor.workspace_switch.is_some()
+                && monitor
+                    .collection_id
+                    .is_some_and(|id| nonpersistent_ids.contains(&id))
+                && monitor
+                    .workspaces
+                    .iter()
+                    .any(|workspace| workspace.collection_persistent())
+        });
+        self.deferred_collection_retention_cleanup = deferred_monitor_cleanup;
     }
 
     pub(super) fn flush_deferred_collection_retention(&mut self) {
