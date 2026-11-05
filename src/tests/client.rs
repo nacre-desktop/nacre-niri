@@ -1104,8 +1104,6 @@ impl Dispatch<WlSeat, ()> for State {
 }
 wayland_client::delegate_noop!(State: ignore WlSubcompositor);
 wayland_client::delegate_noop!(State: ignore WlSubsurface);
-wayland_client::delegate_noop!(State: ignore WlShm);
-wayland_client::delegate_noop!(State: ignore WlShmPool);
 wayland_client::delegate_noop!(State: ignore ZwlrVirtualPointerManagerV1);
 wayland_client::delegate_noop!(State: ignore ZwlrVirtualPointerV1);
 

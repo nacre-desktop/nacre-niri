@@ -84,6 +84,7 @@ fn render_prewarm(fixture: &mut Fixture, output: &Output, target: RenderTarget) 
                 RenderCtx {
                     renderer,
                     target,
+                    scale_override: None,
                     xray: None,
                 },
                 output,

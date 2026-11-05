@@ -456,6 +456,7 @@ fn reveal_fill_raster_is_under_content_and_survives_capture_rendering() {
                     RenderCtx {
                         renderer,
                         target: RenderTarget::Output,
+                        scale_override: None,
                         xray: None,
                     },
                     None,
@@ -471,6 +472,7 @@ fn reveal_fill_raster_is_under_content_and_survives_capture_rendering() {
                     RenderCtx {
                         renderer,
                         target: RenderTarget::Output,
+                        scale_override: None,
                         xray: None,
                     },
                     None,
@@ -1010,6 +1012,7 @@ fn reveal_full_gles_frames_match_nacre_goldens_at_both_scales() {
                                 RenderCtx {
                                     renderer,
                                     target: RenderTarget::Output,
+                                    scale_override: None,
                                     xray: None,
                                 },
                                 None,
@@ -1418,6 +1421,7 @@ fn reveal_headless_gles_cost_benchmark() {
                         RenderCtx {
                             renderer,
                             target: RenderTarget::Output,
+                            scale_override: None,
                             xray: None,
                         },
                         None,
@@ -1660,6 +1664,7 @@ fn circular_reveal_shadow_gles_matches_cpu_for_offset_and_spread() {
                         RenderCtx {
                             renderer,
                             target: RenderTarget::Output,
+                            scale_override: None,
                             xray: None,
                         },
                         None,
