@@ -17,9 +17,12 @@ use smithay::backend::renderer::{Color32F, ContextId, Renderer as _};
 use smithay::output::Output;
 use smithay::utils::{Logical, Point, Rectangle, Size, Transform};
 
+use super::insert_hint_element::{InsertHintElement, InsertHintRenderElement};
 use super::monitor::{InsertPosition, MonitorAddWindowTarget};
 use super::workspace::{Workspace, WorkspaceAddWindowTarget, WorkspaceId, WorkspaceRenderElement};
-use super::{ActivateWindow, HitType, InteractiveMoveData, Layout, LayoutElement};
+use super::{
+    ActivateWindow, HitType, InteractiveMoveData, InteractiveMoveState, Layout, LayoutElement,
+};
 use crate::niri_render_elements;
 use crate::render_helpers::primary_gpu_texture::PrimaryGpuTextureRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -38,6 +41,7 @@ pub(super) struct Overview {
     preview_geometry: RefCell<HashMap<Vec<u64>, Vec<PreviewGeometry>>>,
     prepared_revisions: RefCell<HashMap<WorkspaceId, u64>>,
     textures: RefCell<Vec<PreviewTexture>>,
+    drop_hints: RefCell<HashMap<Output, InsertHintElement>>,
     #[cfg(test)]
     preparations: Cell<u64>,
     #[cfg(test)]
@@ -60,6 +64,7 @@ niri_render_elements! {
         Shadow = CropRenderElement<RelocateRenderElement<RescaleRenderElement<ShadowRenderElement>>>,
         Label = PrimaryGpuTextureRenderElement,
         CachedPreview = CropRenderElement<RelocateRenderElement<RescaleRenderElement<PrimaryGpuTextureRenderElement>>>,
+        InsertHint = CropRenderElement<InsertHintRenderElement>,
     }
 }
 
@@ -512,18 +517,10 @@ impl<W: LayoutElement> Layout<W> {
     ) -> Option<InteractiveMoveData<W>> {
         let pos = moving.pointer_pos_within_output;
         let previews = self.collection_previews(&moving.output);
-        let Some(preview) = previews
-            .iter()
-            .filter(|preview| !preview.is_scratchpad)
-            .filter(|p| pos.x >= p.geometry.loc.x && pos.x < p.geometry.loc.x + p.geometry.size.w)
-            .min_by(|a, b| {
-                let distance =
-                    |p: &Preview<'_, W>| (pos.y - p.geometry.loc.y - p.geometry.size.h / 2.).abs();
-                distance(a).total_cmp(&distance(b))
-            })
-        else {
+        let Some(index) = preview_drop_target(&previews, pos) else {
             return Some(moving);
         };
+        let preview = &previews[index];
         let id = preview.id;
         let workspace_id = preview.workspace.id();
         let local = (pos - preview.geometry.loc).downscale(preview.zoom);
@@ -755,6 +752,118 @@ impl<W: LayoutElement> Layout<W> {
                 }
             });
         }
+        self.render_collection_drop_hint(ctx.renderer, output, push);
+    }
+
+    fn render_collection_drop_hint<R: NiriRenderer>(
+        &self,
+        renderer: &mut R,
+        output: &Output,
+        push: &mut dyn FnMut(CollectionOverviewRenderElement<R>),
+    ) {
+        let Some(InteractiveMoveState::Moving(moving)) = &self.interactive_move else {
+            return;
+        };
+        if moving.output != *output || self.options.layout.insert_hint.off {
+            return;
+        }
+        let pos = moving.pointer_pos_within_output;
+        let previews = self.collection_previews(output);
+        let Some(index) = preview_drop_target(&previews, pos) else {
+            return;
+        };
+        let preview = &previews[index];
+        let local = (pos - preview.geometry.loc).downscale(preview.zoom);
+        let position = if moving.is_floating {
+            InsertPosition::Floating
+        } else {
+            preview.workspace.scrolling_insert_position(local)
+        };
+        let Some(area) = preview.workspace.insert_hint_area(position) else {
+            return;
+        };
+        let scale = output.current_scale().fractional_scale();
+        let transformed_area = Rectangle::new(
+            preview.geometry.loc + area.loc.upscale(preview.zoom),
+            area.size.upscale(preview.zoom),
+        )
+        .to_physical_precise_round(scale)
+        .to_logical(scale);
+        let transformed_view = Rectangle::new(
+            preview.geometry.loc - transformed_area.loc,
+            preview.workspace.view_size().upscale(preview.zoom),
+        );
+        let border_width = moving.tile.effective_border_width().unwrap_or(0.);
+        let source_radius = moving
+            .tile
+            .window()
+            .geometry_corner_radius()
+            .expanded_by(border_width as f32);
+        let radius = niri_config::CornerRadius {
+            top_left: source_radius.top_left * preview.zoom as f32,
+            top_right: source_radius.top_right * preview.zoom as f32,
+            bottom_right: source_radius.bottom_right * preview.zoom as f32,
+            bottom_left: source_radius.bottom_left * preview.zoom as f32,
+        };
+        let mut hint_cache = self.collection_overview.drop_hints.borrow_mut();
+        let hint = hint_cache
+            .entry(output.clone())
+            .or_insert_with(|| InsertHintElement::new(self.options.layout.insert_hint));
+        hint.update_config(self.options.layout.insert_hint);
+        hint.update_render_elements(transformed_area.size, transformed_view, radius, scale);
+        let crop = preview
+            .geometry
+            .intersection(Rectangle::from_size(output_size(output)))
+            .map(|geometry| geometry.to_physical_precise_round(scale));
+        hint.render(renderer, transformed_area.loc, &mut |elem| {
+            if let Some(elem) =
+                crop.and_then(|crop| CropRenderElement::from_element(elem, scale, crop))
+            {
+                push(CollectionOverviewRenderElement::InsertHint(elem));
+            }
+        });
+    }
+}
+
+fn preview_drop_target<W: LayoutElement>(
+    previews: &[Preview<'_, W>],
+    pos: Point<f64, Logical>,
+) -> Option<usize> {
+    preview_drop_target_geometry(
+        previews
+            .iter()
+            .enumerate()
+            .map(|(index, preview)| (index, preview.is_scratchpad, preview.geometry)),
+        pos,
+    )
+}
+
+fn preview_drop_target_geometry(
+    previews: impl Iterator<Item = (usize, bool, Rectangle<f64, Logical>)>,
+    pos: Point<f64, Logical>,
+) -> Option<usize> {
+    previews
+        .filter_map(|(index, is_scratchpad, geometry)| {
+            (!is_scratchpad && pos.x >= geometry.loc.x && pos.x < geometry.loc.x + geometry.size.w)
+                .then_some((index, geometry))
+        })
+        .min_by(|(_, a), (_, b)| {
+            let distance = |geometry: &Rectangle<f64, Logical>| {
+                (pos.y - geometry.loc.y - geometry.size.h / 2.).abs()
+            };
+            distance(a).total_cmp(&distance(b))
+        })
+        .map(|(index, _)| index)
+}
+
+impl<W: LayoutElement> Layout<W> {
+    pub(super) fn has_collection_drop_target(
+        &self,
+        output: &Output,
+        pos: Point<f64, Logical>,
+    ) -> bool {
+        let previews = self.collection_previews(output);
+        preview_drop_target(&previews, pos).is_some()
     }
 }
 
@@ -810,6 +919,8 @@ impl Overview {
             HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
         > = Vec::new();
         let xray_pos = XrayPos::new(preview.geometry.loc, preview.zoom);
+        let scale = key.scale * preview.zoom;
+        ctx.scale_override = Some(scale.into());
         preview
             .workspace
             .render_floating(ctx.r(), xray_pos, false, &mut |elem| {
@@ -822,7 +933,6 @@ impl Overview {
             });
         elements.push(preview.workspace.render_background().into());
         // Render at the final preview resolution, keeping source logical coordinates intact.
-        let scale = key.scale * preview.zoom;
         let size = preview
             .workspace
             .view_size()
@@ -880,6 +990,9 @@ impl Overview {
         self.preview_geometry.borrow_mut().clear();
         self.prepared_revisions.borrow_mut().clear();
         self.textures.borrow_mut().clear();
+        for hint in self.drop_hints.borrow_mut().values_mut() {
+            hint.update_shaders();
+        }
     }
 
     pub(super) fn retain_sources(
@@ -889,6 +1002,9 @@ impl Overview {
     ) {
         let workspaces: HashSet<_> = workspaces.collect();
         let outputs: HashSet<_> = outputs.collect();
+        self.drop_hints
+            .borrow_mut()
+            .retain(|output, _| outputs.contains(output));
         self.prepared_revisions
             .borrow_mut()
             .retain(|id, _| workspaces.contains(id));

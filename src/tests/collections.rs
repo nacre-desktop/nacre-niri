@@ -337,6 +337,13 @@ fn action_fixture(populated: bool) -> (Fixture, ActionContext) {
     fixture.niri().remove_output(&detached_output);
 
     fixture.add_output(3, (800, 600));
+    // Hotplug intentionally reuses the most recently focused detached desk. Switch to a fresh
+    // third-output desk so this action matrix still has a real detached-window target.
+    fixture.niri_focus_output(2);
+    fixture
+        .niri()
+        .layout
+        .create_collection(Some("dispatch-current".into()));
     fixture.niri_focus_output(1);
     if populated {
         add_window(&mut fixture);

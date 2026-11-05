@@ -371,6 +371,7 @@ pub struct Layout<W: LayoutElement> {
     collection_overview: collection_overview::Overview,
     /// Full-size horizontal switch between the active collection and its adjacent desk.
     collection_switch: Option<CollectionSwitchTransition>,
+    collection_switch_pending: Option<(Output, u64, bool)>,
     /// Whether the layout should draw as active.
     ///
     /// This normally indicates that the layout has keyboard focus, but not always. E.g. when the
@@ -386,6 +387,9 @@ pub struct Layout<W: LayoutElement> {
     last_active_workspace_id: HashMap<String, WorkspaceId>,
     /// Ongoing interactive move.
     interactive_move: Option<InteractiveMoveState<W>>,
+    defer_collection_cleanup: bool,
+    collection_recent_use: Vec<u64>,
+    deferred_collection_retention_cleanup: bool,
     /// Ongoing drag-and-drop operation.
     dnd: Option<DndData<W>>,
     /// Clock for driving animations.
@@ -768,9 +772,13 @@ impl<W: LayoutElement> Layout<W> {
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
             collection_switch: None,
+            collection_switch_pending: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
+            defer_collection_cleanup: false,
+            collection_recent_use: Vec::new(),
+            deferred_collection_retention_cleanup: false,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -810,9 +818,13 @@ impl<W: LayoutElement> Layout<W> {
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
             collection_switch: None,
+            collection_switch_pending: None,
             is_active: true,
             last_active_workspace_id: HashMap::new(),
             interactive_move: None,
+            defer_collection_cleanup: false,
+            collection_recent_use: Vec::new(),
+            deferred_collection_retention_cleanup: false,
             dnd: None,
             clock,
             update_render_elements_time: Duration::ZERO,
@@ -1483,9 +1495,11 @@ impl<W: LayoutElement> Layout<W> {
                             if mon.options.layout.empty_workspace_above_first
                                 && mon.workspaces.len() == 2
                                 && mon.workspace_switch.is_none()
+                                && mon
+                                    .workspaces
+                                    .iter()
+                                    .all(|workspace| !workspace.has_windows_or_name())
                             {
-                                assert!(!mon.workspaces[0].has_windows_or_name());
-                                assert!(!mon.workspaces[1].has_windows_or_name());
                                 mon.workspaces.remove(1);
                                 mon.active_workspace_idx = 0;
                             }
@@ -3484,6 +3498,7 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
+        self.flush_deferred_collection_retention();
     }
 
     pub fn are_animations_ongoing(&self, output: Option<&Output>) -> bool {
@@ -3704,47 +3719,51 @@ impl<W: LayoutElement> Layout<W> {
 
         let _span = tracy_client::span!("Layout::update_insert_hint::update");
 
-        if let Some(mon) = self.monitor_for_output_mut(&move_.output) {
-            let zoom = mon.overview_zoom();
-            let (insert_ws, geo) = mon.insert_position(move_.pointer_pos_within_output);
-            match insert_ws {
-                InsertWorkspace::Existing(ws_id) => {
-                    let ws = mon
-                        .workspaces
-                        .iter_mut()
-                        .find(|ws| ws.id() == ws_id)
-                        .unwrap();
-                    let pos_within_workspace =
-                        (move_.pointer_pos_within_output - geo.loc).downscale(zoom);
-                    let position = if move_.is_floating {
-                        InsertPosition::Floating
-                    } else {
-                        ws.scrolling_insert_position(pos_within_workspace)
-                    };
+        let over_side_collection = self.collection_overview_is_open()
+            && self.has_collection_drop_target(&move_.output, move_.pointer_pos_within_output);
+        if !over_side_collection {
+            if let Some(mon) = self.monitor_for_output_mut(&move_.output) {
+                let zoom = mon.overview_zoom();
+                let (insert_ws, geo) = mon.insert_position(move_.pointer_pos_within_output);
+                match insert_ws {
+                    InsertWorkspace::Existing(ws_id) => {
+                        let ws = mon
+                            .workspaces
+                            .iter_mut()
+                            .find(|ws| ws.id() == ws_id)
+                            .unwrap();
+                        let pos_within_workspace =
+                            (move_.pointer_pos_within_output - geo.loc).downscale(zoom);
+                        let position = if move_.is_floating {
+                            InsertPosition::Floating
+                        } else {
+                            ws.scrolling_insert_position(pos_within_workspace)
+                        };
 
-                    let border_width = move_.tile.effective_border_width().unwrap_or(0.);
-                    let corner_radius = move_
-                        .tile
-                        .window()
-                        .geometry_corner_radius()
-                        .expanded_by(border_width as f32);
-                    mon.insert_hint = Some(InsertHint {
-                        workspace: insert_ws,
-                        position,
-                        corner_radius,
-                    });
-                }
-                InsertWorkspace::NewAt(_) => {
-                    let position = if move_.is_floating {
-                        InsertPosition::Floating
-                    } else {
-                        InsertPosition::NewColumn(0)
-                    };
-                    mon.insert_hint = Some(InsertHint {
-                        workspace: insert_ws,
-                        position,
-                        corner_radius: CornerRadius::default(),
-                    });
+                        let border_width = move_.tile.effective_border_width().unwrap_or(0.);
+                        let corner_radius = move_
+                            .tile
+                            .window()
+                            .geometry_corner_radius()
+                            .expanded_by(border_width as f32);
+                        mon.insert_hint = Some(InsertHint {
+                            workspace: insert_ws,
+                            position,
+                            corner_radius,
+                        });
+                    }
+                    InsertWorkspace::NewAt(_) => {
+                        let position = if move_.is_floating {
+                            InsertPosition::Floating
+                        } else {
+                            InsertPosition::NewColumn(0)
+                        };
+                        mon.insert_hint = Some(InsertHint {
+                            workspace: insert_ws,
+                            position,
+                            corner_radius: CornerRadius::default(),
+                        });
+                    }
                 }
             }
         }
@@ -4189,6 +4208,10 @@ impl<W: LayoutElement> Layout<W> {
             for (idx, mon) in monitors.iter().enumerate() {
                 if &mon.output == output {
                     *active_monitor_idx = idx;
+                    if let Some(collection_id) = mon.collection_id {
+                        self.collection_recent_use.retain(|id| *id != collection_id);
+                        self.collection_recent_use.push(collection_id);
+                    }
                     return;
                 }
             }
@@ -4966,6 +4989,7 @@ impl<W: LayoutElement> Layout<W> {
                 // Clear it before calling remove_window() to avoid running interactive_move_end()
                 // in the middle of interactive_move_update() and the confusion that causes.
                 self.interactive_move = None;
+                self.defer_collection_cleanup = true;
 
                 // Unset fullscreen before removing the tile. This will restore its size properly,
                 // and move it to floating if needed, so we don't have to deal with that here.
@@ -4982,6 +5006,7 @@ impl<W: LayoutElement> Layout<W> {
                     is_full_width,
                     is_floating,
                 } = self.remove_window(window, Transaction::new()).unwrap();
+                self.defer_collection_cleanup = false;
 
                 tile.stop_move_animations();
                 tile.interactive_move_offset = Point::from((0., 0.));
@@ -5402,6 +5427,7 @@ impl<W: LayoutElement> Layout<W> {
         if let Some(id) = scratchpad {
             self.scratchpad_active = Some(id);
         }
+        self.clean_up_collections();
     }
 
     pub fn interactive_move_is_moving_above_output(&self, output: &Output) -> bool {
@@ -5636,6 +5662,9 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn toggle_overview(&mut self) {
         self.overview_open = !self.overview_open;
+        if self.overview_open {
+            self.collection_overview.clear();
+        }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());
         let to = if self.overview_open { 1. } else { 0. };
@@ -5893,6 +5922,16 @@ impl<W: LayoutElement> Layout<W> {
 
     pub fn refresh(&mut self, is_active: bool) {
         let _span = tracy_client::span!("Layout::refresh");
+        self.flush_deferred_collection_retention();
+        let focused_collection = self
+            .active_monitor_ref()
+            .and_then(|monitor| monitor.collection_id);
+        if let Some(id) = focused_collection {
+            if self.collection_recent_use.last() != Some(&id) {
+                self.collection_recent_use.retain(|recent| *recent != id);
+                self.collection_recent_use.push(id);
+            }
+        }
         self.scratchpad.refresh(false, false);
 
         for c in &mut self.collections {

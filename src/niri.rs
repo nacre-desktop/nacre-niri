@@ -2117,6 +2117,7 @@ impl State {
                     target: RenderTarget::Output,
                     renderer,
                     xray: None,
+                    scale_override: None,
                 };
 
                 self.niri.fill_xray_elements(ctx.r(), output);
@@ -5774,6 +5775,7 @@ impl Niri {
                         renderer,
                         target: RenderTarget::ScreenCapture,
                         xray: None,
+                        scale_override: None,
                     };
                     let offset = screencopy.region_loc().upscale(-1);
                     let mut elements = Vec::new();
@@ -5852,6 +5854,7 @@ impl Niri {
             renderer,
             target: RenderTarget::ScreenCapture,
             xray: None,
+            scale_override: None,
         };
         let offset = screencopy.region_loc().upscale(-1);
         let mut elements = Vec::new();
@@ -5977,6 +5980,7 @@ impl Niri {
                     renderer,
                     target,
                     xray: None,
+                    scale_override: None,
                 };
                 let elements = self.render_to_vec(ctx, &output, false);
                 let elements = elements.iter().rev();
@@ -6059,6 +6063,7 @@ impl Niri {
             renderer,
             target: RenderTarget::ScreenCapture,
             xray: None,
+            scale_override: None,
         };
         let elements = self.render_to_vec(ctx, output, include_pointer);
         let elements = elements.iter().rev();
@@ -6114,6 +6119,7 @@ impl Niri {
             renderer,
             target: RenderTarget::ScreenCapture,
             xray: None,
+            scale_override: None,
         };
         mapped.render(
             ctx,
@@ -6280,6 +6286,7 @@ impl Niri {
             renderer,
             target: RenderTarget::ScreenCapture,
             xray: None,
+            scale_override: None,
         };
         let elements = self.render_to_vec(ctx, &output, include_pointer);
         let elements = elements.iter().rev();
@@ -6793,6 +6800,7 @@ impl Niri {
                         renderer,
                         target,
                         xray: None,
+                        scale_override: None,
                     };
                     let elements = self.render_to_vec(ctx, &output, false);
                     let elements = elements.iter().rev();

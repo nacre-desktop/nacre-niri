@@ -72,6 +72,38 @@ fn configured_empty_collection_survives_close_and_reload_until_unconfigured() {
 }
 
 #[test]
+fn renamed_runtime_collection_survives_becoming_empty_while_hidden() {
+    let mut layout = collections_layout();
+    check_ops_on_layout(&mut layout, [Op::AddOutput(1)]);
+    let home = layout.collection_for_output(&output(&layout, 1)).unwrap();
+    let named = layout.create_collection(None);
+    assert!(layout.set_collection_name(&WorkspaceReference::Id(named), Some("research".into())));
+    add_window(&mut layout, 10);
+    layout.focus_collection(&WorkspaceReference::Id(home));
+    layout.remove_window(&10, Transaction::new()).unwrap();
+    layout.refresh(true);
+    layout.verify_invariants();
+    assert!(layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == named));
+    assert!(layout
+        .collection_workspaces(named)
+        .all(|workspace| !workspace.has_windows()));
+
+    let unnamed = layout.create_collection(None);
+    add_window(&mut layout, 11);
+    layout.focus_collection(&WorkspaceReference::Id(home));
+    layout.remove_window(&11, Transaction::new()).unwrap();
+    layout.refresh(true);
+    layout.verify_invariants();
+    assert!(!layout
+        .collections()
+        .iter()
+        .any(|collection| collection.id == unnamed));
+}
+
+#[test]
 fn toggling_collections_restores_original_output_ownership_after_swap() {
     let mut layout = collections_layout();
     check_ops_on_layout(&mut layout, [Op::AddOutput(1)]);
@@ -110,6 +142,80 @@ fn toggling_collections_restores_original_output_ownership_after_swap() {
     assert!(layout.collection_for_output(&first).is_some());
     assert!(layout.collection_for_output(&second).is_some());
     assert_eq!(layout.windows().count(), 2);
+}
+
+#[test]
+fn new_output_reuses_most_recent_hidden_collection_before_creating_one() {
+    let mut layout = collections_layout();
+    check_ops_on_layout(
+        &mut layout,
+        [Op::AddOutput(1), Op::AddOutput(2), Op::AddOutput(3)],
+    );
+    assert_eq!(
+        layout.collections().len(),
+        3,
+        "a new empty desk is created when no hidden desk exists"
+    );
+    let active_output = layout.active_output().unwrap().clone();
+    let home = layout.collection_for_output(&active_output).unwrap();
+    let created = layout.create_collection(Some("recent".into()));
+    layout.focus_collection(&WorkspaceReference::Id(home));
+    let original_output = layout
+        .collections
+        .iter()
+        .find(|collection| collection.id == created)
+        .unwrap()
+        .original_output
+        .clone();
+    let count = layout.collections().len();
+    check_ops_on_layout(&mut layout, [Op::AddOutput(4)]);
+    assert_eq!(layout.collections().len(), count);
+    assert_eq!(
+        layout.collection_for_output(&output(&layout, 4)),
+        Some(created)
+    );
+    assert_eq!(
+        layout
+            .collections
+            .iter()
+            .find(|collection| collection.id == created)
+            .unwrap()
+            .original_output,
+        original_output
+    );
+    layout.verify_invariants();
+}
+
+#[test]
+fn window_focus_updates_hidden_desk_mru_for_later_hotplug() {
+    let mut layout = collections_layout();
+    check_ops_on_layout(&mut layout, [Op::AddOutput(1), Op::AddOutput(2)]);
+    let output2 = output(&layout, 2);
+    let recent = layout.create_collection(Some("recent-focus".into()));
+    add_window(&mut layout, 90);
+
+    layout.focus_output(&output2);
+    layout.activate_window(&90);
+    layout.refresh(true);
+    assert_eq!(layout.collection_recent_use.last(), Some(&recent));
+
+    check_ops_on_layout(&mut layout, [Op::RemoveOutput(1)]);
+    check_ops_on_layout(&mut layout, [Op::AddOutput(3)]);
+    assert_eq!(
+        layout.collection_for_output(&output(&layout, 3)),
+        Some(recent)
+    );
+    assert_eq!(
+        layout
+            .collections
+            .iter()
+            .find(|collection| collection.id == recent)
+            .unwrap()
+            .original_output,
+        None
+    );
+    assert_ne!(layout.collection_for_output(&output2), Some(recent));
+    layout.verify_invariants();
 }
 
 #[test]

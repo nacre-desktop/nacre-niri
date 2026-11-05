@@ -2935,7 +2935,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
         focus_ring: bool,
         push: &mut dyn FnMut(ScrollingSpaceRenderElement<R>),
     ) {
-        let scale = Scale::from(self.scale);
+        let scale = ctx.render_scale(Scale::from(self.scale));
 
         // Draw the closing windows on top of the other windows.
         let view_rect = Rectangle::new(Point::from((self.view_pos(), 0.)), self.view_size);
