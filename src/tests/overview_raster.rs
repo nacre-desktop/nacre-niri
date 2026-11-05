@@ -249,10 +249,20 @@ fn check_native_overview_raster(with_side_columns: bool) {
     }
     if with_side_columns {
         let output = fixture.niri_output(2);
-        let shown = fixture.niri().layout.collection_for_output(&output).unwrap();
-        fixture.niri().layout.create_collection(Some("Raster side desk".into()));
+        let shown = fixture
+            .niri()
+            .layout
+            .collection_for_output(&output)
+            .unwrap();
+        fixture
+            .niri()
+            .layout
+            .create_collection(Some("Raster side desk".into()));
         create_window(&mut fixture, client, 0);
-        fixture.niri().layout.focus_collection(&niri_config::WorkspaceReference::Id(shown));
+        fixture
+            .niri()
+            .layout
+            .focus_collection(&niri_config::WorkspaceReference::Id(shown));
     }
     fixture.niri_complete_animations();
     set_time(fixture.niri(), 0);
@@ -289,7 +299,8 @@ fn check_native_overview_raster(with_side_columns: bool) {
     }
     for (idx, output) in outputs.iter().enumerate() {
         assert_eq!(
-            output.saw_clip, with_side_columns,
+            output.saw_clip,
+            with_side_columns,
             "output {} clipping must depend on side columns",
             idx + 1,
         );
