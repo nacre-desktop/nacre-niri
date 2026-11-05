@@ -279,7 +279,9 @@ impl TestCase for Layout {
         self.layout
             .monitor_for_output(&self.output)
             .unwrap()
-            .render_workspaces(ctx, true, None, &mut |elem| rv.push(Box::new(elem) as _));
+            .render_workspaces(ctx, true, false, None, &mut |elem| {
+                rv.push(Box::new(elem) as _)
+            });
         rv
     }
 }
