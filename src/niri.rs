@@ -4738,7 +4738,7 @@ impl Niri {
                     });
             }
             let switch_workspace = self.layout.collection_switch_render_workspace(output);
-            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+            mon.render_workspaces(ctx.r(), focus_ring, self.layout.collection_overview_has_side_columns(output), switch_workspace, &mut |elem| {
                 push(elem.into())
             });
 
@@ -4800,7 +4800,7 @@ impl Niri {
                     });
             }
             let switch_workspace = self.layout.collection_switch_render_workspace(output);
-            mon.render_workspaces(ctx.r(), focus_ring, switch_workspace, &mut |elem| {
+            mon.render_workspaces(ctx.r(), focus_ring, self.layout.collection_overview_has_side_columns(output), switch_workspace, &mut |elem| {
                 push(elem.into())
             });
 

@@ -1927,6 +1927,7 @@ impl<W: LayoutElement> Monitor<W> {
         &self,
         mut ctx: RenderCtx<R>,
         focus_ring: bool,
+        overview_has_side_columns: bool,
         collection_switch_workspace: Option<(&Workspace<W>, f64)>,
         push: &mut dyn FnMut(MonitorRenderElement<R>),
     ) {
@@ -1979,11 +1980,12 @@ impl<W: LayoutElement> Monitor<W> {
             )
         };
 
-        // Scrolling windows normally extend beyond the monitor viewport. In collection overview,
-        // that overflow would cover the margins and side columns. Clip in final output pixels,
+        // Scrolling windows normally extend beyond the monitor viewport. When side columns are
+        // present, that overflow would cover them. Clip in final output pixels,
         // after the normal workspace transform, so shader source coordinates and damage use the
-        // same rounding as the workspace background. Keep ordinary workspace switching unchanged.
-        let clip_to_workspace = self.options.layout.collections.enabled
+        // same rounding as the workspace background. With no side columns, preserve stock niri's
+        // full-width overview rows, including partially visible scrolling windows.
+        let clip_to_workspace = overview_has_side_columns
             && self.overview_progress.is_some()
             && !self.collection_switch_active;
 
