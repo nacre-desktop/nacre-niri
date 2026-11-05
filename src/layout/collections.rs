@@ -222,7 +222,7 @@ impl<W: LayoutElement> Layout<W> {
                 .as_ref()
                 .is_some_and(|old| self.options.layout.collections.names.contains(old));
         collection.name = name;
-        self.clear_retention_for_nonpersistent_collections();
+        self.clear_retention_for_nonpersistent_collections(false);
         self.clean_up_collections();
         true
     }
@@ -258,10 +258,10 @@ impl<W: LayoutElement> Layout<W> {
                 }
             }
         }
-        self.clear_retention_for_nonpersistent_collections();
+        self.clear_retention_for_nonpersistent_collections(true);
     }
 
-    fn clear_retention_for_nonpersistent_collections(&mut self) {
+    fn clear_retention_for_nonpersistent_collections(&mut self, collapse_empty_switches: bool) {
         let nonpersistent_ids: Vec<_> = self
             .collections
             .iter()
@@ -311,10 +311,11 @@ impl<W: LayoutElement> Layout<W> {
             {
                 continue;
             }
-            // Removing persisted retention can leave only the two empty boundary rows. They
-            // must collapse even during a workspace switch: unlike ordinary empty rows in an
-            // animation, this pair is valid only while one of its slots is retained.
-            if monitor.options.layout.empty_workspace_above_first
+            // Config reload can remove persisted retention from both empty boundary rows.
+            // Cancel that empty switch before cleanup; explicit renames keep their transition
+            // and defer removal of its retention markers until it finishes.
+            if collapse_empty_switches
+                && monitor.options.layout.empty_workspace_above_first
                 && monitor.workspaces.len() == 2
                 && monitor
                     .workspaces
@@ -366,7 +367,7 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         self.deferred_collection_retention_cleanup = false;
-        self.clear_retention_for_nonpersistent_collections();
+        self.clear_retention_for_nonpersistent_collections(false);
     }
 
     pub(super) fn transition_collections(&mut self, enabled: bool) {
