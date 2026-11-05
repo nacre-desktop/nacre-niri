@@ -772,6 +772,32 @@ fn overview_hit_testing_selects_detached_column() {
 }
 
 #[test]
+fn overview_without_side_columns_keeps_stock_full_width_window_hits() {
+    let mut layout = enabled_layout();
+    Op::AddOutput(1).apply(&mut layout);
+    let output = layout.outputs().next().unwrap().clone();
+    let mut params = TestWindowParams::new(1);
+    params.is_floating = true;
+    // The floating window protrudes past the scaled workspace background at overview zoom.
+    params.bbox = Rectangle::new(Point::from((0, 0)), Size::from((2000, 400)));
+    Op::AddWindow { params }.apply(&mut layout);
+
+    layout.open_overview();
+    layout.clock.set_complete_instantly(true);
+    layout.advance_animations();
+    layout.clock.set_complete_instantly(false);
+
+    let monitor = layout.monitor_for_output(&output).unwrap();
+    let (workspace, geometry) = monitor.workspaces_with_render_geo().next().unwrap();
+    let point = Point::from((geometry.loc.x + geometry.size.w + 10., geometry.loc.y + geometry.size.h / 2.));
+    assert!(!geometry.contains(point), "point must be outside the workspace background");
+    assert!(point.x < monitor.view_size.w, "point must remain on the output");
+    let local = (point - geometry.loc).downscale(layout.overview_zoom());
+    assert!(workspace.window_under(local).is_some(), "oversized floating window protrudes into point");
+    assert_eq!(layout.window_under(&output, point).unwrap().0.id(), &1);
+}
+
+#[test]
 fn overview_hover_selects_visible_workspace_without_moving_camera() {
     let mut layout = enabled_layout();
     Op::AddOutput(1).apply(&mut layout);

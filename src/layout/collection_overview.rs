@@ -396,6 +396,10 @@ impl<W: LayoutElement> Layout<W> {
         self.options.layout.collections.enabled && self.overview_open
     }
 
+    pub fn collection_overview_has_side_columns(&self, output: &Output) -> bool {
+        self.collection_overview_is_open() && self.collection_columns(output).len() > 1
+    }
+
     fn collection_columns(&self, output: &Output) -> Vec<ColumnGeometry> {
         let Some(active) = self.collection_for_output(output) else {
             return Vec::new();
@@ -546,10 +550,15 @@ impl<W: LayoutElement> Layout<W> {
         pos: Point<f64, Logical>,
         extended: bool,
     ) -> Option<&Workspace<W>> {
+        let columns = self.collection_columns(output);
+        let active_column_contains = columns.len() <= 1
+            || columns
+                .first()
+                .is_some_and(|column| column.bounds.contains(pos));
         if let Some(workspace) = self.monitor_for_output(output).and_then(|monitor| {
-            monitor
-                .workspace_under(pos)
-                .filter(|(_, geometry)| geometry.contains(pos))
+            active_column_contains
+                .then(|| monitor.workspace_under(pos))
+                .flatten()
                 .map(|(workspace, _)| workspace)
         }) {
             return Some(workspace);
@@ -600,12 +609,18 @@ impl<W: LayoutElement> Layout<W> {
                 .window_under((pos - preview.geometry.loc).downscale(preview.zoom))?;
             return Some((window, hit.to_activate()));
         }
+        let columns = self.collection_columns(output);
+        // Stock niri resolves the active workspace over the full output width. Keep that
+        // behavior when there are no side columns. With side columns, reserve their horizontal
+        // lanes so the active monitor's full-width workspace hit test cannot steal their input.
+        let active_column_contains = columns.len() <= 1
+            || columns
+                .first()
+                .is_some_and(|column| column.bounds.contains(pos));
+        if !active_column_contains {
+            return None;
+        }
         self.monitor_for_output(output)
-            .filter(|monitor| {
-                monitor
-                    .workspaces_with_render_geo()
-                    .any(|(_, geometry)| geometry.contains(pos))
-            })
             .and_then(|monitor| monitor.window_under(pos))
     }
 
