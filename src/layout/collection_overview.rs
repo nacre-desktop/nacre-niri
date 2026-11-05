@@ -31,7 +31,9 @@ use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::{render_to_texture, RenderCtx, RenderTarget};
-use crate::utils::output_size;
+use crate::utils::{
+    output_size, round_logical_in_physical, round_logical_in_physical_max1,
+};
 
 const SCRATCHPAD_COLUMN_ID: u64 = u64::MAX;
 
@@ -404,22 +406,39 @@ impl<W: LayoutElement> Layout<W> {
         let Some(active) = self.collection_for_output(output) else {
             return Vec::new();
         };
-        columns(
-            self.collections
-                .iter()
-                .map(|c| c.id)
-                .chain(
-                    self.scratchpad
-                        .has_windows()
-                        .then_some(SCRATCHPAD_COLUMN_ID),
-                )
-                .filter(|id| {
-                    *id == active || !self.monitors().any(|m| m.collection_id == Some(*id))
-                }),
-            active,
-            output_size(output),
-            self.overview_zoom(),
-        )
+        let size = output_size(output);
+        let zoom = self.overview_zoom();
+        let scale = output.current_scale().fractional_scale();
+        let ids = self
+            .collections
+            .iter()
+            .map(|collection| collection.id)
+            .chain(
+                self.scratchpad
+                    .has_windows()
+                    .then_some(SCRATCHPAD_COLUMN_ID),
+            )
+            .filter(|id| {
+                *id == active || !self.monitors().any(|monitor| monitor.collection_id == Some(*id))
+            })
+            .map(|id| {
+                let source_width = if id == active {
+                    size.w
+                } else if id == SCRATCHPAD_COLUMN_ID {
+                    self.scratchpad.view_size().w
+                } else {
+                    self.collection_workspaces(id)
+                        .next()
+                        .map_or(size.w, |workspace| workspace.view_size().w)
+                };
+                let width = Size::<f64, Logical>::from((source_width, 0.))
+                    .upscale(zoom)
+                    .to_physical_precise_ceil(scale)
+                    .to_logical(scale)
+                    .w;
+                (id, width)
+            });
+        columns(ids, active, size, scale)
     }
 
     pub(super) fn collection_previews(&self, output: &Output) -> Vec<Preview<'_, W>> {
@@ -430,6 +449,7 @@ impl<W: LayoutElement> Layout<W> {
             size.w.to_bits(),
             size.h.to_bits(),
             self.overview_zoom().to_bits(),
+            output.current_scale().fractional_scale().to_bits(),
         ];
         for column in &columns {
             if Some(column.id) == active || column.bounds.size.w <= 0. {
@@ -488,29 +508,66 @@ impl<W: LayoutElement> Layout<W> {
                     .iter()
                     .position(|ws| Some(ws.id()) == active_ws)
                     .unwrap_or(0);
-                let heights: Vec<_> = workspaces
+                let scale = output.current_scale().fractional_scale();
+                let zoom = self.overview_zoom();
+                let sizes: Vec<_> = workspaces
                     .iter()
-                    .map(|ws| ws.view_size().h * column.bounds.size.w / ws.view_size().w.max(1.))
+                    .map(|ws| {
+                        ws.view_size()
+                            .upscale(zoom)
+                            .to_physical_precise_ceil(scale)
+                            .to_logical(scale)
+                    })
+                    .collect();
+                let heights: Vec<_> = sizes.iter().map(|size| size.h).collect();
+                let gaps: Vec<_> = workspaces
+                    .iter()
+                    .map(|ws| {
+                        round_logical_in_physical_max1(scale, ws.view_size().h * 0.1 * zoom)
+                    })
                     .collect();
                 let mut positions = vec![0.; workspaces.len()];
                 if let Some(height) = heights.get(active_idx) {
-                    positions[active_idx] = (size.h - height) / 2.;
-                    for idx in active_idx + 1..workspaces.len() {
-                        positions[idx] = positions[idx - 1] + heights[idx - 1] + 24.;
-                    }
-                    for idx in (0..active_idx).rev() {
-                        positions[idx] = positions[idx + 1] - heights[idx] - 24.;
+                    let static_offset =
+                        round_logical_in_physical(scale, (size.h - height) / 2.);
+                    if heights.iter().all(|other| *other == *height)
+                        && gaps.iter().all(|gap| *gap == gaps[active_idx])
+                    {
+                        // Match Monitor::workspaces_render_geo_at: round the initial stack
+                        // offset and each workspace offset in physical pixels independently.
+                        let step = height + gaps[active_idx];
+                        let first_y = round_logical_in_physical(scale, -(active_idx as f64) * step);
+                        for (idx, position) in positions.iter_mut().enumerate() {
+                            *position = round_logical_in_physical(
+                                scale,
+                                first_y + idx as f64 * step,
+                            ) + static_offset;
+                        }
+                    } else {
+                        positions[active_idx] = static_offset;
+                        for idx in active_idx + 1..workspaces.len() {
+                            positions[idx] =
+                                positions[idx - 1] + heights[idx - 1] + gaps[idx - 1];
+                        }
+                        for idx in (0..active_idx).rev() {
+                            positions[idx] =
+                                positions[idx + 1] - heights[idx] - gaps[idx];
+                        }
                     }
                 }
                 for (idx, workspace) in workspaces.into_iter().enumerate() {
-                    let zoom = column.bounds.size.w / workspace.view_size().w.max(1.);
                     geometries.push(PreviewGeometry {
                         collection: column.id,
                         workspace: workspace.id(),
                         is_scratchpad: column.id == SCRATCHPAD_COLUMN_ID,
                         geometry: Rectangle::new(
-                            (column.bounds.loc.x, positions[idx]).into(),
-                            Size::from((column.bounds.size.w, workspace.view_size().h * zoom)),
+                            (
+                                column.bounds.loc.x
+                                    + (column.bounds.size.w - sizes[idx].w) / 2.,
+                                positions[idx],
+                            )
+                                .into(),
+                            sizes[idx],
                         ),
                         zoom,
                     });
@@ -542,6 +599,26 @@ impl<W: LayoutElement> Layout<W> {
             }
         }
         previews
+    }
+
+    #[cfg(test)]
+    pub(crate) fn overview_workspace_geometries_for_test(
+        &self,
+        output: &Output,
+    ) -> (
+        Vec<Rectangle<f64, Logical>>,
+        Vec<(Rectangle<f64, Logical>, Size<f64, Logical>, f64)>,
+    ) {
+        let native = self
+            .monitor_for_output(output)
+            .map(|monitor| monitor.workspaces_render_geo().collect())
+            .unwrap_or_default();
+        let side = self
+            .collection_previews(output)
+            .into_iter()
+            .map(|preview| (preview.geometry, preview.workspace.view_size(), preview.zoom))
+            .collect();
+        (native, side)
     }
 
     pub(super) fn collection_workspace_under(
@@ -1337,73 +1414,52 @@ pub(super) struct ColumnGeometry {
     pub bounds: Rectangle<f64, Logical>,
 }
 
-/// Keep the current collection at its native monitor zoom and place hidden collections in the
-/// remaining side space, alternating right and left.
+/// Keep every collection at the native monitor workspace width, centered on the active
+/// collection and alternating other collections to either side.
 pub(super) fn columns(
-    ids: impl IntoIterator<Item = u64>,
+    ids: impl IntoIterator<Item = (u64, f64)>,
     active: u64,
     size: Size<f64, Logical>,
-    zoom: f64,
+    scale: f64,
 ) -> Vec<ColumnGeometry> {
     let mut ids: Vec<_> = ids.into_iter().collect();
     if ids.is_empty() {
         return Vec::new();
     }
-    if let Some(idx) = ids.iter().position(|id| *id == active) {
+    if let Some(idx) = ids.iter().position(|(id, _)| *id == active) {
         ids.rotate_left(idx);
     }
-    let active_width = (size.w * zoom).clamp(0., size.w);
+    let active_width = ids[0].1;
     if active_width >= size.w {
         return vec![ColumnGeometry {
-            id: ids[0],
+            id: ids[0].0,
             bounds: Rectangle::new(Point::from((0., 0.)), size),
         }];
     }
-    let active_left = (size.w - active_width) / 2.;
-    let right_count = ids.len() / 2;
-    let left_count = (ids.len() - 1) / 2;
-    let available_side_width = (size.w - active_width) / 2.;
-    let gap = if ids.len() > 1 {
-        24_f64.min(available_side_width / ids.len() as f64)
-    } else {
-        0.
-    };
-    let side_width = |count: usize| {
-        if count == 0 {
-            0.
+    let active_left = round_logical_in_physical(scale, (size.w - active_width) / 2.);
+    let gap = if ids.len() > 1 { 24_f64 } else { 0. };
+    let mut right_x = active_left + active_width + gap;
+    let mut left_x = active_left - gap;
+    let mut result = Vec::with_capacity(ids.len());
+    for (idx, (id, width)) in ids.into_iter().enumerate() {
+        let x = if idx == 0 {
+            active_left
+        } else if idx % 2 == 1 {
+            let x = right_x;
+            right_x += width + gap;
+            x
         } else {
-            (((size.w - active_width) / 2.) - gap * count as f64).max(0.) / count as f64
-        }
-    };
-    let right_width = side_width(right_count);
-    let left_width = side_width(left_count);
-    ids.into_iter()
-        .enumerate()
-        .map(|(idx, id)| {
-            let (x, width) = if idx == 0 {
-                (active_left, active_width)
-            } else if idx % 2 == 1 {
-                let slot = idx.div_ceil(2) - 1;
-                (
-                    active_left + active_width + gap + slot as f64 * (right_width + gap),
-                    right_width,
-                )
-            } else {
-                let slot = idx / 2 - 1;
-                (
-                    active_left - gap - (slot + 1) as f64 * left_width - slot as f64 * gap,
-                    left_width,
-                )
-            };
-            // Keep round-off at the outermost side columns inside the output bounds.
-            let x = x.clamp(0., size.w);
-            let width = width.clamp(0., size.w - x);
-            ColumnGeometry {
-                id,
-                bounds: Rectangle::new(Point::from((x, 0.)), Size::from((width, size.h))),
-            }
-        })
-        .collect()
+            left_x -= width;
+            let x = left_x;
+            left_x -= gap;
+            x
+        };
+        result.push(ColumnGeometry {
+            id,
+            bounds: Rectangle::new(Point::from((x, 0.)), Size::from((width, size.h))),
+        });
+    }
+    result
 }
 
 #[cfg(test)]
@@ -1411,24 +1467,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn columns_fit_and_hit_distinct_collection() {
-        for count in 1..20 {
-            let columns = columns(1..=count, 1, (1280., 720.).into(), 0.5);
-            for column in &columns {
-                assert!(column.bounds.loc.x >= 0.);
-                assert!(column.bounds.loc.x + column.bounds.size.w <= 1280.);
-                let point = column.bounds.loc + column.bounds.size.to_point().downscale(2.);
-                let hits: Vec<_> = columns
-                    .iter()
-                    .filter(|c| c.bounds.contains(point))
-                    .collect();
-                assert_eq!(hits.len(), 1);
-                assert_eq!(hits[0].id, column.id);
+    fn overview_columns_keep_native_workspace_size_at_each_scale_and_progress() {
+        let size = Size::<f64, Logical>::from((1280., 720.));
+        for scale in [1., 1.5] {
+            for progress in [0., 0.25, 0.5, 0.75, 1.] {
+                // Same interpolation used by stock niri's monitor overview zoom.
+                let zoom = 1. - progress * (1. - 0.35);
+                let native_width = size
+                    .upscale(zoom)
+                    .to_physical_precise_ceil(scale)
+                    .to_logical(scale)
+                    .w;
+                let alone = columns([(7, native_width)], 7, size, scale);
+                assert_eq!(alone.len(), 1);
+                assert_eq!(alone[0].bounds.size.w, native_width);
+                assert_eq!(
+                    alone[0].bounds.loc.x,
+                    round_logical_in_physical(scale, (size.w - native_width) / 2.)
+                );
+                if native_width >= size.w {
+                    continue;
+                }
+
+                let side_by_side = columns(
+                    [7, 8, 9, 10].map(|id| (id, native_width)),
+                    7,
+                    size,
+                    scale,
+                );
+                assert_eq!(side_by_side[0].id, 7);
+                for column in &side_by_side {
+                    assert_eq!(column.bounds.size.w, native_width);
+                    let center = column.bounds.loc + column.bounds.size.to_point().downscale(2.);
+                    assert_eq!(
+                        side_by_side
+                            .iter()
+                            .filter(|candidate| candidate.bounds.contains(center))
+                            .count(),
+                        1,
+                        "columns must remain independently targetable"
+                    );
+                }
+                assert_eq!(side_by_side[0].bounds.loc.x + native_width / 2., size.w / 2.);
+                assert!(side_by_side[1].bounds.loc.x >= side_by_side[0].bounds.loc.x + native_width);
             }
-            assert_eq!(
-                columns[0].bounds.loc.x + columns[0].bounds.size.w / 2.,
-                640.
-            );
         }
     }
+
 }

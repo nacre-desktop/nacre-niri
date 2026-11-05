@@ -739,10 +739,13 @@ fn overview_hit_testing_selects_detached_column() {
         .current_output()
         .is_none());
     let columns = super::super::collection_overview::columns(
-        layout.collections().iter().map(|c| c.id),
+        layout
+            .collections()
+            .iter()
+            .map(|c| (c.id, 1280. * layout.overview_zoom())),
         first,
         (1280., 720.).into(),
-        layout.overview_zoom(),
+        1.,
     );
     let column = columns.iter().find(|c| c.id == other).unwrap();
     let point = (column.bounds.loc.x + column.bounds.size.w / 2., 360.).into();
@@ -891,10 +894,13 @@ fn overview_drag_moves_window_into_hidden_collection() {
     layout.clock.set_complete_instantly(false);
     let output = layout.active_output().unwrap().clone();
     let columns = super::super::collection_overview::columns(
-        layout.collections().iter().map(|c| c.id),
+        layout
+            .collections()
+            .iter()
+            .map(|c| (c.id, 1280. * layout.overview_zoom())),
         first,
         (1280., 720.).into(),
-        layout.overview_zoom(),
+        1.,
     );
     let source = columns.iter().find(|c| c.id == first).unwrap();
     let destination = columns.iter().find(|c| c.id == other).unwrap();
@@ -951,10 +957,13 @@ fn overview_drop_hits_hidden_desk_column_with_two_outputs_at_both_scales() {
             .find(|preview| preview.id == target)
             .expect("hidden desk preview is present on source output");
         let columns = super::super::collection_overview::columns(
-            layout.collections().iter().map(|collection| collection.id),
+            layout
+                .collections()
+                .iter()
+                .map(|collection| (collection.id, 1280. * layout.overview_zoom())),
             source,
             (1280., 720.).into(),
-            layout.overview_zoom(),
+            1.,
         );
         let source_column = columns.iter().find(|column| column.id == source).unwrap();
         let from = (source_column.bounds.loc.x + 40., 360.).into();

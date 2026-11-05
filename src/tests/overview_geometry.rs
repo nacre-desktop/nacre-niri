@@ -18,12 +18,27 @@ fn fixture() -> Fixture {
 }
 
 fn fixture_with_workspace_shadow(off: bool) -> Fixture {
+    fixture_config(true, off, None)
+}
+
+fn stock_fixture() -> Fixture {
+    fixture_config(false, true, None)
+}
+
+fn fixture_with_zoom(zoom: f64) -> Fixture {
+    fixture_config(true, true, Some(zoom))
+}
+
+fn fixture_config(collections: bool, off: bool, zoom: Option<f64>) -> Fixture {
     let mut config = Config::parse_mem(
         "output \"headless-1\" { scale 1.5; }\noutput \"headless-2\" { scale 1.0; }",
     )
     .unwrap();
-    config.layout.collections.enabled = true;
+    config.layout.collections.enabled = collections;
     config.overview.workspace_shadow.off = off;
+    if let Some(zoom) = zoom {
+        config.overview.zoom = zoom;
+    }
     config.animations.overview_open_close.0.kind = Kind::Easing(EasingParams {
         duration_ms: 1000,
         curve: Curve::Linear,
@@ -754,7 +769,8 @@ fn egl_overview_shadow_bounds_contain_hidden_workspace_preview_on_both_scales() 
 
 #[test]
 fn egl_many_hidden_previews_remain_cached_across_outputs_and_capture_targets() {
-    let mut fixture = fixture();
+    // A 10% zoom keeps six native-size side columns visible for the >64 texture-cache check.
+    let mut fixture = fixture_with_zoom(0.1);
     let client = fixture.add_client();
     let output1 = fixture.niri_output(1);
     fixture.niri().layout.focus_output(&output1);
@@ -800,4 +816,87 @@ fn egl_many_hidden_previews_remain_cached_across_outputs_and_capture_targets() {
         warmed,
         fixture.niri().layout.collection_overview_cache_counts()
     );
+}
+
+#[test]
+fn egl_collection_columns_preserve_stock_stack_geometry_at_both_output_scales() {
+    let mut stock = geometry_fixture(false, false);
+    let mut no_side = geometry_fixture(true, false);
+    let mut with_side = geometry_fixture(true, true);
+    let samples = [250, 500, 750];
+    for millis in samples {
+        for fixture in [&mut stock, &mut no_side, &mut with_side] {
+            set_time(fixture.niri(), Duration::from_millis(millis));
+            fixture.niri().advance_animations();
+        }
+        for idx in [1, 2] {
+            let output = no_side.niri_output(idx);
+            let stock_output = stock.niri_output(idx);
+            let side_output = with_side.niri_output(idx);
+            let (stock_native, stock_side) = stock
+                .niri()
+                .layout
+                .overview_workspace_geometries_for_test(&stock_output);
+            let (no_side_native, no_side_previews) = no_side
+                .niri()
+                .layout
+                .overview_workspace_geometries_for_test(&output);
+            let (side_native, side_previews) = with_side
+                .niri()
+                .layout
+                .overview_workspace_geometries_for_test(&side_output);
+            assert!(stock_side.is_empty());
+            assert!(no_side_previews.is_empty());
+            assert_eq!(no_side_native, stock_native, "stock mismatch on output {idx}");
+            assert_eq!(side_native, stock_native, "side columns changed shown stack on output {idx}");
+
+            let scale = output.current_scale().fractional_scale();
+            let zoom = no_side.niri().layout.overview_zoom();
+            assert!(!side_previews.is_empty());
+            for (geometry, source_size, preview_zoom) in &side_previews {
+                assert_eq!(*preview_zoom, zoom);
+                let expected = source_size
+                    .upscale(zoom)
+                    .to_physical_precise_ceil(scale)
+                    .to_logical(scale);
+                assert_eq!(geometry.size, expected);
+            }
+            let output_height = output.current_mode().unwrap().size.h as f64 / scale;
+            assert!(side_previews.iter().any(|(geometry, _, _)| {
+                geometry.loc.y < 0. || geometry.loc.y + geometry.size.h > output_height
+            }), "vertical stack was fit to output height on output {idx}");
+        }
+    }
+}
+
+fn geometry_fixture(collections: bool, with_side_columns: bool) -> Fixture {
+    let mut fixture = if collections {
+        fixture()
+    } else {
+        stock_fixture()
+    };
+    let client = fixture.add_client();
+    let output1 = fixture.niri_output(1);
+    fixture.niri().layout.focus_output(&output1);
+    let shown1 = fixture.niri().layout.collection_for_output(&output1);
+    create_window(&mut fixture, client, 800, 600);
+    fixture.niri().layout.switch_workspace_down();
+    create_window(&mut fixture, client, 800, 600);
+    let output2 = fixture.niri_output(2);
+    fixture.niri().layout.focus_output(&output2);
+    create_window(&mut fixture, client, 1200, 800);
+    if with_side_columns {
+        let shown1 = shown1.unwrap();
+        fixture.niri().layout.focus_output(&output1);
+        fixture.niri().layout.create_collection(None);
+        create_window(&mut fixture, client, 700, 500);
+        fixture
+            .niri()
+            .layout
+            .focus_collection(&niri_config::WorkspaceReference::Id(shown1));
+        fixture.niri().layout.focus_output(&output1);
+    }
+    fixture.niri_complete_animations();
+    fixture.niri().layout.open_overview();
+    fixture
 }
