@@ -233,11 +233,19 @@ pub struct EdgeTrigger {
     /// Minimum inward pointer speed, in logical pixels per second. Zero disables the gate.
     #[knuffel(child, unwrap(argument))]
     pub velocity: Option<FloatOrInt<0, 1_000_000>>,
+    /// Logical pixels inward from the output edge that form the trigger band.
+    /// Defaults to one pixel to preserve the native edge trigger behavior.
+    #[knuffel(child, unwrap(argument))]
+    pub trigger_distance: Option<FloatOrInt<1, 10_000>>,
+    /// Centered span along the output edge that accepts the trigger; omitted means the full edge.
+    #[knuffel(child, unwrap(argument))]
+    pub trigger_length: Option<FloatOrInt<1, 1_000_000>>,
 }
 
 /// Global edge trigger policy. Output blocks may override individual edges.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct EdgeTriggers {
+    pub cue: bool,
     pub left: Option<EdgeTrigger>,
     pub right: Option<EdgeTrigger>,
     pub top: Option<EdgeTrigger>,
@@ -246,6 +254,8 @@ pub struct EdgeTriggers {
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct EdgeTriggersPart {
+    #[knuffel(child)]
+    pub cue: Option<Flag>,
     #[knuffel(child)]
     pub left: Option<EdgeTrigger>,
     #[knuffel(child)]
@@ -258,6 +268,9 @@ pub struct EdgeTriggersPart {
 
 impl MergeWith<EdgeTriggersPart> for EdgeTriggers {
     fn merge_with(&mut self, part: &EdgeTriggersPart) {
+        if let Some(cue) = part.cue {
+            self.cue = cue.0;
+        }
         merge_clone_opt!((self, part), left, right, top, bottom);
     }
 }

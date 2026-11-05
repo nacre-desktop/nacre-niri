@@ -123,8 +123,13 @@ impl IpcServer {
         let mut to_remove = Vec::new();
         for (idx, stream) in streams.iter_mut().enumerate() {
             if (matches!(event, Event::NacreOverviewHoverChanged { .. }) && !stream.overview_hover)
-                || (matches!(event, Event::EdgeTriggered { .. } | Event::EdgeLeft { .. })
-                    && !stream.edge_triggers)
+                || (matches!(
+                    event,
+                    Event::EdgeTriggered { .. }
+                        | Event::EdgeLeft { .. }
+                        | Event::EdgeApproach { .. }
+                        | Event::EdgeHover { .. }
+                ) && !stream.edge_triggers)
                 || !stream_event_allowed(&event, stream.include_collections)
             {
                 continue;
@@ -216,6 +221,30 @@ impl IpcServer {
             output,
             edge,
             position,
+        });
+    }
+
+    pub fn edge_approach(&self, output: String, edge: niri_ipc::Edge, position: [f64; 2]) {
+        self.send_event(Event::EdgeApproach {
+            output,
+            edge,
+            position,
+            progress: 0.,
+        });
+    }
+
+    pub fn edge_hover(
+        &self,
+        output: String,
+        edge: niri_ipc::Edge,
+        position: [f64; 2],
+        progress: f64,
+    ) {
+        self.send_event(Event::EdgeHover {
+            output,
+            edge,
+            position,
+            progress: progress.clamp(0., 1.),
         });
     }
 
@@ -313,7 +342,7 @@ mod tests {
         let (legacy_tx, legacy_rx) = async_channel::bounded(4);
         let (extension_tx, extension_rx) = async_channel::bounded(4);
         let (hover_tx, hover_rx) = async_channel::bounded(4);
-        let (edge_tx, edge_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(6);
         let (legacy_disconnect, _) = async_channel::bounded(1);
         let (extension_disconnect, _) = async_channel::bounded(1);
         let (hover_disconnect, _) = async_channel::bounded(1);
@@ -358,6 +387,8 @@ mod tests {
         });
         server.update_overview_hover(Some(7));
         server.send_event(Event::OverviewOpenedOrClosed { is_open: true });
+        server.edge_approach(String::from("DP-1"), niri_ipc::Edge::Left, [0., 20.]);
+        server.edge_hover(String::from("DP-1"), niri_ipc::Edge::Left, [1., 20.], 0.5);
         server.edge_triggered(String::from("DP-1"), niri_ipc::Edge::Left, [0., 20.]);
         server.edge_left(String::from("DP-1"), niri_ipc::Edge::Left, [12., 20.]);
 
@@ -388,6 +419,11 @@ mod tests {
             edge_rx.try_recv(),
             Ok(Event::OverviewOpenedOrClosed { is_open: true })
         ));
+        assert!(matches!(edge_rx.try_recv(), Ok(Event::EdgeApproach { .. })));
+        let Ok(Event::EdgeHover { progress, .. }) = edge_rx.try_recv() else {
+            panic!("opt-in edge stream did not receive the hover cue");
+        };
+        assert_eq!(progress, 0.5);
         let Ok(Event::EdgeTriggered {
             output,
             edge,
@@ -418,7 +454,7 @@ mod tests {
         let (regular_tx, _regular_rx) = async_channel::bounded(4);
         let (hover_tx, _hover_rx) = async_channel::bounded(4);
         let (collections_tx, _collections_rx) = async_channel::bounded(4);
-        let (edge_tx, edge_rx) = async_channel::bounded(4);
+        let (edge_tx, edge_rx) = async_channel::bounded(6);
         let (regular_disconnect, regular_disconnect_rx) = async_channel::bounded(1);
         let (hover_disconnect, hover_disconnect_rx) = async_channel::bounded(1);
         let (collections_disconnect, collections_disconnect_rx) = async_channel::bounded(1);
@@ -649,6 +685,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     scratchpad: config.nacre.scratchpad,
                     window_pinning: config.nacre.window_pinning,
                     edge_triggers: crate::edge_triggers::event_source_available(&config),
+                    edge_trigger_cues: crate::edge_triggers::cue_source_available(&config),
                 });
             });
             let capabilities = rx

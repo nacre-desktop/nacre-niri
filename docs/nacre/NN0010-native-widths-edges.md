@@ -59,18 +59,25 @@ sources active. Removing all event edges on reload disconnects edge subscribers.
 Subscribe using JSON
 `"NacreEdgeTriggerStream"`; after `{"Ok":"Handled"}`, the opt-in stream can
 contain `{"EdgeTriggered":{"output":"DP-1","edge":"Left","position":[0.0,600.0]}}`.
-Positions are output-local logical coordinates. Existing event streams never
-receive the new event. Consumers must filter the edge event from ordinary stream
-snapshots/events, and restore their compatibility input source on disconnect.
+Positions are output-local logical coordinates. The ordinary `EventStream` does
+not receive edge events. Consumers must filter edge events from ordinary stream
+snapshots/events and restore their compatibility input source on disconnect.
 After a fired event action, leaving or cancelling that edge emits `EdgeLeft`
 with the same fields. Its position is relative to the previous output origin and
 can lie outside that output. Consumers use it to release panel hover ownership;
 they must also release ownership when the stream ends. Spawn actions and cancelled
-unfired dwell candidates do not emit `EdgeLeft`.
+unfired dwell candidates do not emit `EdgeLeft` unless they opted into pre-dwell
+cues.
 Disabling the native flag on reload disconnects only edge subscribers. Consumers
 can query capabilities and reconnect after `ConfigLoaded` when the flag returns.
-The event reports a completed trigger; it does not expose pre-trigger dwell
-progress for client-side hover cues.
+When enabled, `edge-triggers { cue; }` adds `EdgeApproach` and refresh-rate-capped
+`EdgeHover` events on the same stream. Per-edge `trigger-distance` sets the
+half-open inward trigger band; omitted values preserve the old one-pixel edge
+behavior. Cue progress follows the armed dwell and remains at one after trigger
+until the pointer leaves. See [NN0019](NN0019-edge-hover-cues.md) for the cue
+contract and example configuration. Cue support is reported separately as the
+`edge_trigger_cues` capability so older Triggered-only clients retain their
+compatibility input surfaces.
 
 Nacre owns panel selection, lip hit testing, dwell settings, and generated edge
 actions. Fork-only configuration belongs in its sibling `nacre-niri.kdl` overlay;
