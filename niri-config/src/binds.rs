@@ -146,6 +146,15 @@ pub enum Action {
     },
     ToggleKeyboardShortcutsInhibit,
     CloseWindow,
+    ForceCloseWindow,
+    #[knuffel(skip)]
+    ForceCloseWindowById(u64),
+    SwapWorkspaceWithMonitorNext,
+    SwapWorkspaceWithMonitorPrevious,
+    RotateWorkspaceSetsNext,
+    RotateWorkspaceSetsPrevious,
+    RestoreLastHiddenWindow,
+    RestoreCurrentWorkspaceHiddenWindows,
     #[knuffel(skip)]
     CloseWindowById(u64),
     FullscreenWindow,
@@ -450,6 +459,18 @@ impl From<niri_ipc::Action> for Action {
             }
             niri_ipc::Action::CloseWindow { id: None } => Self::CloseWindow,
             niri_ipc::Action::CloseWindow { id: Some(id) } => Self::CloseWindowById(id),
+            niri_ipc::Action::ForceCloseWindow { id: None } => Self::ForceCloseWindow,
+            niri_ipc::Action::ForceCloseWindow { id: Some(id) } => Self::ForceCloseWindowById(id),
+            niri_ipc::Action::RestoreLastHiddenWindow {} => Self::RestoreLastHiddenWindow,
+            niri_ipc::Action::RestoreCurrentWorkspaceHiddenWindows {} => {
+                Self::RestoreCurrentWorkspaceHiddenWindows
+            }
+            niri_ipc::Action::SwapWorkspaceWithMonitorNext {} => Self::SwapWorkspaceWithMonitorNext,
+            niri_ipc::Action::SwapWorkspaceWithMonitorPrevious {} => {
+                Self::SwapWorkspaceWithMonitorPrevious
+            }
+            niri_ipc::Action::RotateWorkspaceSetsNext {} => Self::RotateWorkspaceSetsNext,
+            niri_ipc::Action::RotateWorkspaceSetsPrevious {} => Self::RotateWorkspaceSetsPrevious,
             niri_ipc::Action::FullscreenWindow { id: None } => Self::FullscreenWindow,
             niri_ipc::Action::FullscreenWindow { id: Some(id) } => Self::FullscreenWindowById(id),
             niri_ipc::Action::ToggleWindowedFullscreen { id: None } => {

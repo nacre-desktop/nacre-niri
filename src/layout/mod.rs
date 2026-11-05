@@ -99,6 +99,7 @@ pub mod floating;
 pub mod focus_ring;
 pub mod insert_hint_element;
 pub mod monitor;
+mod monitor_actions;
 pub mod opening_window;
 mod scratchpad;
 pub mod scrolling;
@@ -364,6 +365,8 @@ pub struct Layout<W: LayoutElement> {
     scratchpad_active: Option<W::Id>,
     /// Scratchpad insertion order, retained while windows are shown as overlays.
     scratchpad_cycle: Vec<W::Id>,
+    /// Source workspace and floating state for origin-aware hidden-window restoration.
+    scratchpad_origins: Vec<(W::Id, WorkspaceId, bool)>,
     /// Collection to restore when a borrowed output collection returns home.
     collection_returns: HashMap<String, u64>,
     /// Configured workspaces awaiting their first matching output at startup.
@@ -768,6 +771,7 @@ impl<W: LayoutElement> Layout<W> {
             scratchpad: Workspace::new_no_outputs(clock.clone(), Rc::new(options.clone())),
             scratchpad_active: None,
             scratchpad_cycle: Vec::new(),
+            scratchpad_origins: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: Vec::new(),
             collection_overview: collection_overview::Overview::default(),
@@ -814,6 +818,7 @@ impl<W: LayoutElement> Layout<W> {
             scratchpad: Workspace::new_no_outputs(clock.clone(), opts.clone()),
             scratchpad_active: None,
             scratchpad_cycle: Vec::new(),
+            scratchpad_origins: Vec::new(),
             collection_returns: HashMap::new(),
             collection_pending_workspaces: pending,
             collection_overview: collection_overview::Overview::default(),
@@ -1393,6 +1398,7 @@ impl<W: LayoutElement> Layout<W> {
         window: &W::Id,
         transaction: Transaction,
     ) -> Option<RemovedTile<W>> {
+        self.scratchpad_origins.retain(|(id, _, _)| id != window);
         if self.scratchpad_active.as_ref() == Some(window) {
             self.scratchpad_active = None;
         }
@@ -3160,6 +3166,23 @@ impl<W: LayoutElement> Layout<W> {
                 "window IDs must be unique across all stacks"
             );
             window_ids.push(window.id());
+        }
+        for (index, (id, source, _)) in self.scratchpad_origins.iter().enumerate() {
+            assert!(
+                window_ids.contains(&id),
+                "hidden-window origins cannot outlive a window"
+            );
+            assert!(
+                self.scratchpad_origins[..index]
+                    .iter()
+                    .all(|(other, _, _)| other != id),
+                "a hidden window must have a single source"
+            );
+            assert_ne!(
+                *source,
+                self.scratchpad.id(),
+                "scratchpad cannot be its own source"
+            );
         }
         let mut seen_workspace_id = HashSet::new();
         let mut seen_workspace_name = Vec::<String>::new();

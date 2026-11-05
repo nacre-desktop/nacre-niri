@@ -7,6 +7,11 @@ Nacre product policy, and user overrides are not fork defaults. No private path,
 machine identifier, palette value, or command line from the owner's custom file
 is copied here.
 
+The final [NN0017 workaround sweep](NN0017-workaround-sweep.md) supersedes the
+remaining-gap dispositions and unsupported inventory below. In particular,
+the original hide/trash/force-kill grouping was imprecise: Super+Alt+H requests
+restore-current-workspace; force-close is Super+Ctrl+Shift+Q in the neutral source.
+
 NN0010 follow-up: [native widths and screen edges](NN0010-native-widths-edges.md)
 supersedes the deferred width disposition below. The original audit remains the
 record of the helper contract; the follow-up describes managed-satellite scope,

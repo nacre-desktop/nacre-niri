@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 8f5d2f04c3f0192ef16838d7631bb8400a9032733a3501632ad6c6b9a5214d49 # retained empty workspace removed from configured collection
 cc d0637f5486aa131f605bd60f3ed5b75adb5b6834910f846ea4750e5f640e8de7 # unname during workspace switch retains rows until transition cleanup
+cc ccd93eb8cb14660b5912c6e449cb30ad5a36f6f5d73f47e31e0397686d946efc # reload clears persisted retention during an empty workspace switch

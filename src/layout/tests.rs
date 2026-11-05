@@ -19,6 +19,7 @@ mod collection_persistence_tests;
 mod collections;
 mod collections_extra;
 mod fullscreen;
+mod monitor_actions;
 mod scratchpad_pin;
 
 impl<W: LayoutElement> Default for Layout<W> {
@@ -492,6 +493,10 @@ enum Op {
     FocusCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
     FocusCollectionById(#[proptest(strategy = "0..=4usize")] usize),
     CycleCollection(bool),
+    SwapWorkspaceWithMonitor(bool),
+    RotateWorkspaceSets(bool),
+    RestoreLastHidden,
+    RestoreCurrentWorkspaceHidden,
     MoveWindowToCollection(#[proptest(strategy = "1..=5u8")] u8),
     MoveWindowToCollectionByName(#[proptest(strategy = "1..=5usize")] usize),
     MoveWindowToCollectionById(#[proptest(strategy = "0..=4usize")] usize),
@@ -942,6 +947,10 @@ impl Op {
                     layout.focus_collection(&WorkspaceReference::Id(collection.id));
                 }
             }
+            Op::RestoreLastHidden => layout.restore_last_hidden_window(),
+            Op::RestoreCurrentWorkspaceHidden => layout.restore_current_workspace_hidden_windows(),
+            Op::SwapWorkspaceWithMonitor(next) => layout.swap_workspace_with_monitor(next),
+            Op::RotateWorkspaceSets(next) => layout.rotate_workspace_sets(next),
             Op::CycleCollection(next) => {
                 if next {
                     layout.focus_collection_next();

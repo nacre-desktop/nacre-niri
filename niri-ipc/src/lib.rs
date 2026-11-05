@@ -217,6 +217,15 @@ pub struct NacreCapabilities {
     /// Pre-dwell screen-edge hover cues are enabled by configuration.
     #[serde(default)]
     pub edge_trigger_cues: bool,
+    /// Forcibly disconnecting a focused Wayland client is enabled.
+    #[serde(default)]
+    pub force_close: bool,
+    /// Atomic monitor workspace operations are enabled.
+    #[serde(default)]
+    pub monitor_workspace_actions: bool,
+    /// Hidden windows can be restored to their original workspace.
+    #[serde(default)]
+    pub window_restore: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -360,6 +369,29 @@ pub enum Action {
         #[cfg_attr(feature = "clap", arg(long))]
         id: Option<u64>,
     },
+    /// Forcibly disconnect a Wayland client containing a window.
+    ///
+    /// Disconnecting a client closes all of its windows. X11 windows are unsupported.
+    ForceCloseWindow {
+        /// Id of the window whose client should be disconnected. If `None`, uses the focused
+        /// window.
+        #[cfg_attr(feature = "clap", arg(long))]
+        id: Option<u64>,
+    },
+    /// Restore the most recently hidden window to its original workspace.
+    RestoreLastHiddenWindow {},
+    /// Restore all hidden windows belonging to the focused workspace.
+    RestoreCurrentWorkspaceHiddenWindows {},
+    /// Atomically swap the focused workspace with the next or previous monitor's focused
+    /// workspace.
+    SwapWorkspaceWithMonitorNext {},
+    /// Atomically swap the focused workspace with the previous monitor's focused workspace.
+    SwapWorkspaceWithMonitorPrevious {},
+    /// Rotate workspace sets to the next monitor while preserving physical collection identities.
+    RotateWorkspaceSetsNext {},
+    /// Rotate workspace sets to the previous monitor while preserving physical collection
+    /// identities.
+    RotateWorkspaceSetsPrevious {},
     /// Toggle fullscreen on a window.
     #[cfg_attr(
         feature = "clap",
@@ -2325,10 +2357,13 @@ mod tests {
             window_pinning: true,
             edge_triggers: true,
             edge_trigger_cues: true,
+            force_close: true,
+            monitor_workspace_actions: true,
+            window_restore: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true}}}"#,
         );
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
@@ -2337,6 +2372,9 @@ mod tests {
         assert!(!old_capabilities.scratchpad);
         assert!(!old_capabilities.window_pinning);
         assert!(!old_capabilities.edge_trigger_cues);
+        assert!(!old_capabilities.force_close);
+        assert!(!old_capabilities.monitor_workspace_actions);
+        assert!(!old_capabilities.window_restore);
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,
@@ -2344,6 +2382,22 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&Action::ToggleScratchpad {}).unwrap(),
             r#"{"ToggleScratchpad":{}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::ForceCloseWindow { id: None }).unwrap(),
+            r#"{"ForceCloseWindow":{"id":null}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::SwapWorkspaceWithMonitorNext {}).unwrap(),
+            r#"{"SwapWorkspaceWithMonitorNext":{}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::RotateWorkspaceSetsPrevious {}).unwrap(),
+            r#"{"RotateWorkspaceSetsPrevious":{}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Action::RestoreLastHiddenWindow {}).unwrap(),
+            r#"{"RestoreLastHiddenWindow":{}}"#,
         );
         assert_eq!(
             serde_json::to_string(&Action::ScratchpadShowWindow { id: 42 }).unwrap(),
