@@ -1655,8 +1655,12 @@ impl<W: LayoutElement> Monitor<W> {
     }
 
     pub fn workspaces_render_geo(&self) -> impl Iterator<Item = Rectangle<f64, Logical>> {
-        let scale = self.scale.fractional_scale();
         let zoom = self.overview_zoom();
+        self.workspaces_render_geo_at(zoom)
+    }
+
+    fn workspaces_render_geo_at(&self, zoom: f64) -> impl Iterator<Item = Rectangle<f64, Logical>> {
+        let scale = self.scale.fractional_scale();
 
         let ws_size = self.workspace_size(zoom);
         let gap = self.workspace_gap(zoom);
@@ -1718,6 +1722,66 @@ impl<W: LayoutElement> Monitor<W> {
         zip(self.workspaces.iter_mut(), geo)
             // Cull out workspaces outside the output.
             .filter(move |(_ws, geo)| !cull || geo.intersection(output_geo).is_some())
+    }
+
+    /// Return the closest workspace immediately outside the visible desk stack in each
+    /// direction. Overview scrolling renders these workspaces only after they enter the output,
+    /// so their render elements and imports can be prepared ahead of that first reveal.
+    pub(super) fn overview_prewarm_candidates(&self) -> Vec<(WorkspaceId, u64)> {
+        let current = self.overview_prewarm_pair(self.overview_zoom());
+        let settled_zoom = compute_overview_zoom(&self.options, Some(1.));
+        let settled = self.overview_prewarm_pair(settled_zoom);
+        current
+            .into_iter()
+            .chain(settled)
+            .flatten()
+            .filter_map(|workspace| {
+                self.workspaces
+                    .iter()
+                    .find(|ws| ws.id() == workspace)
+                    .map(|ws| (workspace, ws.overview_revision()))
+            })
+            .fold(Vec::new(), |mut candidates, candidate| {
+                if !candidates.iter().any(|(id, _)| *id == candidate.0) {
+                    candidates.push(candidate);
+                }
+                candidates
+            })
+    }
+
+    fn overview_prewarm_pair(&self, zoom: f64) -> [Option<WorkspaceId>; 2] {
+        let output_geo = Rectangle::from_size(self.view_size);
+        let mut above = None;
+        let mut below = None;
+
+        for (workspace, geometry) in self
+            .workspaces
+            .iter()
+            .zip(self.workspaces_render_geo_at(zoom))
+        {
+            if geometry.intersection(output_geo).is_some() {
+                continue;
+            }
+
+            if geometry.loc.y + geometry.size.h <= 0. {
+                if above.is_none_or(|(_, previous): (WorkspaceId, Rectangle<_, _>)| {
+                    geometry.loc.y > previous.loc.y
+                }) {
+                    above = Some((workspace.id(), geometry));
+                }
+            } else if geometry.loc.y >= self.view_size.h
+                && below.is_none_or(|(_, previous): (WorkspaceId, Rectangle<_, _>)| {
+                    geometry.loc.y < previous.loc.y
+                })
+            {
+                below = Some((workspace.id(), geometry));
+            }
+        }
+
+        [
+            above.map(|(workspace, _)| workspace),
+            below.map(|(workspace, _)| workspace),
+        ]
     }
 
     pub fn workspace_under(

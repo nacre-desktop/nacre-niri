@@ -41,6 +41,15 @@ jobs:
       - name: Test
         run: cargo test --all --exclude niri-visual-tests -- --nocapture
 
+      - name: Benchmark first and second overview wheel scroll
+        env:
+          EGL_PLATFORM: surfaceless
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: >-
+          cargo test --all --exclude niri-visual-tests
+          egl_benchmark_overview_first_vs_second_wheel_scroll
+          -- --ignored --nocapture
+
       - name: Validate fork default configuration
         run: cargo run --locked -- validate --config resources/default-config.kdl
 

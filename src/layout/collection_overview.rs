@@ -42,10 +42,38 @@ pub(super) struct Overview {
     prepared_revisions: RefCell<HashMap<WorkspaceId, u64>>,
     textures: RefCell<Vec<PreviewTexture>>,
     drop_hints: RefCell<HashMap<Output, InsertHintElement>>,
+    active_prewarm_open: RefCell<bool>,
+    active_prewarm: RefCell<HashMap<Output, ActivePrewarmState>>,
     #[cfg(test)]
     preparations: Cell<u64>,
     #[cfg(test)]
     texture_builds: Cell<u64>,
+    #[cfg(test)]
+    active_preparations: Cell<u64>,
+    #[cfg(test)]
+    active_warm_attempts: Cell<u64>,
+    #[cfg(test)]
+    active_warm_successes: Cell<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ActivePrewarmKey {
+    workspace: WorkspaceId,
+    revision: u64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ActivePrewarm {
+    workspace: WorkspaceId,
+    revision: u64,
+}
+
+#[derive(Debug, Default)]
+struct ActivePrewarmState {
+    identity: Option<(ContextId<GlesTexture>, u64)>,
+    attempted: HashSet<ActivePrewarmKey>,
+    candidates: Option<Vec<ActivePrewarm>>,
+    pending: Option<ActivePrewarm>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,6 +140,92 @@ pub(super) struct Preview<'a, W: LayoutElement> {
 }
 
 impl<W: LayoutElement> Layout<W> {
+    pub fn overview_prewarm_pending(&self, output: &Output) -> bool {
+        self.collection_overview.active_prewarm_pending(output)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_overview_prewarm_candidate_count(&self, output: &Output) -> usize {
+        self.collection_overview
+            .active_prewarm_candidate_count(output)
+    }
+
+    /// Warm one already-prepared, offscreen adjacent workspace into a throwaway texture.
+    /// Rendering uses the regular workspace elements and output target, so imports and GPU draw
+    /// paths run before the workspace is revealed. The returned sync point is intentionally
+    /// dropped without waiting or reading back.
+    pub fn prewarm_overview<R: NiriRenderer>(&self, mut ctx: RenderCtx<R>, output: &Output) {
+        if ctx.target != RenderTarget::Output || !self.overview_open {
+            return;
+        }
+        let scale = output.current_scale().fractional_scale();
+        let context = ctx.renderer.as_gles_renderer().context_id();
+        self.collection_overview
+            .observe_active_prewarm_identity(output, context, scale);
+        let Some(prewarm) = self.collection_overview.take_active_prewarm(output) else {
+            return;
+        };
+        let _trace = crate::frame_trace::span("overview_prewarm_active");
+        let Some(monitor) = self.monitor_for_output(output) else {
+            return;
+        };
+        let Some((workspace, geometry)) = monitor
+            .workspaces
+            .iter()
+            .zip(monitor.workspaces_render_geo())
+            .find(|(workspace, _)| workspace.id() == prewarm.workspace)
+        else {
+            return;
+        };
+        if workspace.overview_revision() != prewarm.revision {
+            // A changing client must not turn this finite opening queue into continuous work.
+            // Its current buffer will use the normal, correctness-preserving reveal path.
+            crate::frame_trace::marker("overview_prewarm_stale");
+            return;
+        }
+
+        let zoom = monitor.overview_zoom();
+        // Use the settled overview zoom for scratch resolution while retaining the current
+        // geometry/zoom for source positioning during the open animation.
+        let preview_scale = scale * self.options.overview.zoom.clamp(0.0001, 0.75);
+        let xray_pos = XrayPos::new(geometry.loc, zoom);
+        let mut ctx = ctx.as_gles();
+        let mut elements: Vec<
+            HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
+        > = Vec::new();
+        workspace.render_floating(ctx.r(), xray_pos, false, &mut |elem| {
+            elements.push(elem.into())
+        });
+        workspace.render_scrolling(ctx.r(), xray_pos, false, &mut |elem| {
+            elements.push(elem.into())
+        });
+        elements.push(workspace.render_background().into());
+        let size = workspace
+            .view_size()
+            .to_physical_precise_ceil(preview_scale);
+        #[cfg(test)]
+        self.collection_overview
+            .active_warm_attempts
+            .set(self.collection_overview.active_warm_attempts.get() + 1);
+        let result = render_to_texture(
+            ctx.renderer,
+            size,
+            preview_scale.into(),
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements.iter().rev(),
+        );
+        if result.is_err() {
+            crate::frame_trace::marker("overview_prewarm_failed");
+        }
+        #[cfg(test)]
+        if result.is_ok() {
+            self.collection_overview
+                .active_warm_successes
+                .set(self.collection_overview.active_warm_successes.get() + 1);
+        }
+    }
+
     fn scratchpad_preview(&self, output: &Output) -> Option<Preview<'_, W>> {
         if !self.overview_open || !self.scratchpad.has_windows() {
             return None;
@@ -245,6 +359,11 @@ impl<W: LayoutElement> Layout<W> {
             self.collection_overview.preparations.get(),
             self.collection_overview.texture_builds.get(),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_overview_prewarm_counts(&self) -> (u64, u64, u64) {
+        self.collection_overview.active_prewarm_counts()
     }
 
     pub fn collection_overview_is_enabled(&self) -> bool {
@@ -868,6 +987,114 @@ impl<W: LayoutElement> Layout<W> {
 }
 
 impl Overview {
+    pub(super) fn observe_active_prewarm_open(&self, open: bool) {
+        let mut was_open = self.active_prewarm_open.borrow_mut();
+        if !open || !*was_open {
+            self.active_prewarm.borrow_mut().clear();
+        }
+        *was_open = open;
+    }
+
+    pub(super) fn schedule_active_prewarm(
+        &self,
+        output: &Output,
+        candidates: Vec<(WorkspaceId, u64)>,
+    ) -> Option<WorkspaceId> {
+        let mut all = self.active_prewarm.borrow_mut();
+        let state = all.entry(output.clone()).or_default();
+        if state.pending.is_some() {
+            return None;
+        }
+        let candidates = candidates
+            .into_iter()
+            .map(|(workspace, revision)| ActivePrewarm {
+                workspace,
+                revision,
+            })
+            .collect::<Vec<_>>();
+        state.candidates.get_or_insert(candidates);
+        let candidate = state
+            .candidates
+            .as_ref()?
+            .iter()
+            .copied()
+            .find(|candidate| {
+                !state.attempted.contains(&ActivePrewarmKey {
+                    workspace: candidate.workspace,
+                    revision: candidate.revision,
+                })
+            })?;
+        state.attempted.insert(ActivePrewarmKey {
+            workspace: candidate.workspace,
+            revision: candidate.revision,
+        });
+        state.pending = Some(candidate);
+        #[cfg(test)]
+        self.active_preparations
+            .set(self.active_preparations.get() + 1);
+        Some(candidate.workspace)
+    }
+
+    pub(super) fn needs_active_prewarm_candidates(&self, output: &Output) -> bool {
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .is_none_or(|state| state.candidates.is_none())
+    }
+
+    pub(super) fn active_prewarm_pending(&self, output: &Output) -> bool {
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .is_some_and(|state| {
+                state.pending.is_some()
+                    || state.candidates.as_ref().is_some_and(|candidates| {
+                        candidates.iter().any(|candidate| {
+                            !state.attempted.contains(&ActivePrewarmKey {
+                                workspace: candidate.workspace,
+                                revision: candidate.revision,
+                            })
+                        })
+                    })
+            })
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_prewarm_candidate_count(&self, output: &Output) -> usize {
+        self.active_prewarm
+            .borrow()
+            .get(output)
+            .and_then(|state| state.candidates.as_ref())
+            .map_or(0, Vec::len)
+    }
+
+    fn observe_active_prewarm_identity(
+        &self,
+        output: &Output,
+        context: ContextId<GlesTexture>,
+        scale: f64,
+    ) {
+        let mut all = self.active_prewarm.borrow_mut();
+        let state = all.entry(output.clone()).or_default();
+        let current = (context, scale.to_bits());
+        if state
+            .identity
+            .as_ref()
+            .is_some_and(|previous| previous != &current)
+        {
+            state.attempted.clear();
+            state.pending = None;
+        }
+        state.identity = Some(current);
+    }
+
+    fn take_active_prewarm(&self, output: &Output) -> Option<ActivePrewarm> {
+        self.active_prewarm
+            .borrow_mut()
+            .get_mut(output)
+            .and_then(|state| state.pending.take())
+    }
+
     fn texture<W: LayoutElement, R: NiriRenderer>(
         &self,
         mut ctx: RenderCtx<R>,
@@ -915,6 +1142,7 @@ impl Overview {
         if let Some(cached) = self.textures.borrow().iter().find(|entry| entry.key == key) {
             return Some(cached.buffer.clone());
         }
+        let _trace = crate::frame_trace::span("overview_preview_cache_miss");
         let mut elements: Vec<
             HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
         > = Vec::new();
@@ -993,6 +1221,17 @@ impl Overview {
         for hint in self.drop_hints.borrow_mut().values_mut() {
             hint.update_shaders();
         }
+        self.active_prewarm_open.replace(false);
+        self.active_prewarm.borrow_mut().clear();
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_prewarm_counts(&self) -> (u64, u64, u64) {
+        (
+            self.active_preparations.get(),
+            self.active_warm_attempts.get(),
+            self.active_warm_successes.get(),
+        )
     }
 
     pub(super) fn retain_sources(
@@ -1011,6 +1250,9 @@ impl Overview {
         self.textures.borrow_mut().retain(|entry| {
             workspaces.contains(&entry.key.workspace) && outputs.contains(&entry.key.output)
         });
+        self.active_prewarm
+            .borrow_mut()
+            .retain(|output, _| outputs.contains(output));
     }
 
     fn label<R: NiriRenderer>(
@@ -1030,6 +1272,7 @@ impl Overview {
             labels.clear();
         }
         if !labels.contains_key(&key) {
+            let _trace = crate::frame_trace::span("overview_label_cache_miss");
             let surface =
                 ImageSurface::create(cairo::Format::ARgb32, width, (32. * scale).ceil() as i32)
                     .ok()?;

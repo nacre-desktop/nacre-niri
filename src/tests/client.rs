@@ -2,6 +2,9 @@ use std::cmp::min;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write as _;
+use std::fs::File;
+use std::io::Write as _;
+use std::os::fd::AsFd;
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,6 +25,8 @@ use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_lay
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::{
     self, ZwlrLayerSurfaceV1,
 };
+use smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_manager_v1::ZwlrVirtualPointerManagerV1;
+use smithay::reexports::wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1;
 use wayland_backend::client::Backend;
 use wayland_client::globals::Global;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
@@ -30,6 +35,8 @@ use wayland_client::protocol::wl_compositor::WlCompositor;
 use wayland_client::protocol::wl_display::WlDisplay;
 use wayland_client::protocol::wl_output::{self, WlOutput};
 use wayland_client::protocol::wl_registry::{self, WlRegistry};
+use wayland_client::protocol::wl_shm::{self, WlShm};
+use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
@@ -107,7 +114,9 @@ pub struct State {
     pub subcompositor: Option<WlSubcompositor>,
     pub xdg_wm_base: Option<XdgWmBase>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
+    pub virtual_pointer_manager: Option<ZwlrVirtualPointerManagerV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
+    pub shm: Option<WlShm>,
     pub viewporter: Option<WpViewporter>,
     pub layer_motion_manager: Option<BeadLayerMotionManagerV1>,
     pub layer_promote_manager: Option<BeadLayerPromoteManagerV1>,
@@ -136,6 +145,7 @@ pub struct LayerMotionController {
 pub struct Window {
     pub qh: QueueHandle<State>,
     pub spbm: WpSinglePixelBufferManagerV1,
+    pub shm: WlShm,
 
     pub surface: WlSurface,
     pub xdg_surface: XdgSurface,
@@ -253,7 +263,9 @@ impl Client {
             subcompositor: None,
             xdg_wm_base: None,
             layer_shell: None,
+            virtual_pointer_manager: None,
             spbm: None,
+            shm: None,
             viewporter: None,
             layer_motion_manager: None,
             layer_promote_manager: None,
@@ -295,6 +307,25 @@ impl Client {
 
     pub fn create_window(&mut self) -> &mut Window {
         self.state.create_window()
+    }
+
+    pub fn create_virtual_pointer(&self, output_name: &str) -> ZwlrVirtualPointerV1 {
+        let output = self
+            .state
+            .outputs
+            .iter()
+            .find_map(|(output, name)| (name == output_name).then_some(output))
+            .expect("requested virtual pointer output");
+        self.state
+            .virtual_pointer_manager
+            .as_ref()
+            .expect("virtual pointer manager global")
+            .create_virtual_pointer_with_output(
+                self.state.seat.as_ref(),
+                Some(output),
+                &self.qh,
+                (),
+            )
     }
 
     pub fn window(&mut self, surface: &WlSurface) -> &mut Window {
@@ -374,6 +405,7 @@ impl State {
         let window = Window {
             qh: self.qh.clone(),
             spbm: self.spbm.clone().unwrap(),
+            shm: self.shm.clone().unwrap(),
 
             surface,
             xdg_surface,
@@ -438,6 +470,30 @@ impl State {
 }
 
 impl Window {
+    /// Use an actual image buffer when a test needs to exercise renderer imports/uploads.
+    /// Single-pixel protocol buffers take Smithay's solid-color path and never get a texture.
+    pub fn attach_shm_buffer(&self, width: u16, height: u16) {
+        use smithay::reexports::rustix::fs::{memfd_create, MemfdFlags};
+
+        let fd = memfd_create(c"niri-test-buffer", MemfdFlags::CLOEXEC).unwrap();
+        let mut file = File::from(fd);
+        let stride = i32::from(width) * 4;
+        let len = stride * i32::from(height);
+        file.write_all(&vec![0xff; len as usize]).unwrap();
+        let pool = self.shm.create_pool(file.as_fd(), len, &self.qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            i32::from(width),
+            i32::from(height),
+            stride,
+            wl_shm::Format::Argb8888,
+            &self.qh,
+            (),
+        );
+        self.surface.attach(Some(&buffer), 0, 0);
+        pool.destroy();
+    }
+
     pub fn commit(&self) {
         self.surface.commit();
     }
@@ -638,9 +694,14 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == ZwlrLayerShellV1::interface().name {
                     let version = min(version, ZwlrLayerShellV1::interface().version);
                     state.layer_shell = Some(registry.bind(name, version, qh, ()));
+                } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
+                    let version = min(version, ZwlrVirtualPointerManagerV1::interface().version);
+                    state.virtual_pointer_manager = Some(registry.bind(name, version, qh, ()));
                 } else if interface == WpSinglePixelBufferManagerV1::interface().name {
                     let version = min(version, WpSinglePixelBufferManagerV1::interface().version);
                     state.spbm = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlShm::interface().name {
+                    state.shm = Some(registry.bind(name, 1, qh, ()));
                 } else if interface == WpViewporter::interface().name {
                     let version = min(version, WpViewporter::interface().version);
                     state.viewporter = Some(registry.bind(name, version, qh, ()));
@@ -985,6 +1046,10 @@ impl Dispatch<WlSeat, ()> for State {
 }
 wayland_client::delegate_noop!(State: ignore WlSubcompositor);
 wayland_client::delegate_noop!(State: ignore WlSubsurface);
+wayland_client::delegate_noop!(State: ignore WlShm);
+wayland_client::delegate_noop!(State: ignore WlShmPool);
+wayland_client::delegate_noop!(State: ignore ZwlrVirtualPointerManagerV1);
+wayland_client::delegate_noop!(State: ignore ZwlrVirtualPointerV1);
 
 impl Dispatch<WlPointer, ()> for State {
     fn event(
