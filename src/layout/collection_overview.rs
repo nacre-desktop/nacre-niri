@@ -31,9 +31,7 @@ use crate::render_helpers::solid_color::SolidColorRenderElement;
 use crate::render_helpers::texture::{TextureBuffer, TextureRenderElement};
 use crate::render_helpers::xray::XrayPos;
 use crate::render_helpers::{render_to_texture, RenderCtx, RenderTarget};
-use crate::utils::{
-    output_size, round_logical_in_physical, round_logical_in_physical_max1,
-};
+use crate::utils::{output_size, round_logical_in_physical, round_logical_in_physical_max1};
 
 const SCRATCHPAD_COLUMN_ID: u64 = u64::MAX;
 
@@ -419,7 +417,10 @@ impl<W: LayoutElement> Layout<W> {
                     .then_some(SCRATCHPAD_COLUMN_ID),
             )
             .filter(|id| {
-                *id == active || !self.monitors().any(|monitor| monitor.collection_id == Some(*id))
+                *id == active
+                    || !self
+                        .monitors()
+                        .any(|monitor| monitor.collection_id == Some(*id))
             })
             .map(|id| {
                 let source_width = if id == active {
@@ -522,14 +523,11 @@ impl<W: LayoutElement> Layout<W> {
                 let heights: Vec<_> = sizes.iter().map(|size| size.h).collect();
                 let gaps: Vec<_> = workspaces
                     .iter()
-                    .map(|ws| {
-                        round_logical_in_physical_max1(scale, ws.view_size().h * 0.1 * zoom)
-                    })
+                    .map(|ws| round_logical_in_physical_max1(scale, ws.view_size().h * 0.1 * zoom))
                     .collect();
                 let mut positions = vec![0.; workspaces.len()];
                 if let Some(height) = heights.get(active_idx) {
-                    let static_offset =
-                        round_logical_in_physical(scale, (size.h - height) / 2.);
+                    let static_offset = round_logical_in_physical(scale, (size.h - height) / 2.);
                     if heights.iter().all(|other| *other == *height)
                         && gaps.iter().all(|gap| *gap == gaps[active_idx])
                     {
@@ -538,20 +536,17 @@ impl<W: LayoutElement> Layout<W> {
                         let step = height + gaps[active_idx];
                         let first_y = round_logical_in_physical(scale, -(active_idx as f64) * step);
                         for (idx, position) in positions.iter_mut().enumerate() {
-                            *position = round_logical_in_physical(
-                                scale,
-                                first_y + idx as f64 * step,
-                            ) + static_offset;
+                            *position =
+                                round_logical_in_physical(scale, first_y + idx as f64 * step)
+                                    + static_offset;
                         }
                     } else {
                         positions[active_idx] = static_offset;
                         for idx in active_idx + 1..workspaces.len() {
-                            positions[idx] =
-                                positions[idx - 1] + heights[idx - 1] + gaps[idx - 1];
+                            positions[idx] = positions[idx - 1] + heights[idx - 1] + gaps[idx - 1];
                         }
                         for idx in (0..active_idx).rev() {
-                            positions[idx] =
-                                positions[idx + 1] - heights[idx] - gaps[idx];
+                            positions[idx] = positions[idx + 1] - heights[idx] - gaps[idx];
                         }
                     }
                 }
@@ -562,8 +557,7 @@ impl<W: LayoutElement> Layout<W> {
                         is_scratchpad: column.id == SCRATCHPAD_COLUMN_ID,
                         geometry: Rectangle::new(
                             (
-                                column.bounds.loc.x
-                                    + (column.bounds.size.w - sizes[idx].w) / 2.,
+                                column.bounds.loc.x + (column.bounds.size.w - sizes[idx].w) / 2.,
                                 positions[idx],
                             )
                                 .into(),
@@ -616,7 +610,13 @@ impl<W: LayoutElement> Layout<W> {
         let side = self
             .collection_previews(output)
             .into_iter()
-            .map(|preview| (preview.geometry, preview.workspace.view_size(), preview.zoom))
+            .map(|preview| {
+                (
+                    preview.geometry,
+                    preview.workspace.view_size(),
+                    preview.zoom,
+                )
+            })
             .collect();
         (native, side)
     }
@@ -1489,12 +1489,8 @@ mod tests {
                     continue;
                 }
 
-                let side_by_side = columns(
-                    [7, 8, 9, 10].map(|id| (id, native_width)),
-                    7,
-                    size,
-                    scale,
-                );
+                let side_by_side =
+                    columns([7, 8, 9, 10].map(|id| (id, native_width)), 7, size, scale);
                 assert_eq!(side_by_side[0].id, 7);
                 for column in &side_by_side {
                     assert_eq!(column.bounds.size.w, native_width);
@@ -1508,10 +1504,14 @@ mod tests {
                         "columns must remain independently targetable"
                     );
                 }
-                assert_eq!(side_by_side[0].bounds.loc.x + native_width / 2., size.w / 2.);
-                assert!(side_by_side[1].bounds.loc.x >= side_by_side[0].bounds.loc.x + native_width);
+                assert_eq!(
+                    side_by_side[0].bounds.loc.x + native_width / 2.,
+                    size.w / 2.
+                );
+                assert!(
+                    side_by_side[1].bounds.loc.x >= side_by_side[0].bounds.loc.x + native_width
+                );
             }
         }
     }
-
 }

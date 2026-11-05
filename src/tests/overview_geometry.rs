@@ -847,8 +847,14 @@ fn egl_collection_columns_preserve_stock_stack_geometry_at_both_output_scales() 
                 .overview_workspace_geometries_for_test(&side_output);
             assert!(stock_side.is_empty());
             assert!(no_side_previews.is_empty());
-            assert_eq!(no_side_native, stock_native, "stock mismatch on output {idx}");
-            assert_eq!(side_native, stock_native, "side columns changed shown stack on output {idx}");
+            assert_eq!(
+                no_side_native, stock_native,
+                "stock mismatch on output {idx}"
+            );
+            assert_eq!(
+                side_native, stock_native,
+                "side columns changed shown stack on output {idx}"
+            );
 
             let scale = output.current_scale().fractional_scale();
             let zoom = no_side.niri().layout.overview_zoom();
@@ -862,9 +868,12 @@ fn egl_collection_columns_preserve_stock_stack_geometry_at_both_output_scales() 
                 assert_eq!(geometry.size, expected);
             }
             let output_height = output.current_mode().unwrap().size.h as f64 / scale;
-            assert!(side_previews.iter().any(|(geometry, _, _)| {
-                geometry.loc.y < 0. || geometry.loc.y + geometry.size.h > output_height
-            }), "vertical stack was fit to output height on output {idx}");
+            assert!(
+                side_previews.iter().any(|(geometry, _, _)| {
+                    geometry.loc.y < 0. || geometry.loc.y + geometry.size.h > output_height
+                }),
+                "vertical stack was fit to output height on output {idx}"
+            );
         }
     }
 }

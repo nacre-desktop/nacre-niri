@@ -792,11 +792,23 @@ fn overview_without_side_columns_keeps_stock_full_width_window_hits() {
 
     let monitor = layout.monitor_for_output(&output).unwrap();
     let (workspace, geometry) = monitor.workspaces_with_render_geo().next().unwrap();
-    let point = Point::from((geometry.loc.x + geometry.size.w + 10., geometry.loc.y + geometry.size.h / 2.));
-    assert!(!geometry.contains(point), "point must be outside the workspace background");
-    assert!(point.x < monitor.view_size().w, "point must remain on the output");
+    let point = Point::from((
+        geometry.loc.x + geometry.size.w + 10.,
+        geometry.loc.y + geometry.size.h / 2.,
+    ));
+    assert!(
+        !geometry.contains(point),
+        "point must be outside the workspace background"
+    );
+    assert!(
+        point.x < monitor.view_size().w,
+        "point must remain on the output"
+    );
     let local = (point - geometry.loc).downscale(layout.overview_zoom());
-    assert!(workspace.window_under(local).is_some(), "oversized floating window protrudes into point");
+    assert!(
+        workspace.window_under(local).is_some(),
+        "oversized floating window protrudes into point"
+    );
     assert_eq!(layout.window_under(&output, point).unwrap().0.id(), &1);
 }
 

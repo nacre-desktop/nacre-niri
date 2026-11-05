@@ -228,6 +228,12 @@ impl RasterOutput {
 
 #[test]
 fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales() {
+    for with_side_columns in [false, true] {
+        check_native_overview_raster(with_side_columns);
+    }
+}
+
+fn check_native_overview_raster(with_side_columns: bool) {
     let mut fixture = fixture(true);
     let client = fixture.add_client();
     for index in [1, 2] {
@@ -240,6 +246,13 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
                 fixture.niri().layout.switch_workspace_down();
             }
         }
+    }
+    if with_side_columns {
+        let output = fixture.niri_output(2);
+        let shown = fixture.niri().layout.collection_for_output(&output).unwrap();
+        fixture.niri().layout.create_collection(Some("Raster side desk".into()));
+        create_window(&mut fixture, client, 0);
+        fixture.niri().layout.focus_collection(&niri_config::WorkspaceReference::Id(shown));
     }
     fixture.niri_complete_animations();
     set_time(fixture.niri(), 0);
@@ -275,10 +288,10 @@ fn egl_overview_native_clip_partial_repaint_matches_full_raster_at_both_scales()
         }
     }
     for (idx, output) in outputs.iter().enumerate() {
-        assert!(
-            output.saw_clip,
-            "output {} never exercised native clipping",
-            idx + 1
+        assert_eq!(
+            output.saw_clip, with_side_columns,
+            "output {} clipping must depend on side columns",
+            idx + 1,
         );
         assert!(
             output.saw_partial_damage,

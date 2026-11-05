@@ -4738,9 +4738,13 @@ impl Niri {
                     });
             }
             let switch_workspace = self.layout.collection_switch_render_workspace(output);
-            mon.render_workspaces(ctx.r(), focus_ring, self.layout.collection_overview_has_side_columns(output), switch_workspace, &mut |elem| {
-                push(elem.into())
-            });
+            mon.render_workspaces(
+                ctx.r(),
+                focus_ring,
+                self.layout.collection_overview_has_side_columns(output),
+                switch_workspace,
+                &mut |elem| push(elem.into()),
+            );
 
             push_popups_from_layer!(Layer::Top);
             push_normal_from_layer!(Layer::Top);
@@ -4800,9 +4804,13 @@ impl Niri {
                     });
             }
             let switch_workspace = self.layout.collection_switch_render_workspace(output);
-            mon.render_workspaces(ctx.r(), focus_ring, self.layout.collection_overview_has_side_columns(output), switch_workspace, &mut |elem| {
-                push(elem.into())
-            });
+            mon.render_workspaces(
+                ctx.r(),
+                focus_ring,
+                self.layout.collection_overview_has_side_columns(output),
+                switch_workspace,
+                &mut |elem| push(elem.into()),
+            );
 
             for (ws, geo) in mon.workspaces_with_render_geo() {
                 // The render element namespace. This will be set to the workspace index for

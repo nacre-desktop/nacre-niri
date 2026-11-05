@@ -3,7 +3,8 @@
 use niri_config::Config;
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point};
-use wayland_client::protocol::{wl_pointer, wl_surface::WlSurface};
+use wayland_client::protocol::wl_pointer;
+use wayland_client::protocol::wl_surface::WlSurface;
 
 use super::client::ClientId;
 use super::Fixture;
@@ -88,14 +89,14 @@ fn target_window(fixture: &Fixture, output_idx: u8, hidden: bool) -> Window {
             (belongs && (hidden || Some(&window.window) != focused.as_ref()))
                 .then_some(window.window.clone())
         })
-        .expect(if hidden { "detached window" } else { "shown window" })
+        .expect(if hidden {
+            "detached window"
+        } else {
+            "shown window"
+        })
 }
 
-fn hit_point(
-    fixture: &mut Fixture,
-    output_idx: u8,
-    expected: &Window,
-) -> Point<f64, Logical> {
+fn hit_point(fixture: &mut Fixture, output_idx: u8, expected: &Window) -> Point<f64, Logical> {
     let output = fixture.niri_output(output_idx);
     let scale = output.current_scale().fractional_scale();
     let mode = output.current_mode().unwrap().size;
