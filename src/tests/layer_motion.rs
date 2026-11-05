@@ -5,7 +5,7 @@ use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_lay
 use smithay::utils::Point;
 
 use super::client::bead_layer_motion::v1::client::bead_layer_motion_v1::{
-    self, Curve, OpacityMode,
+    self, Curve, OpacityMode, RevealMode,
 };
 use super::client::{ClientId, LayerConfigureProps};
 use super::fixture::Fixture;
@@ -157,6 +157,200 @@ fn controller_arms_on_surface_commit_retargets_and_ignores_stale_cancel() {
 }
 
 #[test]
+fn reveal_samples_geometry_clip_and_tracking_mode_across_reopen_retarget() {
+    let mut f = Fixture::new();
+    let (id, client_surface) = setup_panel(&mut f);
+    let motion_proxy = {
+        let client = f.client(id);
+        client.state.layer_motion(&client_surface).motion.clone()
+    };
+    create_plane(&motion_proxy, -100., 0.);
+    motion_proxy.set_reveal_bounds(0., 0., 100., 100., 0., 0., 100., 100.);
+    motion_proxy.set_reveal_geometry(
+        10.,
+        10.,
+        0.,
+        0.,
+        10.,
+        10.,
+        50.,
+        50.,
+        0.,
+        0.,
+        0.,
+        0.,
+        12.,
+        12.,
+        12.,
+        12.,
+        bead_layer_motion_v1::CornerMode::QuadraticCut,
+        0,
+        0x336699ff,
+        7,
+    );
+    motion_proxy.set_reveal_content_clip(10., 10., 0., 0., 10., 10., 50., 50.);
+    motion_proxy.set_reveal_mode(RevealMode::Visible);
+    motion_proxy.animate(10, 100, 0);
+
+    let layer = f.client(id).layer(&client_surface);
+    layer.attach_new_buffer();
+    layer.set_size(100, 100);
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+    let root_surface = mapped_surface(&f);
+    let runtime = f
+        .state
+        .server
+        .state
+        .niri
+        .layer_motion_manager_state
+        .runtime(&root_surface)
+        .unwrap();
+    let start = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
+    let middle = start + Duration::from_millis(50);
+    let output = f.niri_output(1);
+    f.niri()
+        .output_state
+        .get_mut(&output)
+        .unwrap()
+        .frame_clock
+        .presented(middle);
+    f.niri().clock.set_unadjusted(middle);
+    f.state
+        .server
+        .state
+        .niri
+        .layer_motion_manager_state
+        .tick(&root_surface, middle);
+    {
+        let runtime = runtime.lock().unwrap();
+        let sampled = runtime.reveal_current.unwrap();
+        assert_eq!(
+            sampled.body,
+            super::super::layer::reveal::Rect::new(10., 10., 25., 25.)
+        );
+        assert_eq!(sampled.radii, [6.; 4]);
+        assert_eq!(
+            sampled.content_clip.unwrap().w,
+            25.,
+            "descriptor={:?}, active={:?}",
+            runtime.reveal,
+            runtime.active
+        );
+    }
+
+    motion_proxy.set_reveal_mode(RevealMode::TrackingOnly);
+    motion_proxy.set_reveal_geometry(
+        10.,
+        10.,
+        25.,
+        25.,
+        10.,
+        10.,
+        0.,
+        0.,
+        6.,
+        6.,
+        6.,
+        6.,
+        0.,
+        0.,
+        0.,
+        0.,
+        bead_layer_motion_v1::CornerMode::QuadraticCut,
+        0,
+        0,
+        7,
+    );
+    motion_proxy.set_reveal_content_clip(10., 10., 25., 25., 10., 10., 0., 0.);
+    motion_proxy.set_plane_from(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.set_plane_to(7, -100., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.animate(11, 100, 1);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let closing_start = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
+    assert!(!runtime.lock().unwrap().reveal.as_ref().unwrap().visible);
+    let closing_pose = runtime.lock().unwrap().reveal_current.unwrap().body;
+    assert!(closing_pose.w > 0. && closing_pose.w < 50.);
+    assert!(runtime
+        .lock()
+        .unwrap()
+        .reveal
+        .as_ref()
+        .unwrap()
+        .contains((80., 80.), 0.));
+    let closed = closing_start + Duration::from_millis(100);
+    let output = f.niri_output(1);
+    f.niri()
+        .output_state
+        .get_mut(&output)
+        .unwrap()
+        .frame_clock
+        .presented(closed);
+    f.niri().clock.set_unadjusted(closed);
+    f.state
+        .server
+        .state
+        .niri
+        .layer_motion_manager_state
+        .tick(&root_surface, closed);
+    assert_eq!(
+        runtime.lock().unwrap().reveal_current.unwrap().body,
+        super::super::layer::reveal::Rect::new(10., 10., 0., 0.)
+    );
+
+    motion_proxy.set_reveal_mode(RevealMode::Visible);
+    motion_proxy.set_reveal_geometry(
+        80.,
+        80.,
+        0.,
+        0.,
+        80.,
+        80.,
+        50.,
+        50.,
+        0.,
+        0.,
+        0.,
+        0.,
+        8.,
+        8.,
+        8.,
+        8.,
+        bead_layer_motion_v1::CornerMode::QuadraticCut,
+        0,
+        0x336699ff,
+        7,
+    );
+    motion_proxy.set_reveal_content_clip(0., 0., 100., 100., 80., 80., 50., 50.);
+    motion_proxy.set_plane_from(7, -100., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.set_plane_to(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
+    motion_proxy.animate(12, 100, 1);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let runtime = runtime.lock().unwrap();
+    let reopening = runtime.reveal.as_ref().unwrap().sample(0.).body;
+    assert_eq!(
+        reopening,
+        super::super::layer::reveal::Rect::new(10., 10., 0., 0.),
+        "reopen descriptor starts at the exact previously closed body"
+    );
+    assert!(runtime.reveal.as_ref().unwrap().visible);
+}
+
+#[test]
 fn explicit_cancel_and_later_surface_commit_preserve_sampled_pose() {
     let mut f = Fixture::new();
     let (id, client_surface) = setup_panel(&mut f);
@@ -277,6 +471,36 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         client.state.layer_motion(&client_surface).motion.clone()
     };
     create_plane(&motion_proxy, 0., 0.);
+    motion_proxy.set_reveal_bounds(0., 0., 100., 100., 0., 0., 100., 100.);
+    motion_proxy.set_reveal_geometry(
+        0.,
+        0.,
+        0.,
+        0.,
+        0.,
+        0.,
+        100.,
+        100.,
+        0.,
+        0.,
+        0.,
+        0.,
+        12.,
+        12.,
+        12.,
+        12.,
+        bead_layer_motion_v1::CornerMode::Circular,
+        0,
+        0,
+        7,
+    );
+    motion_proxy.set_reveal_content_clip(0., 0., 100., 100., 30., 40., 40., 30.);
+    motion_proxy.set_reveal_mode(RevealMode::Visible);
+    let terminal_bytes = vec![17, 29, 43, 255].repeat(100 * 100);
+    let terminal_buffer = f
+        .client(id)
+        .create_rgba_shm_buffer(100, 100, &terminal_bytes);
+    motion_proxy.set_reveal_terminal_buffer(Some(&terminal_buffer), 100., 100.);
     motion_proxy.animate(20, 150, 0);
 
     let layer = f.client(id).layer(&client_surface);
@@ -284,23 +508,14 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
+    assert!(
+        f.client(id)
+            .state
+            .released_buffers
+            .contains(&terminal_buffer),
+        "compositor releases copied terminal SHM buffer"
+    );
     let root_surface = mapped_surface(&f);
-    assert!(f
-        .state
-        .server
-        .state
-        .niri
-        .layer_motion_manager_state
-        .runtime(&root_surface)
-        .unwrap()
-        .lock()
-        .unwrap()
-        .active
-        .is_some());
-
-    f.client(id).layer(&client_surface).attach_null();
-    f.client(id).layer(&client_surface).commit();
-    f.double_roundtrip(id);
     let runtime = f
         .state
         .server
@@ -309,7 +524,52 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
         .layer_motion_manager_state
         .runtime(&root_surface)
         .unwrap();
-    assert!(runtime.lock().unwrap().active.is_none());
+    {
+        let runtime = runtime.lock().unwrap();
+        let terminal = runtime
+            .terminal
+            .as_ref()
+            .expect("commit copies terminal SHM");
+        assert_eq!(terminal.pixels.as_ref(), terminal_bytes.as_slice());
+        assert!(!runtime.terminal_ready);
+    }
+    let start = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
+    assert!(runtime.lock().unwrap().active.is_some());
+    let midpoint = start + Duration::from_millis(75);
+    let output = f.niri_output(1);
+    f.niri()
+        .output_state
+        .get_mut(&output)
+        .unwrap()
+        .frame_clock
+        .presented(midpoint);
+    f.niri().clock.set_unadjusted(midpoint);
+
+    f.client(id).layer(&client_surface).attach_null();
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let frozen_clip = {
+        let runtime = runtime.lock().unwrap();
+        assert!(runtime.active.is_none());
+        assert!(
+            runtime.terminal.is_none(),
+            "unmap drops retained terminal pixels"
+        );
+        assert!(!runtime.terminal_ready);
+        let frozen_clip = runtime.reveal_current.unwrap().content_clip.unwrap();
+        assert_eq!(
+            runtime.reveal.as_ref().unwrap().content_clip,
+            Some((frozen_clip, frozen_clip)),
+            "unmap freezes both content-clip endpoints at the sampled presentation"
+        );
+        frozen_clip
+    };
     let controller = f
         .client(id)
         .state
@@ -324,8 +584,10 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
 
     motion_proxy.set_plane_from(7, -80., 0., 100., 100., 0., 0., 100., 100., 1.);
     motion_proxy.set_plane_to(7, 0., 0., 100., 100., 0., 0., 100., 100., 1.);
-    motion_proxy.animate(21, 100, 0);
+    motion_proxy.set_reveal_content_clip(15., 20., 70., 65., 50., 60., 20., 20.);
+    motion_proxy.animate(21, 100, 1);
     let layer = f.client(id).layer(&client_surface);
+    motion_proxy.set_reveal_terminal_buffer(Some(&terminal_buffer), 100., 100.);
     layer.set_configure_props(LayerConfigureProps {
         anchor: Some(Anchor::Left | Anchor::Top),
         size: Some((101, 101)),
@@ -338,5 +600,79 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     layer.set_size(100, 100);
     layer.ack_last_and_commit();
     f.double_roundtrip(id);
-    assert_eq!(runtime.lock().unwrap().active.as_ref().unwrap().serial, 21);
+    let runtime_state = runtime.lock().unwrap();
+    assert_eq!(runtime_state.active.as_ref().unwrap().serial, 21);
+    assert!(runtime_state.terminal.is_some());
+    assert!(!runtime_state.terminal_ready);
+    assert_eq!(
+        runtime_state
+            .reveal
+            .as_ref()
+            .unwrap()
+            .sample(0.)
+            .content_clip,
+        Some(frozen_clip),
+        "remapped retarget starts at the frozen content clip"
+    );
+    drop(runtime_state);
+
+    // A later data-only endpoint replacement after cancellation must not turn
+    // the frozen partial pose into a completed reveal.
+    motion_proxy.cancel(21);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    assert!(!runtime.lock().unwrap().terminal_ready);
+    let replacement_bytes = vec![53, 41, 31, 255].repeat(100 * 100);
+    let replacement = f
+        .client(id)
+        .create_rgba_shm_buffer(100, 100, &replacement_bytes);
+    motion_proxy.set_reveal_terminal_buffer(Some(&replacement), 100., 100.);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    {
+        let runtime = runtime.lock().unwrap();
+        let terminal = runtime.terminal.as_ref().expect("replacement is retained");
+        assert_eq!(terminal.pixels.as_ref(), replacement_bytes.as_slice());
+        assert!(!runtime.terminal_ready);
+    }
+
+    // A stale animation serial cannot install its terminal buffer. The pending
+    // buffer is released at commit and the newer snapshot remains installed.
+    let stale_bytes = vec![71, 73, 79, 255].repeat(100 * 100);
+    let stale_buffer = f.client(id).create_rgba_shm_buffer(100, 100, &stale_bytes);
+    motion_proxy.animate(20, 100, 1);
+    motion_proxy.set_reveal_terminal_buffer(Some(&stale_buffer), 100., 100.);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    assert!(f.client(id).state.released_buffers.contains(&stale_buffer));
+    {
+        let runtime = runtime.lock().unwrap();
+        assert_eq!(
+            runtime.terminal.as_ref().unwrap().pixels.as_ref(),
+            replacement_bytes.as_slice()
+        );
+        assert!(!runtime.terminal_ready);
+    }
+
+    motion_proxy.animate(22, 100, 1);
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let completion = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time()
+        + Duration::from_millis(101);
+    f.niri()
+        .layer_motion_manager_state
+        .tick(&root_surface, completion);
+    assert!(runtime.lock().unwrap().terminal_ready);
+    motion_proxy.reset();
+    f.client(id).layer(&client_surface).commit();
+    f.double_roundtrip(id);
+    let runtime = runtime.lock().unwrap();
+    assert!(runtime.terminal.is_none(), "reset clears terminal pixels");
+    assert!(!runtime.terminal_ready);
 }

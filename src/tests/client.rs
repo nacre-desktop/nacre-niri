@@ -4,7 +4,7 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Write as _;
-use std::os::fd::AsFd;
+use std::os::fd::{AsFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -123,6 +123,7 @@ pub struct State {
     pub seat: Option<WlSeat>,
     pub pointer: Option<WlPointer>,
     pub pointer_events: Vec<wl_pointer::Event>,
+    pub released_buffers: Vec<WlBuffer>,
     pub promotions: Vec<LayerPromotionController>,
 
     pub windows: Vec<Window>,
@@ -272,6 +273,7 @@ impl Client {
             seat: None,
             pointer: None,
             pointer_events: Vec::new(),
+            released_buffers: Vec::new(),
             promotions: Vec::new(),
             windows: Vec::new(),
             layers: Vec::new(),
@@ -286,6 +288,33 @@ impl Client {
             display,
             state,
         }
+    }
+
+    pub fn create_rgba_shm_buffer(&self, width: u32, height: u32, bytes: &[u8]) -> WlBuffer {
+        let stride = width.checked_mul(4).expect("SHM row stride overflow");
+        let size = stride
+            .checked_mul(height)
+            .expect("SHM buffer size overflow");
+        assert_eq!(bytes.len(), size as usize);
+        let name = std::ffi::CString::new("niri-reveal-fixture").unwrap();
+        let fd = unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC) };
+        assert!(fd >= 0, "memfd_create failed");
+        let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+        file.set_len(size as u64).unwrap();
+        file.write_all(bytes).unwrap();
+        let shm = self.state.shm.as_ref().unwrap();
+        let pool = shm.create_pool(file.as_fd(), size as i32, &self.qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            width as i32,
+            height as i32,
+            stride as i32,
+            wl_shm::Format::Abgr8888,
+            &self.qh,
+            (),
+        );
+        pool.destroy();
+        buffer
     }
 
     pub fn dispatch(&mut self) {
@@ -701,7 +730,7 @@ impl Dispatch<WlRegistry, ()> for State {
                     let version = min(version, WpSinglePixelBufferManagerV1::interface().version);
                     state.spbm = Some(registry.bind(name, version, qh, ()));
                 } else if interface == WlShm::interface().name {
-                    state.shm = Some(registry.bind(name, 1, qh, ()));
+                    state.shm = Some(registry.bind(name, min(version, 1), qh, ()));
                 } else if interface == WpViewporter::interface().name {
                     let version = min(version, WpViewporter::interface().version);
                     state.viewporter = Some(registry.bind(name, version, qh, ()));
@@ -950,17 +979,46 @@ impl Dispatch<ZwlrLayerSurfaceV1, ()> for State {
 
 impl Dispatch<WlBuffer, ()> for State {
     fn event(
-        _state: &mut Self,
-        _proxy: &WlBuffer,
+        state: &mut Self,
+        proxy: &WlBuffer,
         event: <WlBuffer as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            wl_buffer::Event::Release => (),
+            wl_buffer::Event::Release => state.released_buffers.push(proxy.clone()),
             _ => unreachable!(),
         }
+    }
+}
+
+impl Dispatch<WlShm, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlShm,
+        event: <WlShm as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_shm::Event::Format { .. } => (),
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Dispatch<WlShmPool, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlShmPool,
+        _event: <WlShmPool as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!("wl_shm_pool has no events")
     }
 }
 

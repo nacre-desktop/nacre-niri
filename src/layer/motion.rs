@@ -232,9 +232,7 @@ impl LayerMotionGroup {
     }
 
     pub fn sample(&self, presentation_time: Duration) -> Vec<(u32, MotionPose)> {
-        let elapsed = presentation_time.saturating_sub(self.start);
-        let t = elapsed.as_secs_f64() / self.duration.as_secs_f64();
-        let p = self.curve.sample(t);
+        let p = self.progress(presentation_time);
         self.from
             .iter()
             .zip(&self.to)
@@ -243,6 +241,13 @@ impl LayerMotionGroup {
                 (*id, from.interpolate(*to, p, *opacity_mode))
             })
             .collect()
+    }
+
+    /// Eased progress shared by every animated field attached to this group.
+    pub fn progress(&self, presentation_time: Duration) -> f64 {
+        let elapsed = presentation_time.saturating_sub(self.start);
+        self.curve
+            .sample(elapsed.as_secs_f64() / self.duration.as_secs_f64())
     }
 
     pub fn is_complete(&self, presentation_time: Duration) -> bool {
