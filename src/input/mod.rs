@@ -434,6 +434,7 @@ impl State {
         }
 
         let is_inhibiting_shortcuts = self.is_inhibiting_shortcuts();
+        let is_locked = self.niri.is_locked();
 
         // Accessibility modifier grabs should override XKB state changes (e.g. Caps Lock), so we
         // need to process them before keyboard.input() below.
@@ -567,6 +568,7 @@ impl State {
                         &this.niri.screenshot_ui,
                         this.niri.config.borrow().input.disable_power_key_handling,
                         is_inhibiting_shortcuts,
+                        is_locked,
                     )
                 };
 
@@ -4700,6 +4702,7 @@ fn should_intercept_key<'a>(
     screenshot_ui: &ScreenshotUi,
     disable_power_key_handling: bool,
     is_inhibiting_shortcuts: bool,
+    is_locked: bool,
 ) -> FilterResult<Option<Bind>> {
     // Actions are only triggered on presses, release of the key
     // shouldn't try to intercept anything unless we have marked
@@ -4753,6 +4756,15 @@ fn should_intercept_key<'a>(
     match (final_bind, pressed) {
         (Some(bind), true) => {
             if is_inhibiting_shortcuts && bind.allow_inhibiting {
+                FilterResult::Forward
+            } else if is_locked && !(bind.allow_when_locked || allowed_when_locked(&bind.action)) {
+                // If the bind is not allowed when locked, forward the key.
+                //
+                // This is not necessary to prevent the action from running because
+                // allow_when_locked is also checked in handle_bind() (this is required for key
+                // repeat). However, especially with the GlobalShortcuts portal, it's quite easy to
+                // bind single letter keys. This forward lets them work to type on the lock screen
+                // so the user isn't locked out.
                 FilterResult::Forward
             } else {
                 suppressed_keys.insert(key_code);
@@ -5503,6 +5515,58 @@ mod tests {
     }
 
     #[test]
+    fn binds_not_allowed_when_locked_are_forwarded() {
+        let bind = |keysym: Keysym, action, allow_when_locked| Bind {
+            key: Key {
+                trigger: Trigger::Keysym(keysym),
+                modifiers: Modifiers::empty(),
+            },
+            action,
+            repeat: true,
+            cooldown: None,
+            allow_when_locked,
+            allow_inhibiting: true,
+            hotkey_overlay_title: None,
+        };
+        let bindings = [
+            bind(Keysym::q, Action::CloseWindow, false),
+            bind(Keysym::w, Action::PowerOffMonitors, false),
+            bind(Keysym::e, Action::Spawn(vec![]), true),
+        ];
+        let screenshot_ui = ScreenshotUi::new(Clock::default(), Default::default());
+        let mut suppressed_keys = HashSet::new();
+        let mut key = |keysym: Keysym, pressed| {
+            should_intercept_key(
+                &mut suppressed_keys,
+                &bindings,
+                ModKey::Super,
+                Keycode::from(keysym.raw() + 8),
+                keysym,
+                Some(keysym),
+                pressed,
+                ModifiersState::default(),
+                &screenshot_ui,
+                false,
+                false,
+                true,
+            )
+        };
+
+        // A key bound to a disallowed action reaches the lock screen, press and release.
+        assert!(matches!(key(Keysym::q, true), FilterResult::Forward));
+        assert!(matches!(key(Keysym::q, false), FilterResult::Forward));
+        // Binds that may run while locked are still intercepted.
+        assert!(matches!(
+            key(Keysym::w, true),
+            FilterResult::Intercept(Some(_))
+        ));
+        assert!(matches!(
+            key(Keysym::e, true),
+            FilterResult::Intercept(Some(_))
+        ));
+    }
+
+    #[test]
     fn bindings_suppress_keys() {
         let close_keysym = Keysym::q;
         let bindings = Binds(vec![Bind {
@@ -5542,6 +5606,7 @@ mod tests {
                 &screenshot_ui,
                 disable_power_key_handling,
                 is_inhibiting_shortcuts.get(),
+                false,
             )
         };
 
@@ -5559,6 +5624,7 @@ mod tests {
                 &screenshot_ui,
                 disable_power_key_handling,
                 is_inhibiting_shortcuts.get(),
+                false,
             )
         };
 
