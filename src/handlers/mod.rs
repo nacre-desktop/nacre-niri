@@ -112,6 +112,14 @@ impl SeatHandler for State {
         // PointerFocus properly.
         if self.niri.screenshot_ui.is_open() {
             image = CursorImageStatus::Named(CursorIcon::Crosshair);
+        } else if self
+            .niri
+            .layer_promote_manager_state
+            .promoted
+            .values()
+            .any(|layer| layer.moving)
+        {
+            image = CursorImageStatus::Named(CursorIcon::Grabbing);
         }
         self.niri.cursor_manager.set_cursor_image(image);
         // FIXME: more granular

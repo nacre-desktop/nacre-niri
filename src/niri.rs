@@ -3551,6 +3551,15 @@ impl Niri {
             return None;
         }
 
+        // Promoted layers are outside the layout, but still obscure its windows.
+        // Use the presentation hit test so input regions and motion stay in sync.
+        if self.contents_under(pos).layer.is_some_and(|layer| {
+            self.layer_promote_manager_state
+                .is_promoted(layer.wl_surface())
+        }) {
+            return None;
+        }
+
         let (output, pos_within_output) = self.output_under(pos)?;
 
         if self.is_sticky_obscured_under(output, pos_within_output) {

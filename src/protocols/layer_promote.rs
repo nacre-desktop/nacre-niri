@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use smithay::desktop::{layer_map_for_output, LayerSurface, WindowSurfaceType};
-use smithay::input::pointer::{Focus, GrabStartData};
+use smithay::input::pointer::{CursorIcon, CursorImageStatus, Focus, GrabStartData};
 use smithay::input::Seat;
 use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_seat::WlSeat;
@@ -470,6 +470,9 @@ impl State {
         self.niri
             .move_promoted_layer(surface, grab.body_origin(location), location);
         pointer.set_grab(self, grab, Serial::from(serial), Focus::Keep);
+        self.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::Named(CursorIcon::Grabbing));
         self.niri.layer_shell_on_demand_focus = self
             .niri
             .layer_promote_manager_state

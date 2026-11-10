@@ -1,9 +1,9 @@
 //! Move the existing layer tree without transferring the client's pointer stream.
 use smithay::input::pointer::{
-    AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-    GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-    GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
-    RelativeMotionEvent,
+    AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
+    GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+    GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab,
+    PointerInnerHandle, RelativeMotionEvent,
 };
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
@@ -256,5 +256,9 @@ impl PointerGrab<State> for LayerMoveGrab {
     }
     fn unset(&mut self, data: &mut State) {
         data.niri.finish_layer_move(&self.surface);
+        data.niri
+            .cursor_manager
+            .set_cursor_image(CursorImageStatus::default_named());
+        data.niri.queue_redraw_all();
     }
 }

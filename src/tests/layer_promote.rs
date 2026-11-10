@@ -3,12 +3,14 @@ use std::time::Duration;
 
 use niri_config::{Config, WorkspaceReference};
 use smithay::backend::allocator::Fourcc;
-use smithay::backend::input::ButtonState;
+use smithay::backend::input::{ButtonState, KeyState, Keycode};
 use smithay::backend::renderer::damage::OutputDamageTracker;
 use smithay::backend::renderer::element::{Element as _, Id, RenderElement};
 use smithay::backend::renderer::gles::{GlesRenderer, GlesTexture};
 use smithay::backend::renderer::{Bind as _, Color32F, ExportMem as _};
-use smithay::input::pointer::{ButtonEvent, MotionEvent};
+use smithay::input::keyboard::FilterResult;
+use smithay::input::pointer::{ButtonEvent, CursorIcon, CursorImageStatus, MotionEvent};
+use smithay::input::SeatHandler;
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use smithay::reexports::wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1::Anchor;
@@ -182,6 +184,10 @@ fn real_button_grab_moves_immediately_and_release_preserves_content() {
     );
     proxy.promote(1, Some(&seat), serial.into(), 8., 4., 40., 30.);
     commit(&mut f, id, &surface);
+    assert!(matches!(
+        f.niri().cursor_manager.cursor_image(),
+        CursorImageStatus::Named(CursorIcon::Grabbing)
+    ));
     assert_eq!(
         f.niri().layer_promote_manager_state.promoted[&root].body_origin,
         Point::from((18., 9.))
@@ -212,6 +218,10 @@ fn real_button_grab_moves_immediately_and_release_preserves_content() {
     );
     pointer.frame(state);
     assert!(!state.niri.layer_promote_manager_state.promoted[&root].moving);
+    assert!(matches!(
+        state.niri.cursor_manager.cursor_image(),
+        CursorImageStatus::Named(CursorIcon::Default)
+    ));
     assert!(state
         .niri
         .mapped_layer_surfaces
@@ -225,6 +235,105 @@ fn real_button_grab_moves_immediately_and_release_preserves_content() {
         .events
         .iter()
         .any(|event| matches!(event, bead_layer_promote_v1::Event::Rejected { .. })));
+}
+
+#[test]
+fn super_drag_promoted_panel_over_tile_keeps_the_panel_grab_and_cursor() {
+    use wayland_client::protocol::wl_pointer;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (600, 400));
+    let id = f.add_client();
+    let window = f.client(id).create_window();
+    let tile = window.surface.clone();
+    window.commit();
+    f.double_roundtrip(id);
+    let window = f.client(id).window(&tile);
+    window.attach_new_buffer();
+    window.set_size(500, 300);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+    f.niri_complete_animations();
+    let point = Point::from((110., 110.));
+    let tile_window = f.niri().window_under(point).unwrap().window.clone();
+
+    let (id, surface, root, proxy) = panel(&mut f);
+    promote(&proxy, 1);
+    commit(&mut f, id, &surface);
+    f.niri()
+        .move_promoted_layer(&root, (100., 100.).into(), point);
+    assert_eq!(f.niri().contents_under(point).surface.unwrap().0, root);
+    assert!(f.niri().window_under(point).is_none());
+    // A point outside the promoted input still reaches the same tile.
+    assert_eq!(
+        f.niri().window_under((200., 110.).into()).unwrap().window,
+        tile_window
+    );
+
+    let keyboard = f.niri().seat.get_keyboard().unwrap();
+    keyboard.input::<(), _>(
+        f.niri_state(),
+        Keycode::new(133), // XKB Super_L, including the evdev offset.
+        KeyState::Pressed,
+        SERIAL_COUNTER.next_serial(),
+        1,
+        |_, _, _| FilterResult::Forward,
+    );
+    assert!(keyboard.modifier_state().logo);
+    let pointer = f.client(id).create_virtual_pointer("headless-1");
+    pointer.motion_absolute(2, 110, 110, 600, 400);
+    pointer.frame();
+    f.double_roundtrip(id);
+    pointer.button(3, 0x110, wl_pointer::ButtonState::Pressed);
+    pointer.frame();
+    f.double_roundtrip(id);
+    let serial = f
+        .client(id)
+        .state
+        .pointer_events
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            wl_pointer::Event::Button { serial, state, .. }
+                if *state == wayland_client::WEnum::Value(wl_pointer::ButtonState::Pressed) =>
+            {
+                Some(*serial)
+            }
+            _ => None,
+        })
+        .expect("the panel must receive the press, not a layout MoveGrab");
+    let seat = f.client(id).state.seat.clone().unwrap();
+    proxy._move(&seat, serial);
+    f.double_roundtrip(id);
+    assert!(f.niri().layer_promote_manager_state.promoted[&root].moving);
+    // Native layer movement retains focus; a client cursor request must not win.
+    let state = f.niri_state();
+    let seat = state.niri.seat.clone();
+    state.cursor_image(&seat, CursorImageStatus::Named(CursorIcon::Text));
+    assert!(matches!(
+        state.niri.cursor_manager.cursor_image(),
+        CursorImageStatus::Named(CursorIcon::Grabbing)
+    ));
+    pointer.motion(4, 40., 30.);
+    pointer.frame();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.niri().layer_promote_manager_state.promoted[&root].body_origin,
+        Point::from((140., 130.))
+    );
+    assert_eq!(
+        f.niri().seat.get_pointer().unwrap().current_focus(),
+        Some(root.clone())
+    );
+    pointer.button(5, 0x110, wl_pointer::ButtonState::Released);
+    pointer.frame();
+    f.double_roundtrip(id);
+    assert!(!f.niri().layer_promote_manager_state.promoted[&root].moving);
+    assert!(matches!(
+        f.niri().cursor_manager.cursor_image(),
+        CursorImageStatus::Named(CursorIcon::Default)
+    ));
+    assert_eq!(f.niri().window_under(point).unwrap().window, tile_window);
 }
 
 #[test]
