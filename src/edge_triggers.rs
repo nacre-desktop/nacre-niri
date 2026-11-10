@@ -1124,10 +1124,12 @@ impl Niri {
                 }
             }
             EdgeAction::Spawn(command) => {
-                crate::utils::spawning::spawn(command, None);
+                let (token, gate) = self.prepare_spawn_launch();
+                crate::utils::spawning::spawn_with_launch(command, token, gate);
             }
             EdgeAction::SpawnSh(command) => {
-                crate::utils::spawning::spawn_sh(command, None);
+                let (token, gate) = self.prepare_spawn_launch();
+                crate::utils::spawning::spawn_sh_with_launch(command, token, gate);
             }
         }
         if let Some(candidate) = self.edge_trigger_candidate.as_mut() {

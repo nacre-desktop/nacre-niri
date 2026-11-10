@@ -108,7 +108,7 @@ use smithay::wayland::tablet_manager::TabletManagerState;
 use smithay::wayland::text_input::TextInputManagerState;
 use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
-use smithay::wayland::xdg_activation::XdgActivationState;
+use smithay::wayland::xdg_activation::{XdgActivationState, XdgActivationToken};
 use smithay::wayland::xdg_foreign::XdgForeignState;
 use wayland_server::protocol::wl_output::WlOutput;
 
@@ -235,6 +235,7 @@ pub struct Niri {
     pub layout: Layout<Mapped>,
     /// None means state could not be read and must not be overwritten.
     pub(crate) collection_persistence: Option<PersistedCollections>,
+    pub launch_tracker: crate::launch::LaunchTracker,
     collection_state_writer: Option<CollectionStateWriter>,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
@@ -2325,6 +2326,29 @@ impl LayerMotionHandler for State {
 }
 
 impl Niri {
+    pub fn prepare_launch(&mut self, unit: Option<String>) -> Option<XdgActivationToken> {
+        let workspace = self.layout.active_workspace()?.id();
+        let now = Instant::now();
+        let (token, _) = self.activation_state.create_external_token(None);
+        self.launch_tracker
+            .prepare(token.as_str().to_owned(), unit, workspace, now);
+        Some(token.clone())
+    }
+
+    pub fn prepare_spawn_launch(
+        &mut self,
+    ) -> (
+        Option<XdgActivationToken>,
+        Option<crate::launch_process::LaunchGate>,
+    ) {
+        let Some(token) = self.prepare_launch(None) else {
+            return (None, None);
+        };
+        let gate =
+            crate::launch_process::prepare_gate(self.event_loop.clone(), token.as_str().to_owned());
+        (Some(token), gate)
+    }
+
     pub fn new(
         config: Rc<RefCell<Config>>,
         event_loop: LoopHandle<'static, State>,
@@ -2492,9 +2516,14 @@ impl Niri {
             .insert_source(
                 Timer::from_duration(XDG_ACTIVATION_TOKEN_TIMEOUT),
                 |_, _, state| {
-                    state.niri.activation_state.retain_tokens(|_, token_data| {
-                        token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
-                    });
+                    let tracker = &mut state.niri.launch_tracker;
+                    state
+                        .niri
+                        .activation_state
+                        .retain_tokens(|token, token_data| {
+                            token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
+                                || tracker.contains_token(token.as_str(), Instant::now())
+                        });
                     TimeoutAction::ToDuration(XDG_ACTIVATION_TOKEN_TIMEOUT)
                 },
             )
@@ -2647,6 +2676,7 @@ impl Niri {
 
             layout,
             collection_persistence,
+            launch_tracker: crate::launch::LaunchTracker::default(),
             collection_state_writer,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),

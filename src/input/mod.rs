@@ -55,7 +55,6 @@ use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, PointerVisibility, State};
 use crate::ui::mru::{WindowMru, WindowMruUi};
 use crate::ui::screenshot_ui::ScreenshotUi;
-use crate::utils::spawning::{spawn, spawn_sh};
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
@@ -737,12 +736,12 @@ impl State {
                 self.niri.debug_toggle_damage();
             }
             Action::Spawn(command) => {
-                let (token, _) = self.niri.activation_state.create_external_token(None);
-                spawn(command, Some(token.clone()));
+                let (token, gate) = self.niri.prepare_spawn_launch();
+                crate::utils::spawning::spawn_with_launch(command, token, gate);
             }
             Action::SpawnSh(command) => {
-                let (token, _) = self.niri.activation_state.create_external_token(None);
-                spawn_sh(command, Some(token.clone()));
+                let (token, gate) = self.niri.prepare_spawn_launch();
+                crate::utils::spawning::spawn_sh_with_launch(command, token, gate);
             }
             Action::DoScreenTransition(delay_ms) => {
                 self.backend.with_primary_renderer(|renderer| {

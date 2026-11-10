@@ -360,6 +360,243 @@ fn target_output_and_workspaces() {
     });
 }
 
+#[test]
+fn launch_intent_maps_off_view_without_focus_and_rules_still_choose_destination() {
+    check_launch_workspace(None, true, false, false);
+    check_launch_workspace(Some("ws-rule"), true, false, false);
+    check_launch_workspace(Some("ws-rule"), false, false, false);
+    check_launch_workspace(None, true, true, false);
+    check_launch_workspace(None, true, false, true);
+    check_launch_workspace(None, true, true, true);
+}
+
+fn check_launch_workspace(
+    open_on_workspace: Option<&str>,
+    has_launch: bool,
+    expire_before_map: bool,
+    multi_output: bool,
+) {
+    store_and_increase_nofile_rlimit();
+    let view_output = if multi_output {
+        "headless-2"
+    } else {
+        "headless-1"
+    };
+    let mut config = Config::parse_mem(&format!(
+        r##"
+workspace "ws-launch" {{
+    open-on-output "headless-1"
+}}
+workspace "ws-view" {{
+    open-on-output "{view_output}"
+}}
+workspace "ws-rule" {{
+    open-on-output "headless-1"
+}}
+window-rule {{
+    match title="launch-test"
+    open-focused true
+}}
+"##,
+    ))
+    .unwrap();
+    if let Some(workspace) = open_on_workspace {
+        config = Config::parse_mem(&format!(
+            r##"
+workspace "ws-launch" {{
+    open-on-output "headless-1"
+}}
+workspace "ws-view" {{
+    open-on-output "{view_output}"
+}}
+workspace "ws-rule" {{
+    open-on-output "headless-1"
+}}
+window-rule {{
+    match title="launch-test"
+    open-focused true
+    open-on-workspace "{workspace}"
+}}
+"##
+        ))
+        .unwrap();
+    }
+    let mut fixture = Fixture::with_config(config);
+    fixture.add_output(1, (1280, 720));
+    if multi_output {
+        fixture.add_output(2, (1920, 1080));
+    }
+    let launch_output = fixture
+        .niri()
+        .layout
+        .monitor_for_workspace("ws-launch")
+        .unwrap()
+        .output()
+        .clone();
+    let view_output = fixture
+        .niri()
+        .layout
+        .monitor_for_workspace("ws-view")
+        .unwrap()
+        .output()
+        .clone();
+    let (launch_index, launch_workspace) = fixture
+        .niri()
+        .layout
+        .find_workspace_by_name("ws-launch")
+        .map(|(idx, ws)| (idx, ws.id()))
+        .unwrap();
+    let (view_index, view_workspace) = fixture
+        .niri()
+        .layout
+        .find_workspace_by_name("ws-view")
+        .map(|(idx, ws)| (idx, ws.id()))
+        .unwrap();
+    fixture.niri().layout.focus_output(&view_output);
+    fixture.niri().layout.switch_workspace(view_index);
+    let anchor_client = fixture.add_client_with_xwayland_satellite(true);
+    let anchor_surface = {
+        let window = fixture.client(anchor_client).create_window();
+        let surface = window.surface.clone();
+        window.commit();
+        surface
+    };
+    fixture.roundtrip(anchor_client);
+    let anchor = fixture.client(anchor_client).window(&anchor_surface);
+    anchor.attach_new_buffer();
+    anchor.set_size(200, 100);
+    anchor.ack_last_and_commit();
+    fixture.double_roundtrip(anchor_client);
+    let anchor_id = fixture.niri().layout.focus().unwrap().id();
+    fixture.niri().layout.focus_output(&launch_output);
+    fixture.niri().layout.switch_workspace(launch_index);
+
+    let client_id = fixture.add_client();
+    fixture.roundtrip(client_id);
+    let surface = fixture.client(client_id).create_window().surface.clone();
+    fixture.roundtrip(client_id);
+    let server_surface = fixture
+        .niri()
+        .unmapped_windows
+        .keys()
+        .next()
+        .unwrap()
+        .clone();
+    let (activation_token, activation_data) = {
+        let (token, data) = fixture.niri().activation_state.create_external_token(None);
+        (token.clone(), data.clone())
+    };
+    let token = activation_token.as_str().to_owned();
+    let now = std::time::Instant::now();
+    if has_launch {
+        fixture
+            .niri()
+            .launch_tracker
+            .prepare(token.clone(), None, launch_workspace, now);
+        let unmapped = fixture
+            .niri()
+            .unmapped_windows
+            .get_mut(&server_surface)
+            .unwrap();
+        unmapped.launch_token = Some(token.clone());
+        unmapped.launch_workspace_id = Some(launch_workspace);
+    }
+
+    if expire_before_map {
+        fixture.niri().layout.focus_output(&view_output);
+        fixture.niri().layout.switch_workspace(view_index);
+    }
+    fixture
+        .client(client_id)
+        .window(&surface)
+        .set_title("launch-test");
+    fixture.client(client_id).window(&surface).commit();
+    fixture.roundtrip(client_id);
+    if expire_before_map {
+        assert!(fixture
+            .niri()
+            .launch_tracker
+            .peek_token(&token, now + crate::launch::LAUNCH_WORKSPACE_TIMEOUT)
+            .is_none());
+    } else {
+        fixture.niri().layout.focus_output(&view_output);
+        fixture.niri().layout.switch_workspace(view_index);
+    }
+    fixture
+        .client(client_id)
+        .window(&surface)
+        .attach_new_buffer();
+    fixture
+        .client(client_id)
+        .window(&surface)
+        .ack_last_and_commit();
+    fixture.double_roundtrip(client_id);
+
+    let (mapped_id, mapped_workspace, urgent) = fixture
+        .niri()
+        .layout
+        .workspaces()
+        .find_map(|(_, _, workspace)| {
+            workspace.windows().find_map(|mapped| {
+                with_toplevel_role(mapped.toplevel(), |role| {
+                    (role.title.as_deref() == Some("launch-test")).then_some((
+                        mapped.id(),
+                        workspace.id(),
+                        mapped.is_urgent(),
+                    ))
+                })
+            })
+        })
+        .unwrap();
+    let expected_workspace = if expire_before_map {
+        view_workspace
+    } else {
+        open_on_workspace
+            .map(|_| {
+                fixture
+                    .niri()
+                    .layout
+                    .find_workspace_by_name("ws-rule")
+                    .unwrap()
+                    .1
+                    .id()
+            })
+            .unwrap_or(launch_workspace)
+    };
+    assert_eq!(mapped_workspace, expected_workspace);
+    if has_launch && !expire_before_map {
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            view_workspace
+        );
+        assert_eq!(fixture.niri().layout.focus().unwrap().id(), anchor_id);
+        assert!(urgent);
+    } else {
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            expected_workspace
+        );
+        assert_eq!(fixture.niri().layout.focus().unwrap().id(), mapped_id);
+        assert!(!urgent);
+    }
+
+    if has_launch && open_on_workspace.is_some() && !expire_before_map {
+        fixture.niri().layout.focus_output(&launch_output);
+        fixture.niri().layout.switch_workspace(launch_index);
+        <crate::niri::State as smithay::wayland::xdg_activation::XdgActivationHandler>::request_activation(
+            fixture.niri_state(),
+            activation_token,
+            activation_data,
+            server_surface,
+        );
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            launch_workspace
+        );
+        assert!(fixture.niri().layout.focus().is_none());
+    }
+}
+
 fn check_target_output_and_workspace(
     open_on_workspace: Option<&str>,
     open_on_output: Option<&str>,

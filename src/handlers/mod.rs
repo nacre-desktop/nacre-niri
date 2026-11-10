@@ -777,7 +777,7 @@ impl XdgActivationHandler for State {
         &mut self.niri.activation_state
     }
 
-    fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+    fn token_created(&mut self, token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
         // Tokens without a serial are urgency-only. This is not specified, but it seems to be the
         // common client behavior.
         //
@@ -805,12 +805,20 @@ impl XdgActivationHandler for State {
         // Check the serial against both a keyboard and a pointer, since layer-shell surfaces
         // with no keyboard interactivity won't have any keyboard focus.
         let kb_last_enter = seat.get_keyboard().unwrap().last_enter();
-        if kb_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
-            return true;
-        }
-
+        let keyboard_valid =
+            kb_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter));
         let pointer_last_enter = seat.get_pointer().unwrap().last_enter();
-        if pointer_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
+        let pointer_valid =
+            pointer_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter));
+        if keyboard_valid || pointer_valid {
+            if let Some(workspace) = self.niri.layout.active_workspace().map(|ws| ws.id()) {
+                self.niri.launch_tracker.prepare(
+                    token.as_str().to_owned(),
+                    None,
+                    workspace,
+                    std::time::Instant::now(),
+                );
+            }
             return true;
         }
 
@@ -823,18 +831,68 @@ impl XdgActivationHandler for State {
         token_data: XdgActivationTokenData,
         surface: WlSurface,
     ) {
-        if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
+        let now = std::time::Instant::now();
+        let launch_intent = self.niri.launch_tracker.peek_token(token.as_str(), now);
+        let mapped_window = self
+            .niri
+            .layout
+            .find_window_and_output(&surface)
+            .map(|(mapped, _)| {
+                (
+                    mapped.window.clone(),
+                    mapped.launch_token.clone(),
+                    mapped.id(),
+                )
+            });
+        let mapped_launch_token = mapped_window
+            .as_ref()
+            .and_then(|(_, token, _)| token.clone());
+        let mapped_destination = self.niri.layout.workspaces().find_map(|(_, _, workspace)| {
+            workspace.find_wl_surface(&surface).map(|_| workspace.id())
+        });
+        let mapped_window_is_focused = mapped_window.as_ref().is_some_and(|(_, _, id)| {
+            self.niri
+                .layout
+                .focus()
+                .is_some_and(|focused| focused.id() == *id)
+        });
+        let active_workspace = self.niri.layout.active_workspace().map(|ws| ws.id());
+        let late_activation = mapped_launch_token.as_deref() == Some(token.as_str())
+            && self
+                .niri
+                .launch_tracker
+                .token_was_consumed(token.as_str(), now)
+            && mapped_destination.map_or(!mapped_window_is_focused, |destination| {
+                crate::launch::suppress_late_activation(true, Some(destination), active_workspace)
+            });
+        if late_activation {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface) {
-                let window = mapped.window.clone();
+                mapped.set_urgent(true);
+                self.niri.queue_redraw_all();
+            }
+        } else if let Some((window, _, _)) = mapped_window {
+            if launch_intent.is_some() {
+                self.niri.launch_tracker.discard_token(token.as_str(), now);
+            }
+            if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
                 if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
-                    mapped.set_urgent(true);
+                    if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface)
+                    {
+                        mapped.set_urgent(true);
+                    }
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.activate_window(&window);
                     self.niri.layer_shell_on_demand_focus = None;
                     self.niri.queue_redraw_all();
                 }
-            } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
+            }
+        } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
+            if let Some(intent) = launch_intent {
+                unmapped.launch_token = Some(intent.token);
+                unmapped.launch_workspace_id = Some(intent.workspace);
+            }
+            if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
                 unmapped.activation_token_data = Some(token_data);
             }
         }

@@ -13,6 +13,10 @@ pub struct Unmapped {
     pub state: InitialConfigureState,
     /// Activation token, if one was used on this unmapped window.
     pub activation_token_data: Option<XdgActivationTokenData>,
+    /// Workspace captured for this launch intent, when this is an eligible root window.
+    pub launch_workspace_id: Option<WorkspaceId>,
+    /// Launch token to consume only if this eligible toplevel maps in time.
+    pub launch_token: Option<String>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -91,6 +95,8 @@ impl Unmapped {
                 wants_maximized: false,
             },
             activation_token_data: None,
+            launch_workspace_id: None,
+            launch_token: None,
         }
     }
 

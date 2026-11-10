@@ -16,6 +16,8 @@ pub(crate) mod frame_trace;
 pub mod handlers;
 pub mod input;
 pub mod ipc;
+mod launch;
+mod launch_process;
 pub mod layer;
 pub mod layout;
 pub mod niri;

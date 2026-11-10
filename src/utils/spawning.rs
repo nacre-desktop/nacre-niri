@@ -11,6 +11,7 @@ use libc::{getrlimit, rlim_t, rlimit, setrlimit, RLIMIT_NOFILE};
 use niri_config::Environment;
 use smithay::wayland::xdg_activation::XdgActivationToken;
 
+use crate::launch_process::LaunchGate;
 use crate::utils::expand_home;
 
 pub static REMOVE_ENV_RUST_BACKTRACE: AtomicBool = AtomicBool::new(false);
@@ -64,6 +65,14 @@ pub fn restore_nofile_rlimit() {
 
 /// Spawns the command to run independently of the compositor.
 pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<XdgActivationToken>) {
+    spawn_with_launch(command, token, None);
+}
+
+pub fn spawn_with_launch<T: AsRef<OsStr> + Send + 'static>(
+    command: Vec<T>,
+    token: Option<XdgActivationToken>,
+    gate: Option<LaunchGate>,
+) {
     let _span = tracy_client::span!();
 
     if command.is_empty() {
@@ -75,7 +84,7 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<Xd
         .name("Command Spawner".to_owned())
         .spawn(move || {
             let (command, args) = command.split_first().unwrap();
-            spawn_sync(command, args, token);
+            spawn_sync(command, args, token, gate);
         });
 
     if let Err(err) = res {
@@ -93,10 +102,23 @@ pub fn spawn_sh(command: String, token: Option<XdgActivationToken>) {
     spawn(vec![String::from("sh"), String::from("-c"), command], token);
 }
 
+pub fn spawn_sh_with_launch(
+    command: String,
+    token: Option<XdgActivationToken>,
+    gate: Option<LaunchGate>,
+) {
+    spawn_with_launch(
+        vec![String::from("sh"), String::from("-c"), command],
+        token,
+        gate,
+    );
+}
+
 fn spawn_sync(
     command: impl AsRef<OsStr>,
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     token: Option<XdgActivationToken>,
+    gate: Option<LaunchGate>,
 ) {
     let _span = tracy_client::span!();
 
@@ -156,7 +178,7 @@ fn spawn_sync(
 
     unsafe { process.pre_exec(crate::utils::signals::unblock_all) };
 
-    let Some(mut child) = do_spawn(command, process) else {
+    let Some(mut child) = do_spawn(command, process, gate) else {
         return;
     };
 
@@ -173,7 +195,7 @@ fn spawn_sync(
 }
 
 #[cfg(not(feature = "systemd"))]
-fn do_spawn(command: &OsStr, mut process: Command) -> Option<Child> {
+fn do_spawn(command: &OsStr, mut process: Command, gate: Option<LaunchGate>) -> Option<Child> {
     unsafe {
         // Double-fork to avoid having to waitpid the child.
         process.pre_exec(move || {
@@ -184,6 +206,10 @@ fn do_spawn(command: &OsStr, mut process: Command) -> Option<Child> {
             }
 
             restore_nofile_rlimit();
+
+            if let Some(gate) = &gate {
+                gate.wait_in_child();
+            }
 
             Ok(())
         });
@@ -213,7 +239,11 @@ mod systemd {
 
     use super::*;
 
-    pub fn do_spawn(command: &OsStr, mut process: Command) -> Option<Child> {
+    pub fn do_spawn(
+        command: &OsStr,
+        mut process: Command,
+        gate: Option<LaunchGate>,
+    ) -> Option<Child> {
         #[cfg(target_env = "gnu")]
         use libc::close_range;
         #[cfg(target_os = "openbsd")]
@@ -323,6 +353,10 @@ mod systemd {
                 }
 
                 restore_nofile_rlimit();
+
+                if let Some(gate) = &gate {
+                    gate.wait_in_child();
+                }
 
                 Ok(())
             });

@@ -50,6 +50,8 @@ use crate::utils::{
 #[derive(Debug)]
 pub struct Mapped {
     pub window: Window,
+    /// Activation token associated with this fresh launch, for late-activation handling.
+    pub launch_token: Option<String>,
 
     /// Unique ID of this `Mapped`.
     id: MappedId,
@@ -292,6 +294,7 @@ impl Mapped {
         rules.proportional_x11_widths = false;
         let mut rv = Self {
             window,
+            launch_token: None,
             id: MappedId::next(),
             credentials,
             pre_commit_hook: hook,

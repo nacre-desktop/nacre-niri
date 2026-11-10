@@ -85,6 +85,8 @@ impl CompositorHandler for State {
                         window,
                         state,
                         activation_token_data,
+                        launch_token,
+                        ..
                     } = entry.remove();
 
                     window.on_commit();
@@ -99,6 +101,7 @@ impl CompositorHandler for State {
                         output,
                         workspace_id,
                         is_pending_maximized,
+                        launch_workspace_id,
                     ) = if let InitialConfigureState::Configured {
                         rules,
                         width,
@@ -117,10 +120,47 @@ impl CompositorHandler for State {
                             output.filter(|o| self.niri.layout.monitor_for_output(o).is_some());
 
                         // Check that the workspace still exists.
+                        let is_satellite =
+                            crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface());
+                        let client_pid = (launch_token.is_some() && !is_satellite)
+                            .then(|| {
+                                crate::utils::get_credentials_for_surface(toplevel.wl_surface())
+                            })
+                            .flatten()
+                            .map(|credentials| credentials.pid);
+                        let existing_native_window = client_pid.is_some_and(|pid| {
+                            self.niri.layout.windows().any(|(_, mapped)| {
+                                !mapped.is_xwayland_satellite()
+                                    && mapped
+                                        .credentials()
+                                        .is_some_and(|credentials| credentials.pid == pid)
+                            })
+                        });
+                        let launch_workspace_id = if existing_native_window {
+                            if let Some(token) = launch_token.as_deref() {
+                                self.niri
+                                    .launch_tracker
+                                    .discard_token(token, std::time::Instant::now());
+                            }
+                            None
+                        } else if toplevel.parent().is_none() {
+                            launch_token.as_deref().and_then(|token| {
+                                let now = std::time::Instant::now();
+                                let intent = self.niri.launch_tracker.peek_token(token, now)?;
+                                self.niri.layout.find_workspace_by_id(intent.workspace)?;
+                                self.niri
+                                    .launch_tracker
+                                    .take_token(token, now)
+                                    .map(|intent| intent.workspace)
+                            })
+                        } else {
+                            None
+                        };
                         let workspace_id = if rules.open_on_workspace.is_none()
                             && rules.open_on_output.is_none()
                         {
-                            persisted_workspace_id
+                            launch_workspace_id
+                                .or(persisted_workspace_id)
                                 .filter(|id| self.niri.layout.find_workspace_by_id(*id).is_some())
                         } else {
                             None
@@ -140,6 +180,7 @@ impl CompositorHandler for State {
                             output,
                             workspace_id,
                             is_pending_maximized,
+                            launch_workspace_id,
                         )
                     } else {
                         // Can happen when a surface unmaps by attaching a null buffer while
@@ -153,6 +194,7 @@ impl CompositorHandler for State {
                             None,
                             None,
                             false,
+                            None,
                         )
                     };
 
@@ -162,6 +204,32 @@ impl CompositorHandler for State {
                     let is_pinned = self.niri.config.borrow().nacre.window_pinning
                         && rules.open_pinned == Some(true);
                     let is_floating = is_pinned || rules.compute_open_floating(toplevel);
+                    let parent = toplevel
+                        .parent()
+                        .and_then(|parent| self.niri.layout.find_window_and_output(&parent))
+                        // Only consider the parent if we configured the window for the same
+                        // output. Normally a parent-following dialog has no configured output.
+                        .filter(|(_, parent_output)| {
+                            parent_output.is_none()
+                                || output.is_none()
+                                || output.as_ref() == *parent_output
+                        })
+                        .map(|(mapped, _)| mapped.window.clone());
+                    let destination_workspace = workspace_id.or_else(|| {
+                        output.as_ref().and_then(|output| {
+                            self.niri
+                                .layout
+                                .monitor_for_output(output)
+                                .map(|monitor| monitor.active_workspace_ref().id())
+                        })
+                    });
+                    let off_view = launch_workspace_id.is_some()
+                        && parent.is_none()
+                        && crate::launch::launch_is_off_view(
+                            destination_workspace,
+                            self.niri.layout.active_workspace().map(|ws| ws.id()),
+                        );
+                    let launch_workspace_off_view = off_view;
 
                     // Figure out if we should activate the window.
                     let activate = rules.open_focused.map(|focus| {
@@ -171,47 +239,36 @@ impl CompositorHandler for State {
                             ActivateWindow::No
                         }
                     });
-                    let activate = activate.unwrap_or_else(|| {
-                        // Check the token timestamp again in case the window took a while between
-                        // requesting activation and mapping.
-                        let token = activation_token_data.filter(|token| {
-                            token.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
-                        });
-                        if token.is_some() {
-                            ActivateWindow::Yes
-                        } else {
-                            let config = self.niri.config.borrow();
-                            if config.debug.strict_new_window_focus_policy {
-                                ActivateWindow::No
+                    let activate = if off_view {
+                        ActivateWindow::No
+                    } else {
+                        activate.unwrap_or_else(|| {
+                            // Check the token timestamp again in case the window took a while
+                            // between requesting activation and mapping.
+                            let token = activation_token_data.filter(|token| {
+                                token.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
+                            });
+                            if token.is_some() {
+                                ActivateWindow::Yes
                             } else {
-                                ActivateWindow::Smart
+                                let config = self.niri.config.borrow();
+                                if config.debug.strict_new_window_focus_policy {
+                                    ActivateWindow::No
+                                } else {
+                                    ActivateWindow::Smart
+                                }
                             }
-                        }
-                    });
-
-                    let parent = toplevel
-                        .parent()
-                        .and_then(|parent| self.niri.layout.find_window_and_output(&parent))
-                        // Only consider the parent if we configured the window for the same
-                        // output.
-                        //
-                        // Normally when we're following the parent, the configured output will be
-                        // None. If the configured output is set, that means it was set explicitly
-                        // by a window rule or a fullscreen request.
-                        .filter(|(_, parent_output)| {
-                            parent_output.is_none()
-                                || output.is_none()
-                                || output.as_ref() == *parent_output
                         })
-                        .map(|(mapped, _)| mapped.window.clone());
+                    };
 
                     // The mapped pre-commit hook deals with dma-bufs on its own.
                     self.remove_default_dmabuf_pre_commit_hook(surface);
                     let hook = add_mapped_toplevel_pre_commit_hook(toplevel);
-                    let mapped = {
+                    let mut mapped = {
                         let config = self.niri.config.borrow();
                         Mapped::new(window, rules, hook, &config)
                     };
+                    mapped.launch_token = launch_workspace_id.and(launch_token);
                     let window = mapped.window.clone();
 
                     let target = if let Some(p) = &parent {
@@ -234,6 +291,13 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
+                    if launch_workspace_off_view {
+                        if let Some((mapped, _)) =
+                            self.niri.layout.find_window_and_output_mut(surface)
+                        {
+                            mapped.set_urgent(true);
+                        }
+                    }
                     // The window state cannot contain Fullscreen and Maximized at once. Therefore,
                     // if the window ended up fullscreen, then we only know that it is also
                     // maximized from the is_pending_maximized variable. Tell the layout about it

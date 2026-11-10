@@ -13,4 +13,5 @@ These documents describe fork-specific behavior and integration contracts. They 
 ## Historical and integration notes
 
 - [Nacre integration boundary](NN0002-nacre-integration.md) records the shell/compositor integration scope.
+- [Launch workspace affinity](launch-workspace.md) records NN0025's bounded launch tracking and placement policy.
 - [Workaround sweep](NN0017-workaround-sweep.md) is a dated historical snapshot; consult the current contracts above for supported behavior.

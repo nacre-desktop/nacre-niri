@@ -1074,6 +1074,54 @@ impl State {
         rules.proportional_x11_widths = config.nacre.proportional_x11_widths
             && crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface());
 
+        let has_parent = toplevel.parent().is_some();
+        let launch_workspace_id = if !has_parent {
+            unmapped.launch_workspace_id.or_else(|| {
+                if crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface())
+                    || self.niri.launch_tracker.is_empty()
+                {
+                    return None;
+                }
+                let credentials = crate::utils::get_credentials_for_surface(toplevel.wl_surface())?;
+                let now = std::time::Instant::now();
+                let environ = std::fs::read(format!("/proc/{}/environ", credentials.pid)).ok();
+                if let Some(intent) = environ
+                    .as_deref()
+                    .into_iter()
+                    .flat_map(crate::launch::launch_tokens_from_environ)
+                    .find_map(|token| self.niri.launch_tracker.peek_token(token, now))
+                {
+                    unmapped.launch_token = Some(intent.token.clone());
+                    return Some(intent.workspace);
+                }
+                let cgroup =
+                    std::fs::read_to_string(format!("/proc/{}/cgroup", credentials.pid)).ok();
+                let unit = cgroup.as_deref().and_then(|cgroup| {
+                    cgroup
+                        .lines()
+                        .filter_map(|line| line.rsplit('/').next())
+                        .find(|name| {
+                            name.len() <= 255
+                                && (name.ends_with(".service") || name.ends_with(".scope"))
+                        })
+                });
+                if let Some(intent) =
+                    unit.and_then(|unit| self.niri.launch_tracker.peek_unit(unit, now))
+                {
+                    unmapped.launch_token = Some(intent.token.clone());
+                    return Some(intent.workspace);
+                }
+                let ancestry =
+                    crate::launch_process::ancestry(u32::try_from(credentials.pid).ok()?);
+                let intent = self.niri.launch_tracker.peek_process(&ancestry, now)?;
+                unmapped.launch_token = Some(intent.token.clone());
+                Some(intent.workspace)
+            })
+        } else {
+            None
+        };
+        unmapped.launch_workspace_id = launch_workspace_id;
+
         let Unmapped { window, state, .. } = unmapped;
 
         let InitialConfigureState::NotConfigured {
@@ -1172,7 +1220,7 @@ impl State {
             } else {
                 None
             };
-        let ws = explicit_workspace
+        let fallback_ws = explicit_workspace
             .or_else(|| {
                 persisted_workspace_id
                     .and_then(|id| self.niri.layout.find_workspace_by_id(id).map(|(_, ws)| ws))
@@ -1181,6 +1229,13 @@ impl State {
                 mon.map(|mon| mon.active_workspace_ref())
                     .or_else(|| self.niri.layout.active_workspace())
             });
+        let launch_ws = if rules.open_on_workspace.is_none() && rules.open_on_output.is_none() {
+            launch_workspace_id
+                .and_then(|id| self.niri.layout.find_workspace_by_id(id).map(|(_, ws)| ws))
+        } else {
+            None
+        };
+        let ws = launch_ws.or(fallback_ws);
 
         let mut is_pending_maximized = false;
         if let Some(ws) = ws {
@@ -1234,7 +1289,7 @@ impl State {
             floating_height,
             is_full_width,
             output,
-            workspace_name: ws.and_then(|w| w.name().cloned()),
+            workspace_name: fallback_ws.and_then(|w| w.name().cloned()),
             persisted_workspace_id,
             is_pending_maximized,
         };

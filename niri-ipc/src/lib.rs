@@ -69,6 +69,13 @@ pub enum Request {
     Version,
     /// Request the active Nacre native capabilities.
     NacreCapabilities,
+    /// Capture the active workspace for a newly launched application.
+    NacrePrepareLaunch {
+        /// Optional transient systemd unit that identifies the launched process.
+        unit: Option<String>,
+        /// Existing launch token whose unit should be bound without recapturing.
+        launch_token: Option<String>,
+    },
     /// Request information about connected outputs.
     Outputs,
     /// Request information about workspaces.
@@ -163,6 +170,11 @@ pub enum Response {
     Version(String),
     /// Active Nacre native capabilities.
     NacreCapabilities(NacreCapabilities),
+    /// Opaque token identifying a prepared application launch.
+    NacreLaunchToken {
+        /// The xdg-activation token for the prepared launch.
+        token: String,
+    },
     /// Information about connected outputs.
     ///
     /// Map from output name to output info.
@@ -226,6 +238,9 @@ pub struct NacreCapabilities {
     /// Hidden windows can be restored to their original workspace.
     #[serde(default)]
     pub window_restore: bool,
+    /// Launch workspace tracking is available.
+    #[serde(default)]
+    pub launch_workspace: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -2360,10 +2375,11 @@ mod tests {
             force_close: true,
             monitor_workspace_actions: true,
             window_restore: true,
+            launch_workspace: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true}}}"#,
         );
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,

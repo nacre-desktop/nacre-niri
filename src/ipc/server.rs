@@ -690,6 +690,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     monitor_workspace_actions: config.nacre.monitor_workspace_actions
                         && config.layout.collections.enabled,
                     window_restore: config.nacre.window_restore && config.nacre.scratchpad,
+                    launch_workspace: true,
                 });
             });
             let capabilities = rx
@@ -697,6 +698,43 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 .await
                 .map_err(|_| String::from("error getting Nacre capabilities"))?;
             Response::NacreCapabilities(capabilities)
+        }
+        Request::NacrePrepareLaunch { unit, launch_token } => {
+            if unit.as_ref().is_some_and(|unit| unit.len() > 255) {
+                return Err(String::from("launch unit name exceeds 255 bytes"));
+            }
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let now = std::time::Instant::now();
+                if let Some(token) = launch_token.as_deref() {
+                    let reusable = if let Some(unit) = unit {
+                        state.niri.launch_tracker.bind_unit(token, unit, now)
+                    } else {
+                        state.niri.launch_tracker.peek_token(token, now).is_some()
+                    };
+                    let _ = tx.send_blocking(reusable.then(|| token.to_owned()));
+                    return;
+                }
+                let Some(workspace) = state.niri.layout.active_workspace().map(|ws| ws.id()) else {
+                    let _ = tx.send_blocking(None);
+                    return;
+                };
+                let (token, _) = state.niri.activation_state.create_external_token(None);
+                let token = token.as_str().to_owned();
+                state
+                    .niri
+                    .launch_tracker
+                    .prepare(token.clone(), unit, workspace, now);
+                let _ = tx.send_blocking(Some(token));
+            });
+            match rx
+                .recv()
+                .await
+                .map_err(|_| String::from("error preparing launch"))?
+            {
+                Some(token) => Response::NacreLaunchToken { token },
+                None => return Err(String::from("no active workspace or launch intent to bind")),
+            }
         }
         Request::Outputs => {
             let ipc_outputs = ctx.ipc_outputs.lock().unwrap().clone();
