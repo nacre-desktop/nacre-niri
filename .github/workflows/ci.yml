@@ -11,7 +11,7 @@ env:
   DEPS_APT: curl gcc clang libudev-dev libgbm-dev libxkbcommon-dev libegl1-mesa-dev libwayland-dev libinput-dev libdbus-1-dev libsystemd-dev libseat-dev libpipewire-0.3-dev libpango1.0-dev libdisplay-info-dev
   DEPS_DNF: cargo gcc clang libudev-devel libgbm-devel libxkbcommon-devel wayland-devel libinput-devel dbus-devel systemd-devel libseat-devel pipewire-devel pango-devel cairo-gobject-devel libdisplay-info-devel
   DEPS_APK: cargo clang-libclang eudev-dev glib-dev libdisplay-info-dev libinput-dev libseat-dev libxkbcommon-dev mesa-dev pango-dev pipewire-dev tar
-  DEPS_PKG: git curl rust llvm pkgconf pixman libudev-devd libdisplay-info seatd libinput libxkbcommon pipewire mesa-libs cairo devel/glib20 gettext-runtime harfbuzz pango
+  DEPS_PKG: git curl rust llvm pkgconf meson ninja hwdata python3 pixman libudev-devd seatd libinput libxkbcommon pipewire mesa-libs cairo devel/glib20 gettext-runtime harfbuzz pango
 
 jobs:
   test:
@@ -274,13 +274,25 @@ jobs:
       - name: Build
         uses: vmactions/freebsd-vm@v1
         with:
-          release: "15.0"
+          release: "15.1"
           copyback: false
           prepare: |
             pkg update -f
             pkg install -y ${{ env.DEPS_PKG }}
           run: |
-            curl -o patch-pipewire_init 'https://cgit.freebsd.org/ports/plain/x11-wm/niri/files/patch-pipewire_init?id=cadf6784d264cf780b6e0ad59bd15b831d36cf80'
+            set -eu
+            curl --fail --location -o patch-pipewire_init 'https://raw.githubusercontent.com/freebsd/freebsd-ports/cadf6784d264cf780b6e0ad59bd15b831d36cf80/x11-wm/niri/files/patch-pipewire_init'
+
+            # The locked Rust bindings require libdisplay-info < 0.4.
+            curl --fail --location -o libdisplay-info.tar.bz2 'https://gitlab.freedesktop.org/emersion/libdisplay-info/-/archive/0.3.0/libdisplay-info-0.3.0.tar.bz2'
+            test "$(sha256 -q libdisplay-info.tar.bz2)" = '915cc6713b7b2e173a90f9db248fb8994f9668171fecc1e9fded5e36bb34d890'
+            tar -xf libdisplay-info.tar.bz2
+            libdisplay_info_prefix="$PWD/ci-libdisplay-info"
+            meson setup ci-libdisplay-info-build libdisplay-info-0.3.0 --prefix="$libdisplay_info_prefix" --buildtype=release
+            ninja -C ci-libdisplay-info-build -j2
+            ninja -C ci-libdisplay-info-build install
+            export PKG_CONFIG_PATH="$libdisplay_info_prefix/libdata/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+            test "$(pkg-config --modversion libdisplay-info)" = '0.3.0'
 
             export CARGO_HOME="$PWD/cargo-home"
 
@@ -288,7 +300,7 @@ jobs:
 
             ( cd $CARGO_HOME/registry/src/index.crates.io-*/; patch -p1 < $CARGO_HOME/../patch-pipewire_init; )
 
-            cargo build \
+            cargo build -j2 \
               --offline \
               --no-default-features --features dbus,xdp-gnome-screencast
 
