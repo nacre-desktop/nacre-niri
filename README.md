@@ -1,133 +1,50 @@
-<h1 align="center"><img alt="niri" src="https://github.com/user-attachments/assets/07d05cd0-d5dc-4a28-9a35-51bae8f119a0"></h1>
-<p align="center">A scrollable-tiling Wayland compositor.</p>
-<p align="center">
-    <a href="https://matrix.to/#/#niri:matrix.org"><img alt="Matrix" src="https://img.shields.io/badge/matrix-%23niri-blue?logo=matrix"></a>
-    <a href="https://github.com/niri-wm/niri/blob/main/LICENSE"><img alt="GitHub License" src="https://img.shields.io/github/license/niri-wm/niri"></a>
-    <a href="https://github.com/niri-wm/niri/releases"><img alt="GitHub Release" src="https://img.shields.io/github/v/release/niri-wm/niri?logo=github"></a>
-</p>
+# Nacre Niri
 
-<p align="center">
-    <a href="https://niri-wm.github.io/niri/Getting-Started.html">Getting Started</a> | <a href="https://niri-wm.github.io/niri/Configuration%3A-Introduction.html">Configuration</a> | <a href="https://github.com/niri-wm/niri/discussions/325">Setup&nbsp;Showcase</a>
-</p>
+Nacre Niri is Nacre's maintained fork of the [niri scrollable-tiling Wayland compositor](https://github.com/niri-wm/niri). It keeps niri's compositor architecture and adds native capabilities used by Nacre, including workspace collections and compositor protocols for Nacre/Bead surfaces. It is not a desktop shell; the Bead shell is maintained in the [Nacre repository](https://github.com/nacre-desktop/nacre).
 
-<img width="1280" height="720" alt="niri with a few windows open" src="https://github.com/user-attachments/assets/dea5909e-1859-4aaa-9d88-d37f9663e00b" />
+This fork is actively developed for Nacre and selectively tracks upstream niri. See the [fork-specific documentation index](docs/nacre/README.md) for current behavior and compatibility notes. General compositor documentation remains in the [upstream niri documentation](https://niri-wm.github.io/niri/).
 
-## About
+## What this fork adds
 
-Windows are arranged in columns on an infinite strip going to the right.
-Opening a new window never causes existing windows to resize.
+- Workspace collections with stable identities, independent stacks, and persistence.
+- Native layer-surface motion and promotion, scratchpad pinning, proportional widths and edge cues.
+- Native workspace overview geometry, GPU reveal, and input behavior for Nacre's shell integration.
 
-Every monitor has its own separate window strip.
-Windows can never "overflow" onto an adjacent monitor.
+These features are maintained in this fork; see the linked contracts for their current scope. This README does not imply complete parity with the latest upstream release.
 
-Workspaces are dynamic and arranged vertically.
-Every monitor has an independent set of workspaces, and there's always one empty workspace present all the way down.
+## Build
 
-The workspace arrangement is preserved across disconnecting and connecting monitors where it makes sense.
-When a monitor disconnects, its workspaces will move to another monitor, but upon reconnection they will move back to the original monitor.
+Build prerequisites and system libraries follow upstream niri's [development setup](https://github.com/niri-wm/niri/blob/main/CONTRIBUTING.md#development-setup). With those installed, build the compositor from this checkout:
 
-## Features
+```sh
+cargo build --release
+```
 
-- Built from the ground up for scrollable tiling
-- [Dynamic workspaces](https://niri-wm.github.io/niri/Workspaces.html) like in GNOME
-- An [Overview](https://github.com/user-attachments/assets/379a5d1f-acdb-4c11-b36c-e85fd91f0995) that zooms out workspaces and windows
-- Built-in screenshot UI
-- Monitor and window screencasting through xdg-desktop-portal-gnome
-    - You can [block out](https://niri-wm.github.io/niri/Configuration%3A-Window-Rules.html#block-out-from) sensitive windows from screencasts
-    - [Dynamic cast target](https://niri-wm.github.io/niri/Screencasting.html#dynamic-screencast-target) that can change what it shows on the go
-- [Touchpad](https://github.com/niri-wm/niri/assets/1794388/946a910e-9bec-4cd1-a923-4a9421707515) and [mouse](https://github.com/niri-wm/niri/assets/1794388/8464e65d-4bf2-44fa-8c8e-5883355bd000) gestures
-- Group windows into [tabs](https://niri-wm.github.io/niri/Tabs.html)
-- Configurable layout: gaps, borders, struts, window sizes
-- [Gradient borders](https://niri-wm.github.io/niri/Configuration%3A-Layout.html#gradients) with Oklab and Oklch support
-- [Background blur](https://niri-wm.github.io/niri/Window-Effects.html) for windows and layer-shell surfaces
-- [Animations](https://github.com/niri-wm/niri/assets/1794388/ce178da2-af9e-4c51-876f-8709c241d95e) with support for [custom shaders](https://github.com/niri-wm/niri/assets/1794388/27a238d6-0a22-4692-b794-30dc7a626fad)
-- Live-reloading config
-- Works with [screen readers](https://niri-wm.github.io/niri/Accessibility.html)
+The repository's [CI workflow](.github/workflows/ci.yml) documents the supported build and test commands and required Ubuntu packages.
 
-## Video Demo
+## Run
 
-https://github.com/niri-wm/niri/assets/1794388/bce834b0-f205-434e-a027-b373495f9729
+To inspect the command-line options without starting a compositor session:
 
-Also check out this video from Brodie Robertson that showcases a lot of the niri functionality: [Niri Is My New Favorite Wayland Compositor](https://youtu.be/DeYx2exm04M)
+```sh
+cargo run -- --help
+```
 
-## Status
+Niri is a Wayland compositor, not a complete desktop environment. To run it as a session, use the session and packaging instructions for your system; the upstream [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html) guide explains the compositor setup and safety considerations. The upstream [configuration guide](https://niri-wm.github.io/niri/Configuration%3A-Introduction.html) covers configuration shared with niri. Nacre-specific integration is documented under [`docs/nacre/`](docs/nacre/README.md).
 
-Niri is stable for day-to-day use and does most things expected of a Wayland compositor.
-Many people are daily-driving niri, and are happy to help in our [Matrix channel].
+## Repository layout
 
-Give it a try!
-Follow the instructions on the [Getting Started](https://niri-wm.github.io/niri/Getting-Started.html) page.
-Grab a desktop shell like [DankMaterialShell] or [Noctalia] (or build a more traditional setup): niri by itself is not a complete desktop environment.
-Also check out [awesome-niri], a list of niri-related links and projects.
+- `src/` — compositor implementation
+- `niri-config/`, `niri-ipc/` — configuration and IPC crates
+- `resources/` — protocol definitions and default configuration
+- `packaging/` — distribution and session packaging
+- `docs/wiki/` — upstream niri documentation retained with this fork
+- `docs/nacre/` — fork-specific behavior and compatibility contracts
 
-Here are some points you may have questions about:
+## Upstream and contributions
 
-- **Multi-monitor**: yes, a core part of the design from the very start. Mixed DPI works.
-- **Fractional scaling**: yes, plus all niri UI stays pixel-perfect.
-- **NVIDIA**: seems to work fine.
-- **Floating windows**: yes, starting from niri 25.01.
-- **Input devices**: niri supports tablets, touchpads, and touchscreens.
-You can map the tablet to a specific monitor, or use [OpenTabletDriver].
-We have touchpad gestures, but no touchscreen gestures yet.
-- **Wlr protocols**: yes, we have most of the important ones like layer-shell, gamma-control, screencopy.
-You can check on [wayland.app](https://wayland.app) at the bottom of each protocol's page.
-- **Performance**: while I run niri on beefy machines, I try to stay conscious of performance.
-I've seen someone use it fine on an Eee PC 900 from 2008, of all things.
-- **Xwayland**: [integrated](https://niri-wm.github.io/niri/Xwayland.html#using-xwayland-satellite) via xwayland-satellite starting from niri 25.08.
+This project is a fork of [niri-wm/niri](https://github.com/niri-wm/niri), created by Ivan Molodetskikh. The upstream project and its contributors retain their attribution and credit; consult upstream [niri](https://github.com/niri-wm/niri) for general project information and documentation. This fork tracks upstream selectively to preserve its Nacre integration. Fork-specific behavior is documented under [`docs/nacre/`](docs/nacre/README.md).
 
-## Media
+## License
 
-[niri: Making a Wayland compositor in Rust](https://youtu.be/Kmz8ODolnDg?list=PLRdS-n5seLRqrmWDQY4KDqtRMfIwU0U3T) · *December 2024*
-
-My talk from the 2024 Moscow RustCon about niri, and how I do randomized property testing and profiling, and measure input latency.
-The talk is in Russian, but I prepared full English subtitles that you can find in YouTube's subtitle language selector.
-
-[An interview with Ivan, the developer behind Niri](https://www.trommelspeicher.de/podcast/special_the_developer_behind_niri) · *June 2025*
-
-An interview by a German tech podcast Das Triumvirat (in English).
-We talk about niri development and history, and my experience building and maintaining niri.
-
-[A tour of the niri scrolling-tiling Wayland compositor](https://lwn.net/Articles/1025866/) · *July 2025*
-
-An LWN article with a nice overview and introduction to niri.
-
-## Contributing
-
-If you'd like to help with niri, there are plenty of both coding- and non-coding-related ways to do so.
-See [CONTRIBUTING.md](https://github.com/niri-wm/niri/blob/main/CONTRIBUTING.md) for an overview.
-
-## Inspiration
-
-Niri is heavily inspired by [PaperWM] which implements scrollable tiling on top of GNOME Shell.
-
-One of the reasons that prompted me to try writing my own compositor is being able to properly separate the monitors.
-Being a GNOME Shell extension, PaperWM has to work against Shell's global window coordinate space to prevent windows from overflowing.
-
-## Tile Scrollably Elsewhere
-
-Here are some other projects which implement a similar workflow:
-
-- [PaperWM]: scrollable tiling on top of GNOME Shell.
-- [karousel]: scrollable tiling on top of KDE.
-- [scroll](https://github.com/dawsers/scroll) and [papersway]: scrollable tiling on top of sway/i3.
-- Hyprland has a built-in [scrolling layout](https://wiki.hypr.land/Configuring/Scrolling-Layout/).
-- [Paneru] and [PaperWM.spoon]: scrollable tiling on top of macOS.
-
-## Contact
-
-Our main communication channel is a Matrix chat, feel free to join and ask a question: https://matrix.to/#/#niri:matrix.org
-
-We also have a community Discord server: https://discord.gg/vT8Sfjy7sx
-
-[PaperWM]: https://github.com/paperwm/PaperWM
-[waybar]: https://github.com/Alexays/Waybar
-[fuzzel]: https://codeberg.org/dnkl/fuzzel
-[awesome-niri]: https://github.com/niri-wm/awesome-niri
-[karousel]: https://github.com/peterfajdiga/karousel
-[papersway]: https://spwhitton.name/tech/code/papersway/
-[Paneru]: https://github.com/karinushka/paneru
-[PaperWM.spoon]: https://github.com/mogenson/PaperWM.spoon
-[Matrix channel]: https://matrix.to/#/#niri:matrix.org
-[OpenTabletDriver]: https://opentabletdriver.net/
-[DankMaterialShell]: https://danklinux.com/
-[Noctalia]: https://noctalia.dev/
+GPL-3.0-or-later, in the same license family as upstream; see [`LICENSE`](LICENSE). Vendored Bead protocol definitions retain their MIT notices in [`docs/nacre/licenses/`](docs/nacre/licenses/).

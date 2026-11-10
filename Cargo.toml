@@ -7,11 +7,11 @@ members = [
 
 [workspace.package]
 version = "26.4.0"
-description = "A scrollable-tiling Wayland compositor"
+description = "Nacre's niri compositor fork with native Nacre desktop features."
 authors = ["Ivan Molodetskikh <yalterz@gmail.com>"]
 license = "GPL-3.0-or-later"
 edition = "2021"
-repository = "https://github.com/niri-wm/niri"
+repository = "https://github.com/nacre-desktop/nacre-niri"
 rust-version = "1.85"
 
 [workspace.dependencies]
