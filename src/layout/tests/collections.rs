@@ -821,6 +821,7 @@ fn overview_hover_selects_visible_workspace_without_moving_camera() {
     add_window(&mut layout, 2);
     Op::FocusWorkspaceUp.apply(&mut layout);
     layout.open_overview();
+    Op::CompleteAnimations.apply(&mut layout);
     let camera = layout.monitors().next().unwrap().workspace_render_idx();
 
     assert!(layout.activate_window_without_scrolling(&2));
@@ -846,6 +847,7 @@ fn overview_hover_works_when_collections_are_disabled() {
     add_window(&mut layout, 2);
     Op::FocusWorkspaceUp.apply(&mut layout);
     layout.open_overview();
+    Op::CompleteAnimations.apply(&mut layout);
     let camera = layout.monitors().next().unwrap().workspace_render_idx();
 
     assert!(layout.activate_window_without_scrolling(&2));
@@ -867,6 +869,7 @@ fn disabling_overview_hover_clears_hover_camera_state() {
     add_window(&mut layout, 2);
     Op::FocusWorkspaceUp.apply(&mut layout);
     layout.open_overview();
+    Op::CompleteAnimations.apply(&mut layout);
     assert!(layout.activate_window_without_scrolling(&2));
     assert!(matches!(
         layout.monitors().next().unwrap().workspace_switch.as_ref(),

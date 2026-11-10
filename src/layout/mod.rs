@@ -2081,8 +2081,10 @@ impl<W: LayoutElement> Layout<W> {
         }
         for (monitor_idx, mon) in monitors.iter_mut().enumerate() {
             let active_workspace = mon.active_workspace_idx();
+            let workspace_switching =
+                matches!(mon.workspace_switch, Some(WorkspaceSwitch::Animation(_)));
             for (workspace_idx, ws) in mon.workspaces.iter_mut().enumerate() {
-                if !overview && workspace_idx != active_workspace {
+                if (!overview || workspace_switching) && workspace_idx != active_workspace {
                     continue;
                 }
                 if ws.activate_window_without_scrolling(window) {

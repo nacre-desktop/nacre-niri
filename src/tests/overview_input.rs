@@ -22,6 +22,18 @@ fn fixture() -> Fixture {
     fixture
 }
 
+fn set_time(niri: &mut crate::niri::Niri, time: std::time::Duration) {
+    let now = niri.clock.now();
+    niri.clock.set_unadjusted(now);
+    let _ = niri.clock.now();
+    niri.clock.set_unadjusted(std::time::Duration::ZERO);
+    niri.clock.set_rate(1.0);
+    let _ = niri.clock.now();
+    niri.clock.set_unadjusted(time);
+    let _ = niri.clock.now();
+    niri.clock.set_rate(0.0);
+}
+
 fn create_window(fixture: &mut Fixture, client: ClientId) -> WlSurface {
     let surface = {
         let window = fixture.client(client).create_window();
@@ -209,5 +221,127 @@ fn overview_click_on_shown_and_side_windows_selects_and_closes_overview() {
             assert!(!fixture.niri().layout.is_overview_open());
             assert_eq!(fixture.niri().layout.focus().unwrap().window, expected);
         }
+    }
+}
+
+#[test]
+fn overview_wheel_switch_survives_previous_row_hover() {
+    use std::time::Duration;
+
+    for down in [true, false] {
+        let mut fixture = fixture();
+        let client = fixture.add_client();
+        let output = fixture.niri_output(1);
+        fixture.niri().layout.focus_output(&output);
+
+        create_window(&mut fixture, client);
+        fixture.niri().layout.switch_workspace_down();
+        create_window(&mut fixture, client);
+        let middle_window = fixture.niri().layout.focus().unwrap().window.clone();
+        let middle_workspace = fixture
+            .niri()
+            .layout
+            .active_workspace()
+            .unwrap()
+            .id()
+            .clone();
+        fixture.niri().layout.switch_workspace_down();
+        create_window(&mut fixture, client);
+        let bottom_window = fixture.niri().layout.focus().unwrap().window.clone();
+        let bottom_workspace = fixture
+            .niri()
+            .layout
+            .active_workspace()
+            .unwrap()
+            .id()
+            .clone();
+
+        if down {
+            fixture.niri().layout.switch_workspace_up();
+            fixture.niri_complete_animations();
+        }
+        fixture.niri().layout.open_overview();
+        fixture.niri_complete_animations();
+        set_time(fixture.niri(), Duration::ZERO);
+
+        let target_window = if down {
+            bottom_window.clone()
+        } else {
+            middle_window.clone()
+        };
+        let target_workspace = if down {
+            bottom_workspace
+        } else {
+            middle_workspace
+        };
+        let previous_window = if down { middle_window } else { bottom_window };
+
+        let mode = output.current_mode().unwrap().size;
+        let pointer = fixture.client(client).create_virtual_pointer("headless-1");
+        pointer.motion_absolute(
+            1,
+            mode.w as u32 / 2,
+            mode.h as u32 / 2,
+            mode.w as u32,
+            mode.h as u32,
+        );
+        pointer.frame();
+        fixture.double_roundtrip(client);
+
+        let axis = wl_pointer::Axis::VerticalScroll;
+        fixture.state.server.dispatch();
+        assert!(fixture.niri().bind_cooldown_timers.is_empty());
+        pointer.axis_discrete(
+            2,
+            axis,
+            if down { 15.0 } else { -15.0 },
+            if down { 1 } else { -1 },
+        );
+        pointer.axis_source(wl_pointer::AxisSource::Wheel);
+        pointer.frame();
+        fixture.client(client).connection.flush().unwrap();
+        fixture.roundtrip(client);
+        set_time(fixture.niri(), Duration::from_millis(100));
+        fixture.niri().advance_animations();
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            target_workspace,
+            "wheel must select its target row"
+        );
+
+        let previous_point = hit_point(&mut fixture, 1, &previous_window);
+        move_pointer_to(&mut fixture, client, 1, previous_point);
+        assert_eq!(
+            fixture
+                .niri()
+                .window_under_cursor()
+                .map(|window| window.window.clone()),
+            Some(previous_window.clone()),
+            "pointer must hover the previous row"
+        );
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            target_workspace,
+            "hover over the row before the wheel must not retarget"
+        );
+        assert!(fixture.niri().layout.are_animations_ongoing(Some(&output)));
+
+        let target_point = hit_point(&mut fixture, 1, &target_window);
+        move_pointer_to(&mut fixture, client, 1, target_point);
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            target_workspace,
+            "same-row hover must preserve the wheel target"
+        );
+        assert!(fixture.niri().layout.are_animations_ongoing(Some(&output)));
+
+        set_time(fixture.niri(), Duration::from_secs(5));
+        fixture.niri().advance_animations();
+        assert!(!fixture.niri().layout.are_animations_ongoing(Some(&output)));
+        assert_eq!(
+            fixture.niri().layout.active_workspace().unwrap().id(),
+            target_workspace,
+            "wheel target must remain selected after the animation completes"
+        );
     }
 }

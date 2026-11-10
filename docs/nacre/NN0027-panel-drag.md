@@ -17,3 +17,7 @@ while a native layer move is active; screenshot mode retains cursor priority.
 Super+left-button input over a tiled window, client cursor override, movement,
 release and stale serial rejection. The input regression uses the compositor's
 virtual-pointer dispatch path so it exercises window selection before delivery.
+
+NN0027 and NN0028 acceptance uses the deterministic compositor tests and CI.
+2026-11-10: desktop captures deferred: host in use. No nested visual validation
+is claimed for these fixes.
