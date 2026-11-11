@@ -22,6 +22,7 @@ mod overview_preview_fidelity;
 mod overview_prewarm;
 mod overview_raster;
 mod remove_output;
+mod session_lock;
 mod transactions;
 mod window_opening;
 mod x11_widths;

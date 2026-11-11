@@ -16,6 +16,9 @@ use single_pixel_buffer::v1::client::wp_single_pixel_buffer_manager_v1::WpSingle
 use smithay::reexports::wayland_protocols::wp::single_pixel_buffer;
 use smithay::reexports::wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use smithay::reexports::wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::client::ext_session_lock_manager_v1::ExtSessionLockManagerV1;
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::client::ext_session_lock_v1::ExtSessionLockV1;
+use smithay::reexports::wayland_protocols::ext::session_lock::v1::client::ext_session_lock_v1;
 use smithay::reexports::wayland_protocols::xdg::shell::client::xdg_surface::{self, XdgSurface};
 use smithay::reexports::wayland_protocols::xdg::shell::client::xdg_toplevel::{self, XdgToplevel};
 use smithay::reexports::wayland_protocols::xdg::shell::client::xdg_wm_base::{self, XdgWmBase};
@@ -102,6 +105,7 @@ pub struct Client {
     pub qh: QueueHandle<State>,
     pub display: WlDisplay,
     pub state: State,
+    disconnected: bool,
 }
 
 pub struct State {
@@ -120,6 +124,8 @@ pub struct State {
     pub viewporter: Option<WpViewporter>,
     pub layer_motion_manager: Option<BeadLayerMotionManagerV1>,
     pub layer_promote_manager: Option<BeadLayerPromoteManagerV1>,
+    pub session_lock_manager: Option<ExtSessionLockManagerV1>,
+    pub session_lock_events: Vec<ext_session_lock_v1::Event>,
     pub seat: Option<WlSeat>,
     pub pointer: Option<WlPointer>,
     pub pointer_events: Vec<wl_pointer::Event>,
@@ -270,6 +276,8 @@ impl Client {
             viewporter: None,
             layer_motion_manager: None,
             layer_promote_manager: None,
+            session_lock_manager: None,
+            session_lock_events: Vec::new(),
             seat: None,
             pointer: None,
             pointer_events: Vec::new(),
@@ -287,6 +295,7 @@ impl Client {
             qh,
             display,
             state,
+            disconnected: false,
         }
     }
 
@@ -318,6 +327,9 @@ impl Client {
     }
 
     pub fn dispatch(&mut self) {
+        if self.disconnected {
+            return;
+        }
         self.event_loop
             .dispatch(Duration::ZERO, &mut self.state)
             .unwrap();
@@ -325,6 +337,10 @@ impl Client {
         if let Some(error) = self.connection.protocol_error() {
             panic!("{error}");
         }
+    }
+
+    pub fn mark_disconnected(&mut self) {
+        self.disconnected = true;
     }
 
     pub fn send_sync(&self) -> Arc<SyncData> {
@@ -382,6 +398,18 @@ impl Client {
             .unwrap()
             .0
             .clone()
+    }
+
+    pub fn request_session_lock(&self) -> ExtSessionLockV1 {
+        self.state
+            .session_lock_manager
+            .as_ref()
+            .expect("session lock manager global")
+            .lock(&self.qh, ())
+    }
+
+    pub fn take_session_lock_events(&mut self) -> Vec<ext_session_lock_v1::Event> {
+        std::mem::take(&mut self.state.session_lock_events)
     }
 }
 
@@ -738,6 +766,8 @@ impl Dispatch<WlRegistry, ()> for State {
                     let seat: WlSeat = registry.bind(name, min(version, 9), qh, ());
                     state.pointer = Some(seat.get_pointer(qh, ()));
                     state.seat = Some(seat);
+                } else if interface == ExtSessionLockManagerV1::interface().name {
+                    state.session_lock_manager = Some(registry.bind(name, min(version, 1), qh, ()));
                 } else if interface == BeadLayerPromoteManagerV1::interface().name {
                     state.layer_promote_manager = Some(registry.bind(name, 1, qh, ()));
                 } else if interface == BeadLayerMotionManagerV1::interface().name {
@@ -759,6 +789,31 @@ impl Dispatch<WlRegistry, ()> for State {
             wl_registry::Event::GlobalRemove { .. } => (),
             _ => unreachable!(),
         }
+    }
+}
+
+impl Dispatch<ExtSessionLockManagerV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &ExtSessionLockManagerV1,
+        _event: <ExtSessionLockManagerV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<ExtSessionLockV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &ExtSessionLockV1,
+        event: <ExtSessionLockV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        state.session_lock_events.push(event);
     }
 }
 

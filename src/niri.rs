@@ -399,6 +399,8 @@ pub struct Niri {
     pub mods_with_finger_scroll_binds: HashSet<Modifiers>,
 
     pub lock_state: LockState,
+    #[cfg(test)]
+    pub test_skip_lock_render: Option<Output>,
 
     // State that we last sent to the logind LockedHint.
     pub locked_hint: Option<bool>,
@@ -504,6 +506,7 @@ pub struct OutputState {
     pub backdrop_buffer: SolidColorBuffer,
     pub xray: Xray,
     pub lock_render_state: LockRenderState,
+    lock_retry: Option<RegistrationToken>,
     pub lock_surface: Option<LockSurface>,
     pub lock_color_buffer: SolidColorBuffer,
     screen_transition: Option<ScreenTransition>,
@@ -2782,6 +2785,8 @@ impl Niri {
             mods_with_finger_scroll_binds,
 
             lock_state: LockState::Unlocked,
+            #[cfg(test)]
+            test_skip_lock_render: None,
             locked_hint: None,
 
             screenshot_ui,
@@ -3116,7 +3121,7 @@ impl Niri {
 
         self.layout.add_output(output.clone(), layout_config);
 
-        let lock_render_state = if self.is_locked() {
+        let lock_render_state = if matches!(self.lock_state, LockState::Locked(_)) {
             // We haven't rendered anything yet so it's as good as locked.
             LockRenderState::Locked
         } else {
@@ -3136,6 +3141,7 @@ impl Niri {
             backdrop_buffer: SolidColorBuffer::new(size, backdrop_color),
             xray: Xray::new(),
             lock_render_state,
+            lock_retry: None,
             lock_surface: None,
             lock_color_buffer: SolidColorBuffer::new(size, CLEAR_COLOR_LOCKED),
             screen_transition: None,
@@ -3183,6 +3189,9 @@ impl Niri {
         self.gamma_control_manager_state.output_removed(output);
 
         let state = self.output_state.remove(output).unwrap();
+        if let Some(token) = state.lock_retry {
+            self.event_loop.remove(token);
+        }
 
         match state.redraw_state {
             RedrawState::Idle => (),
@@ -5080,7 +5089,7 @@ impl Niri {
         }
     }
 
-    fn redraw(&mut self, backend: &mut Backend, output: &Output) {
+    pub(crate) fn redraw(&mut self, backend: &mut Backend, output: &Output) {
         let _span = tracy_client::span!("Niri::redraw");
         let _frame_trace = crate::frame_trace::frame(output);
 
@@ -5140,7 +5149,13 @@ impl Niri {
 
             // Render.
             let _trace = crate::frame_trace::span("frame_render_submit");
-            res = backend.render(self, output, target_presentation_time);
+            #[cfg(test)]
+            let skip = self.is_locked() && self.test_skip_lock_render.as_ref() == Some(output);
+            #[cfg(not(test))]
+            let skip = false;
+            if !skip {
+                res = backend.render(self, output, target_presentation_time);
+            }
         }
 
         let is_locked = self.is_locked();
@@ -5173,8 +5188,33 @@ impl Niri {
         match mem::take(&mut self.lock_state) {
             LockState::Locking(confirmation) => {
                 if state.lock_render_state == LockRenderState::Unlocked {
-                    // We needed to render a locked frame on this output but failed.
-                    self.unlock();
+                    // Keep input/rendering locked and schedule a retry in 16 ms. A renderer
+                    // failure must never drop the unconfirmed locker (which sends finished).
+                    self.lock_state = LockState::Locking(confirmation);
+                    if state.lock_retry.is_none() {
+                        let output = output.clone();
+                        let token = self
+                            .event_loop
+                            .insert_source(
+                                Timer::from_duration(Duration::from_millis(16)),
+                                move |_, _, state| {
+                                    if let Some(output_state) =
+                                        state.niri.output_state.get_mut(&output)
+                                    {
+                                        output_state.lock_retry = None;
+                                        if output_state.lock_render_state
+                                            == LockRenderState::Unlocked
+                                            && state.niri.is_locked()
+                                        {
+                                            state.niri.queue_redraw(&output);
+                                        }
+                                    }
+                                    TimeoutAction::Drop
+                                },
+                            )
+                            .unwrap();
+                        state.lock_retry = Some(token);
+                    }
                 } else {
                     // Check if all outputs are now locked.
                     let all_locked = self
@@ -6400,13 +6440,30 @@ impl Niri {
     }
 
     pub fn lock(&mut self, confirmation: SessionLocker) {
-        // Check if another client is in the process of locking.
-        if matches!(
-            self.lock_state,
-            LockState::WaitingForSurfaces { .. } | LockState::Locking(_)
-        ) {
-            info!("refusing lock as another client is currently locking");
-            return;
+        // An acquisition whose owner died must be replaceable without exposing the session.
+        let acquiring = match &self.lock_state {
+            LockState::WaitingForSurfaces { confirmation, .. }
+            | LockState::Locking(confirmation) => Some(confirmation.ext_session_lock().is_alive()),
+            _ => None,
+        };
+        if let Some(alive) = acquiring {
+            if alive {
+                info!("refusing lock as another client is currently locking");
+                return;
+            }
+            if matches!(self.lock_state, LockState::WaitingForSurfaces { .. }) {
+                self.continue_to_locking();
+            }
+            if matches!(self.lock_state, LockState::Locking(_)) {
+                for state in self.output_state.values_mut() {
+                    state.lock_surface = None;
+                }
+                self.lock_state = LockState::Locking(confirmation);
+                self.queue_redraw_all();
+                return;
+            }
+            // With no outputs, continue_to_locking() completed the old acquisition. The
+            // established dead-owner path below can confirm the replacement immediately.
         }
 
         // Check if we're already locked with an active client.
@@ -6484,7 +6541,7 @@ impl Niri {
         self.continue_to_locking();
     }
 
-    fn continue_to_locking(&mut self) {
+    pub(crate) fn continue_to_locking(&mut self) {
         match mem::take(&mut self.lock_state) {
             LockState::WaitingForSurfaces {
                 confirmation,
