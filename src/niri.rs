@@ -6676,8 +6676,8 @@ impl Niri {
             LockState::Locked(lock) => lock,
         };
 
-        if lock.client() != surface.wl_surface().client() {
-            debug!("ignoring lock surface from an unrelated client");
+        if lock != surface.ext_session_lock() {
+            debug!("ignoring lock surface from an unrelated lock instance");
             return;
         }
 

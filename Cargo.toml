@@ -27,14 +27,15 @@ tracy-client = { version = "0.18.4", default-features = false }
 
 [workspace.dependencies.smithay]
 # version = "0.4.1"
-git = "https://github.com/Smithay/smithay.git"
-rev = "ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef"
+# NN0030: ff5fa7df plus upstream session-lock fixes 8d33fec901, 70f04625a9, fea33c8f16.
+git = "https://github.com/nacre-desktop/smithay.git"
+rev = "088a4795f209947897c811917b2f618232fa3dc1"
 default-features = false
 
 [workspace.dependencies.smithay-drm-extras]
 # version = "0.1.0"
-git = "https://github.com/Smithay/smithay.git"
-rev = "ff5fa7df392cecfba049ffed55cdaa4e98a8e7ef"
+git = "https://github.com/nacre-desktop/smithay.git"
+rev = "088a4795f209947897c811917b2f618232fa3dc1"
 # path = "../smithay/smithay-drm-extras"
 
 [package]

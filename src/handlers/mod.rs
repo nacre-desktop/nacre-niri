@@ -474,7 +474,7 @@ impl SessionLockHandler for State {
     }
 
     fn unlock(&mut self) {
-        // Smithay posts InvalidUnlock before locked, but still invokes this handler.
+        // Keep acquisition closed even if this handler is called before locked.
         if !matches!(self.niri.lock_state, crate::niri::LockState::Locked(_)) {
             return;
         }

@@ -45,6 +45,50 @@ fn assert_locked_event(events: &[ext_session_lock_v1::Event]) {
 }
 
 #[test]
+fn refused_client_cannot_unlock_another_clients_session() {
+    let mut f = fixture(1);
+    let first = f.add_client();
+    let second = f.add_client();
+    let output = f.niri_output(1);
+    let owner = lock_request(&mut f, first);
+    f.niri_state().niri.continue_to_locking();
+    redraw(&mut f, &output);
+    assert_locked_event(&events(&mut f, first));
+    let owning_lock = match &f.niri().lock_state {
+        crate::niri::LockState::Locked(lock) => lock.clone(),
+        _ => panic!("the owner must hold an established lock"),
+    };
+
+    let refused = lock_request(&mut f, second);
+    let refused_events = events(&mut f, second);
+    assert!(refused_events
+        .iter()
+        .any(|event| matches!(event, ext_session_lock_v1::Event::Finished)));
+    assert!(!refused_events
+        .iter()
+        .any(|event| matches!(event, ext_session_lock_v1::Event::Locked)));
+
+    refused.unlock_and_destroy();
+    f.client(second).connection.flush().unwrap();
+    // The invalid request disconnects B. Do not dispatch its expected protocol error
+    // through the fixture's client loop, which treats protocol errors as test failures.
+    f.client(second).mark_disconnected();
+    dispatch_without_redraw(&mut f);
+    assert!(
+        matches!(&f.niri().lock_state, crate::niri::LockState::Locked(lock) if lock == &owning_lock),
+        "the refused client must leave the established owner locked"
+    );
+
+    owner.unlock_and_destroy();
+    f.client(first).connection.flush().unwrap();
+    f.roundtrip(first);
+    assert!(matches!(
+        f.niri().lock_state,
+        crate::niri::LockState::Unlocked
+    ));
+}
+
+#[test]
 fn skipped_locked_render_keeps_acquisition_locked_and_retries() {
     let mut f = fixture(1);
     let id = f.add_client();
@@ -271,9 +315,16 @@ fn dead_established_lock_can_still_be_taken_over() {
     kill_lock_owner(&mut f);
     finish_client_death(&mut f, first);
     assert!(f.niri().is_locked());
-    let _replacement = lock_request(&mut f, second);
+    let replacement = lock_request(&mut f, second);
     assert_locked_event(&events(&mut f, second));
     assert!(f.niri().is_locked());
+    replacement.unlock_and_destroy();
+    f.client(second).connection.flush().unwrap();
+    f.roundtrip(second);
+    assert!(matches!(
+        f.niri().lock_state,
+        crate::niri::LockState::Unlocked
+    ));
 }
 
 #[test]
