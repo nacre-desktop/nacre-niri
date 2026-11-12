@@ -11,6 +11,7 @@ These documents describe fork-specific behavior and integration contracts. They 
 - [Overview geometry](NN0012-overview-geometry.md), [GPU reveal](NN0016-gpu-reveal.md), and [overview input](NN0022-overview-input.md)
 - [Fail-closed session-lock acquisition](NN0029-lock-fail-closed.md)
 - [Session-lock owner checks from upstream Smithay](NN0030-smithay-session-lock.md)
+- [Lock readiness notifications for suspend](NN0031-lock-notify.md)
 
 ## Historical and integration notes
 

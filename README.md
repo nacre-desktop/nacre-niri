@@ -9,6 +9,7 @@ This fork is actively developed for Nacre and selectively tracks upstream niri. 
 - Workspace collections with stable identities, independent stacks, and persistence.
 - Native layer-surface motion and promotion, scratchpad pinning, proportional widths and edge cues.
 - Native workspace overview geometry, GPU reveal, and input behavior for Nacre's shell integration.
+- [Lock readiness notifications](docs/nacre/NN0031-lock-notify.md) let hypridle delay suspend until every output is locked and drawn.
 
 These features are maintained in this fork; see the linked contracts for their current scope. This README does not imply complete parity with the latest upstream release.
 
@@ -47,4 +48,4 @@ This project is a fork of [niri-wm/niri](https://github.com/niri-wm/niri), creat
 
 ## License
 
-GPL-3.0-or-later, in the same license family as upstream; see [`LICENSE`](LICENSE). Vendored Bead protocol definitions retain their MIT notices in [`docs/nacre/licenses/`](docs/nacre/licenses/).
+GPL-3.0-or-later, in the same license family as upstream; see [`LICENSE`](LICENSE). Vendored Bead and hyprland-protocols definitions retain their license notices in [`docs/nacre/licenses/`](docs/nacre/licenses/).

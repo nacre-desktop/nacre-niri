@@ -1,3 +1,6 @@
+use std::os::fd::AsFd as _;
+use std::os::unix::net::UnixStream;
+
 use smithay::output::Output;
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::client::ext_session_lock_v1;
 use smithay::reexports::wayland_protocols::ext::session_lock::v1::client::ext_session_lock_v1::ExtSessionLockV1;
@@ -30,6 +33,39 @@ fn redraw(f: &mut Fixture, output: &Output) {
 fn events(f: &mut Fixture, id: super::client::ClientId) -> Vec<ext_session_lock_v1::Event> {
     f.roundtrip(id);
     f.client(id).take_session_lock_events()
+}
+
+fn lock_notification_events(
+    f: &mut Fixture,
+    id: super::client::ClientId,
+) -> Vec<super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event> {
+    f.roundtrip(id);
+    f.client(id).take_lock_notification_events()
+}
+
+fn add_restricted_client(f: &mut Fixture) -> super::client::ClientId {
+    let (server_stream, client_stream) = UnixStream::pair().unwrap();
+    f.niri().insert_client(crate::niri::NewClient {
+        client: server_stream,
+        restricted: true,
+        credentials_unknown: false,
+        is_xwayland_satellite: false,
+    });
+    let client = super::client::Client::new(client_stream);
+    let id = client.id;
+    let fd = client.event_loop.as_fd().try_clone_to_owned().unwrap();
+    f.handle
+        .insert_source(
+            calloop::generic::Generic::new(fd, calloop::Interest::READ, calloop::Mode::Level),
+            move |_, _, state: &mut super::fixture::State| {
+                state.client(id).dispatch();
+                Ok(calloop::PostAction::Continue)
+            },
+        )
+        .unwrap();
+    f.state.clients.push(client);
+    f.roundtrip(id);
+    id
 }
 
 fn assert_locked_event(events: &[ext_session_lock_v1::Event]) {
@@ -144,8 +180,119 @@ fn all_outputs_need_locked_frames_before_locked_event() {
 }
 
 #[test]
+fn lock_notify_waits_for_every_output_and_emits_once() {
+    let mut f = fixture(2);
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
+    let owner = f.add_client();
+    let output_1 = f.niri_output(1);
+    let output_2 = f.niri_output(2);
+    f.niri_state().niri.test_skip_lock_render = Some(output_1.clone());
+    let _lock = lock_request(&mut f, owner);
+    f.niri_state().niri.continue_to_locking();
+
+    redraw(&mut f, &output_1);
+    redraw(&mut f, &output_2);
+    assert!(lock_notification_events(&mut f, observer).is_empty());
+
+    f.niri_state().niri.test_skip_lock_render = None;
+    redraw(&mut f, &output_1);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event::Locked]
+    ));
+    redraw(&mut f, &output_2);
+    assert!(lock_notification_events(&mut f, observer).is_empty());
+}
+
+#[test]
+fn lock_notify_reports_lock_unlock_lock_once_each() {
+    use super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event;
+
+    let mut f = fixture(1);
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
+    let owner = f.add_client();
+    let output = f.niri_output(1);
+
+    let lock = lock_request(&mut f, owner);
+    f.niri_state().niri.continue_to_locking();
+    redraw(&mut f, &output);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
+    lock.unlock_and_destroy();
+    f.client(owner).connection.flush().unwrap();
+    f.roundtrip(owner);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Unlocked]
+    ));
+
+    let _lock = lock_request(&mut f, owner);
+    f.niri_state().niri.continue_to_locking();
+    redraw(&mut f, &output);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
+}
+
+#[test]
+fn lock_notify_late_subscriber_gets_current_locked_state() {
+    use super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event;
+
+    let mut f = fixture(1);
+    let owner = f.add_client();
+    let output = f.niri_output(1);
+    let _lock = lock_request(&mut f, owner);
+    f.niri_state().niri.continue_to_locking();
+    redraw(&mut f, &output);
+
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
+}
+
+#[test]
+fn lock_notify_reports_no_output_lock_immediately() {
+    use super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event;
+
+    let mut f = fixture(0);
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
+    let owner = f.add_client();
+    let _lock = lock_request(&mut f, owner);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
+}
+
+#[test]
+fn lock_notify_global_is_not_advertised_to_restricted_clients() {
+    let mut f = fixture(0);
+    let unrestricted = f.add_client();
+    assert!(f.client(unrestricted).state.lock_notifier.is_some());
+    let restricted = add_restricted_client(&mut f);
+    assert!(f.client(restricted).state.lock_notifier.is_none());
+    assert!(!f
+        .client(restricted)
+        .state
+        .globals
+        .iter()
+        .any(|global| { global.interface == "hyprland_lock_notifier_v1" }));
+}
+
+#[test]
 fn removing_failed_output_can_finish_lock_acquisition() {
     let mut f = fixture(2);
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
     let id = f.add_client();
     let failed_output = f.niri_output(1);
     let remaining_output = f.niri_output(2);
@@ -160,7 +307,35 @@ fn removing_failed_output_can_finish_lock_acquisition() {
 
     f.niri().remove_output(&failed_output);
     assert_locked_event(&events(&mut f, id));
+    use super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event;
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
     assert!(f.niri().is_locked());
+}
+
+#[test]
+fn destroyed_lock_notification_receives_no_later_events() {
+    let mut f = fixture(1);
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
+    f.client(observer)
+        .state
+        .lock_notifications
+        .last()
+        .unwrap()
+        .notification
+        .destroy();
+    f.client(observer).connection.flush().unwrap();
+    f.roundtrip(observer);
+
+    let owner = f.add_client();
+    let output = f.niri_output(1);
+    let _lock = lock_request(&mut f, owner);
+    f.niri_state().niri.continue_to_locking();
+    redraw(&mut f, &output);
+    assert!(lock_notification_events(&mut f, observer).is_empty());
 }
 
 #[test]
@@ -306,21 +481,33 @@ fn dead_established_lock_can_still_be_taken_over() {
     let mut f = fixture(1);
     let first = f.add_client();
     let second = f.add_client();
+    let observer = f.add_client();
+    f.client(observer).request_lock_notification();
     let output = f.niri_output(1);
     let _lock = lock_request(&mut f, first);
     f.niri_state().niri.continue_to_locking();
     redraw(&mut f, &output);
     assert_locked_event(&events(&mut f, first));
+    use super::client::hyprland_lock_notify::v1::client::hyprland_lock_notification_v1::Event;
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Locked]
+    ));
 
     kill_lock_owner(&mut f);
     finish_client_death(&mut f, first);
     assert!(f.niri().is_locked());
     let replacement = lock_request(&mut f, second);
     assert_locked_event(&events(&mut f, second));
+    assert!(lock_notification_events(&mut f, observer).is_empty());
     assert!(f.niri().is_locked());
     replacement.unlock_and_destroy();
     f.client(second).connection.flush().unwrap();
     f.roundtrip(second);
+    assert!(matches!(
+        lock_notification_events(&mut f, observer).as_slice(),
+        [Event::Unlocked]
+    ));
     assert!(matches!(
         f.niri().lock_state,
         crate::niri::LockState::Unlocked

@@ -50,6 +50,7 @@ package() {
   install -Dm755 "$srcdir/target/release/niri" "$pkgdir/usr/bin/nacre-niri"
   install -Dm755 "$srcdir/nacre-niri-session" "$pkgdir/usr/bin/nacre-niri-session"
   install -Dm644 "$srcdir/nacre-niri-fork.desktop" "$pkgdir/usr/share/wayland-sessions/nacre-niri-fork.desktop"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" docs/nacre/licenses/*.txt
   install -Dm644 resources/niri.service "$pkgdir/usr/lib/systemd/user/nacre-niri.service"
   install -Dm644 resources/niri-shutdown.target "$pkgdir/usr/lib/systemd/user/nacre-niri-shutdown.target"
   sed -i 's/^Description=.*/Description=Shutdown running nacre-niri session/' "$pkgdir/usr/lib/systemd/user/nacre-niri-shutdown.target"

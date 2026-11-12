@@ -87,12 +87,36 @@ pub mod bead_layer_promote {
     }
 }
 
+pub mod hyprland_lock_notify {
+    pub mod v1 {
+        pub mod client {
+            #![allow(dead_code, non_camel_case_types, unused_unsafe, unused_variables)]
+            #![allow(non_upper_case_globals, non_snake_case, unused_imports)]
+            #![allow(missing_docs, clippy::all)]
+
+            use wayland_client;
+            use wayland_client::protocol::*;
+
+            pub mod __interfaces {
+                use wayland_client::protocol::__interfaces::*;
+                wayland_scanner::generate_interfaces!("resources/hyprland-lock-notify-v1.xml");
+            }
+            use self::__interfaces::*;
+
+            wayland_scanner::generate_client_code!("resources/hyprland-lock-notify-v1.xml");
+        }
+    }
+}
+
 use bead_layer_motion::v1::client::{bead_layer_motion_manager_v1, bead_layer_motion_v1};
 use bead_layer_motion_manager_v1::BeadLayerMotionManagerV1;
 use bead_layer_motion_v1::BeadLayerMotionV1;
 use bead_layer_promote::v1::client::{bead_layer_promote_manager_v1, bead_layer_promote_v1};
 use bead_layer_promote_manager_v1::BeadLayerPromoteManagerV1;
 use bead_layer_promote_v1::BeadLayerPromoteV1;
+use hyprland_lock_notification_v1::HyprlandLockNotificationV1;
+use hyprland_lock_notifier_v1::HyprlandLockNotifierV1;
+use hyprland_lock_notify::v1::client::{hyprland_lock_notification_v1, hyprland_lock_notifier_v1};
 use wayland_client::protocol::wl_pointer::{self, WlPointer};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 
@@ -126,6 +150,8 @@ pub struct State {
     pub layer_promote_manager: Option<BeadLayerPromoteManagerV1>,
     pub session_lock_manager: Option<ExtSessionLockManagerV1>,
     pub session_lock_events: Vec<ext_session_lock_v1::Event>,
+    pub lock_notifier: Option<HyprlandLockNotifierV1>,
+    pub lock_notifications: Vec<LockNotification>,
     pub seat: Option<WlSeat>,
     pub pointer: Option<WlPointer>,
     pub pointer_events: Vec<wl_pointer::Event>,
@@ -147,6 +173,11 @@ pub struct LayerMotionController {
     pub surface: WlSurface,
     pub motion: BeadLayerMotionV1,
     pub events: Vec<bead_layer_motion_v1::Event>,
+}
+
+pub struct LockNotification {
+    pub notification: HyprlandLockNotificationV1,
+    pub events: Vec<hyprland_lock_notification_v1::Event>,
 }
 
 pub struct Window {
@@ -278,6 +309,8 @@ impl Client {
             layer_promote_manager: None,
             session_lock_manager: None,
             session_lock_events: Vec::new(),
+            lock_notifier: None,
+            lock_notifications: Vec::new(),
             seat: None,
             pointer: None,
             pointer_events: Vec::new(),
@@ -406,6 +439,28 @@ impl Client {
             .as_ref()
             .expect("session lock manager global")
             .lock(&self.qh, ())
+    }
+
+    pub fn request_lock_notification(&mut self) -> &mut LockNotification {
+        let notification = self
+            .state
+            .lock_notifier
+            .as_ref()
+            .expect("lock notifier global")
+            .get_lock_notification(&self.qh, ());
+        self.state.lock_notifications.push(LockNotification {
+            notification,
+            events: Vec::new(),
+        });
+        self.state.lock_notifications.last_mut().unwrap()
+    }
+
+    pub fn take_lock_notification_events(&mut self) -> Vec<hyprland_lock_notification_v1::Event> {
+        self.state
+            .lock_notifications
+            .iter_mut()
+            .flat_map(|notification| std::mem::take(&mut notification.events))
+            .collect()
     }
 
     pub fn take_session_lock_events(&mut self) -> Vec<ext_session_lock_v1::Event> {
@@ -768,6 +823,8 @@ impl Dispatch<WlRegistry, ()> for State {
                     state.seat = Some(seat);
                 } else if interface == ExtSessionLockManagerV1::interface().name {
                     state.session_lock_manager = Some(registry.bind(name, min(version, 1), qh, ()));
+                } else if interface == HyprlandLockNotifierV1::interface().name {
+                    state.lock_notifier = Some(registry.bind(name, min(version, 1), qh, ()));
                 } else if interface == BeadLayerPromoteManagerV1::interface().name {
                     state.layer_promote_manager = Some(registry.bind(name, 1, qh, ()));
                 } else if interface == BeadLayerMotionManagerV1::interface().name {
@@ -801,6 +858,36 @@ impl Dispatch<ExtSessionLockManagerV1, ()> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+    }
+}
+
+impl Dispatch<HyprlandLockNotifierV1, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &HyprlandLockNotifierV1,
+        _event: <HyprlandLockNotifierV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<HyprlandLockNotificationV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        proxy: &HyprlandLockNotificationV1,
+        event: <HyprlandLockNotificationV1 as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        let notification = state
+            .lock_notifications
+            .iter_mut()
+            .find(|notification| notification.notification == *proxy)
+            .expect("lock notification proxy tracked by fixture");
+        notification.events.push(event);
     }
 }
 

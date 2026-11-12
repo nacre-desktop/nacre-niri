@@ -149,6 +149,7 @@ use crate::niri_render_elements;
 use crate::protocols::ext_workspace::{self, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{self, ForeignToplevelManagerState};
 use crate::protocols::gamma_control::GammaControlManagerState;
+use crate::protocols::hyprland_lock_notify::HyprlandLockNotifyState;
 use crate::protocols::layer_motion::{
     LayerMotionHandler, LayerMotionManagerState, LayerMotionRuntime,
 };
@@ -323,6 +324,7 @@ pub struct Niri {
     pub gamma_control_manager_state: GammaControlManagerState,
     pub activation_state: XdgActivationState,
     pub mutter_x11_interop_state: MutterX11InteropManagerState,
+    pub lock_notify_state: HyprlandLockNotifyState,
 
     // This will not work as is outside of tests, so it is gated with #[cfg(test)] for now. In
     // particular, shaders will need to learn about the single pixel buffer. Also, it must be
@@ -2534,6 +2536,8 @@ impl Niri {
 
         let mutter_x11_interop_state =
             MutterX11InteropManagerState::new::<State, _>(&display_handle, move |_| true);
+        let lock_notify_state =
+            HyprlandLockNotifyState::new::<State, _>(&display_handle, client_is_unrestricted);
 
         #[cfg(test)]
         let single_pixel_buffer_state = SinglePixelBufferState::new::<State>(&display_handle);
@@ -2744,6 +2748,7 @@ impl Niri {
             gamma_control_manager_state,
             activation_state,
             mutter_x11_interop_state,
+            lock_notify_state,
             #[cfg(test)]
             single_pixel_buffer_state,
 
@@ -3232,7 +3237,7 @@ impl Niri {
                 if all_locked {
                     let lock = confirmation.ext_session_lock().clone();
                     confirmation.lock();
-                    self.lock_state = LockState::Locked(lock);
+                    self.enter_locked(lock);
                 } else {
                     // Still waiting.
                     self.lock_state = LockState::Locking(confirmation);
@@ -5226,7 +5231,7 @@ impl Niri {
                         // All outputs are locked, report success.
                         let lock = confirmation.ext_session_lock().clone();
                         confirmation.lock();
-                        self.lock_state = LockState::Locked(lock);
+                        self.enter_locked(lock);
                     } else {
                         // Still waiting for other outputs.
                         self.lock_state = LockState::Locking(confirmation);
@@ -6480,7 +6485,7 @@ impl Niri {
             // can lock right away.
             let lock = confirmation.ext_session_lock().clone();
             confirmation.lock();
-            self.lock_state = LockState::Locked(lock);
+            self.enter_locked(lock);
 
             return;
         }
@@ -6495,7 +6500,7 @@ impl Niri {
 
             let lock = confirmation.ext_session_lock().clone();
             confirmation.lock();
-            self.lock_state = LockState::Locked(lock);
+            self.enter_locked(lock);
         } else {
             // There are outputs which we need to redraw before locking. But before we do that,
             // let's wait for the lock surfaces.
@@ -6558,7 +6563,7 @@ impl Niri {
                     // There are no outputs, lock the session right away.
                     let lock = confirmation.ext_session_lock().clone();
                     confirmation.lock();
-                    self.lock_state = LockState::Locked(lock);
+                    self.enter_locked(lock);
                 } else {
                     // There are outputs which we need to redraw before locking.
                     self.lock_state = LockState::Locking(confirmation);
@@ -6572,12 +6577,25 @@ impl Niri {
         }
     }
 
+    fn enter_locked(&mut self, lock: ExtSessionLockV1) {
+        let was_locked = matches!(self.lock_state, LockState::Locked(_));
+        self.lock_state = LockState::Locked(lock);
+        if !was_locked {
+            trace!("session lock is locked");
+            self.lock_notify_state.notify(true);
+        }
+    }
+
     pub fn unlock(&mut self) {
         info!("unlocking session");
 
         let prev = mem::take(&mut self.lock_state);
-        if let LockState::WaitingForSurfaces { deadline_token, .. } = prev {
-            self.event_loop.remove(deadline_token);
+        match prev {
+            LockState::Locked(_) => self.lock_notify_state.notify(false),
+            LockState::WaitingForSurfaces { deadline_token, .. } => {
+                self.event_loop.remove(deadline_token);
+            }
+            _ => (),
         }
 
         for output_state in self.output_state.values_mut() {
