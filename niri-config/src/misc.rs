@@ -20,6 +20,7 @@ pub struct Cursor {
     pub xcursor_size: u8,
     pub hide_when_typing: bool,
     pub hide_after_inactive_ms: Option<u32>,
+    pub shake_to_enlarge: bool,
 }
 
 impl Default for Cursor {
@@ -29,6 +30,7 @@ impl Default for Cursor {
             xcursor_size: 24,
             hide_when_typing: false,
             hide_after_inactive_ms: None,
+            shake_to_enlarge: false,
         }
     }
 }
@@ -43,6 +45,8 @@ pub struct CursorPart {
     pub hide_when_typing: Option<Flag>,
     #[knuffel(child, unwrap(argument))]
     pub hide_after_inactive_ms: Option<u32>,
+    #[knuffel(child)]
+    pub shake_to_enlarge: Option<Flag>,
 }
 
 impl MergeWith<CursorPart> for Cursor {
@@ -50,6 +54,7 @@ impl MergeWith<CursorPart> for Cursor {
         merge_clone!((self, part), xcursor_theme, xcursor_size);
         merge!((self, part), hide_when_typing);
         merge_clone_opt!((self, part), hide_after_inactive_ms);
+        merge!((self, part), shake_to_enlarge);
     }
 }
 

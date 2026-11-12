@@ -352,6 +352,7 @@ pub struct Niri {
     pub xkb_from_locale1: Option<Xkb>,
 
     pub cursor_manager: CursorManager,
+    pub cursor_shake: crate::cursor_shake::CursorShake,
     pub cursor_texture_cache: CursorTextureCache,
     pub cursor_shape_manager_state: CursorShapeManagerState,
     pub dnd_icon: Option<DndIcon>,
@@ -2760,6 +2761,7 @@ impl Niri {
             keyboard_shortcuts_inhibiting_surfaces: HashMap::new(),
             xkb_from_locale1: None,
             cursor_manager,
+            cursor_shake: Default::default(),
             cursor_texture_cache: Default::default(),
             cursor_shape_manager_state,
             dnd_icon: None,
@@ -4103,6 +4105,7 @@ impl Niri {
 
         // Get the render cursor to draw.
         let cursor_scale = output_scale.integer_scale();
+        let shake_scale = self.cursor_shake.scale(self.start_time.elapsed());
         let render_cursor = self.cursor_manager.get_render_cursor(cursor_scale);
 
         let output_scale = Scale::from(output.current_scale().fractional_scale());
@@ -4110,8 +4113,8 @@ impl Niri {
         match render_cursor {
             RenderCursor::Hidden => (),
             RenderCursor::Surface { surface, hotspot } => {
-                let pointer_pos =
-                    (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+                let pointer_pos = (pointer_pos - hotspot.to_f64().upscale(shake_scale))
+                    .to_physical_precise_round(output_scale);
 
                 push_elements_from_surface_tree(
                     renderer,
@@ -4120,7 +4123,12 @@ impl Niri {
                     output_scale,
                     1.,
                     Kind::Cursor,
-                    &mut |elem| push(elem.into()),
+                    &mut |elem| {
+                        push(
+                            RescaleRenderElement::from_element(elem, Point::default(), shake_scale)
+                                .into(),
+                        )
+                    },
                 );
             }
             RenderCursor::Named {
@@ -4129,9 +4137,11 @@ impl Niri {
                 cursor,
             } => {
                 let (idx, frame) = cursor.frame(self.start_time.elapsed().as_millis() as u32);
-                let hotspot = XCursor::hotspot(frame).to_logical(scale);
-                let pointer_pos =
-                    (pointer_pos - hotspot.to_f64()).to_physical_precise_round(output_scale);
+                let hotspot = XCursor::hotspot(frame)
+                    .to_logical(scale)
+                    .to_f64()
+                    .upscale(shake_scale);
+                let pointer_pos = (pointer_pos - hotspot).to_physical_precise_round(output_scale);
 
                 let texture = self.cursor_texture_cache.get(icon, scale, &cursor, idx);
                 match MemoryRenderBufferRenderElement::from_buffer(
@@ -4143,7 +4153,10 @@ impl Niri {
                     None,
                     Kind::Cursor,
                 ) {
-                    Ok(element) => push(element.into()),
+                    Ok(element) => push(
+                        RescaleRenderElement::from_element(element, Point::default(), shake_scale)
+                            .into(),
+                    ),
                     Err(err) => {
                         warn!("error importing a cursor texture: {err:?}");
                     }
@@ -5143,6 +5156,8 @@ impl Niri {
             state.unfinished_animations_remain |= self
                 .cursor_manager
                 .is_current_cursor_animated(output.current_scale().integer_scale());
+            state.unfinished_animations_remain |=
+                self.cursor_shake.animating(self.start_time.elapsed());
 
             // Also check layer surfaces.
             if !state.unfinished_animations_remain {
@@ -7193,6 +7208,8 @@ niri_render_elements! {
     PointerRenderElements<R> => {
         Wayland = WaylandSurfaceRenderElement<R>,
         NamedPointer = MemoryRenderBufferRenderElement<R>,
+        RescaledWayland = RescaleRenderElement<WaylandSurfaceRenderElement<R>>,
+        RescaledNamedPointer = RescaleRenderElement<MemoryRenderBufferRenderElement<R>>,
     }
 }
 

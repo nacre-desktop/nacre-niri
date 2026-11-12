@@ -2614,6 +2614,14 @@ impl State {
         // We have an output, so we can compute the new location and focus.
         let mut new_pos = pos + event.delta();
 
+        self.niri.cursor_shake.motion(
+            new_pos.x,
+            new_pos.y,
+            event.time_msec(),
+            self.niri.start_time.elapsed(),
+            self.niri.config.borrow().cursor.shake_to_enlarge,
+        );
+
         // We received an event for the regular pointer, so show it now.
         self.niri.pointer_visibility = PointerVisibility::Visible;
         self.niri.tablet_cursor_location = None;

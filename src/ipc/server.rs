@@ -691,6 +691,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                         && config.layout.collections.enabled,
                     window_restore: config.nacre.window_restore && config.nacre.scratchpad,
                     launch_workspace: true,
+                    cursor_shake: true,
                 });
             });
             let capabilities = rx

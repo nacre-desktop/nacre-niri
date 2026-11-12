@@ -10,6 +10,7 @@ This fork is actively developed for Nacre and selectively tracks upstream niri. 
 - Native layer-surface motion and promotion, scratchpad pinning, proportional widths and edge cues.
 - Native workspace overview geometry, GPU reveal, and input behavior for Nacre's shell integration.
 - [Lock readiness notifications](docs/nacre/NN0031-lock-notify.md) let hypridle delay suspend until every output is locked and drawn.
+- Shake-to-enlarge cursor detection is enabled with `cursor { shake-to-enlarge }`.
 
 These features are maintained in this fork; see the linked contracts for their current scope. This README does not imply complete parity with the latest upstream release.
 

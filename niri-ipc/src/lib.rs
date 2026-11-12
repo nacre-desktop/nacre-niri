@@ -241,6 +241,9 @@ pub struct NacreCapabilities {
     /// Launch workspace tracking is available.
     #[serde(default)]
     pub launch_workspace: bool,
+    /// Shake cursor enlargement is implemented by this compositor build.
+    #[serde(default)]
+    pub cursor_shake: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -2376,10 +2379,11 @@ mod tests {
             monitor_workspace_actions: true,
             window_restore: true,
             launch_workspace: true,
+            cursor_shake: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true,"cursor_shake":true}}}"#,
         );
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
@@ -2391,6 +2395,7 @@ mod tests {
         assert!(!old_capabilities.force_close);
         assert!(!old_capabilities.monitor_workspace_actions);
         assert!(!old_capabilities.window_restore);
+        assert!(!old_capabilities.cursor_shake);
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,

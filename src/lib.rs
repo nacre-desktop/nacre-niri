@@ -8,6 +8,7 @@ pub mod backend;
 pub mod cli;
 pub(crate) mod collection_state_writer;
 pub mod cursor;
+pub mod cursor_shake;
 #[cfg(feature = "dbus")]
 pub mod dbus;
 pub(crate) mod edge_triggers;

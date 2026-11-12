@@ -654,6 +654,16 @@ mod tests {
     }
 
     #[test]
+    fn cursor_shake_to_enlarge_defaults_off_and_parses_flag() {
+        assert!(!do_parse("").cursor.shake_to_enlarge);
+        assert!(
+            do_parse("cursor {\n    shake-to-enlarge\n}")
+                .cursor
+                .shake_to_enlarge
+        );
+    }
+
+    #[test]
     fn collections_default_enabled_and_decode_names() {
         let config = do_parse("");
         assert!(config.layout.collections.enabled);
@@ -1792,6 +1802,7 @@ mod tests {
                 hide_after_inactive_ms: Some(
                     3000,
                 ),
+                shake_to_enlarge: false,
             },
             screenshot_path: ScreenshotPath(
                 Some(
