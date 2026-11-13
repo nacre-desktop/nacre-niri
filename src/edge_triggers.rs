@@ -1,5 +1,6 @@
 //! Pure edge geometry and gating used by native pointer edge triggers.
 
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
@@ -608,6 +609,26 @@ pub(crate) struct EdgeTriggerCandidate {
     last_cue_progress: Option<f64>,
 }
 
+/// Runs on every pointer motion: borrow the global config and clone only for an output override.
+fn edge_triggers_for_output<'a>(
+    config: &'a niri_config::Config,
+    output: &Output,
+) -> Cow<'a, niri_config::EdgeTriggers> {
+    let overrides = output
+        .user_data()
+        .get::<OutputName>()
+        .and_then(|name| config.outputs.find(name))
+        .and_then(|output_config| output_config.edge_triggers.as_ref());
+    match overrides {
+        Some(overrides) => {
+            let mut edges = config.edge_triggers.clone();
+            niri_config::utils::MergeWith::merge_with(&mut edges, overrides);
+            Cow::Owned(edges)
+        }
+        None => Cow::Borrowed(&config.edge_triggers),
+    }
+}
+
 impl Niri {
     pub(crate) fn clear_edge_trigger(&mut self) {
         let current_position = self
@@ -651,19 +672,6 @@ impl Niri {
                 );
             }
         }
-    }
-
-    fn edge_triggers_for_output(&self, output: &Output) -> niri_config::EdgeTriggers {
-        let config = self.config.borrow();
-        let mut edges = config.edge_triggers.clone();
-        if let Some(output_name) = output.user_data().get::<OutputName>() {
-            if let Some(output_config) = config.outputs.find(output_name) {
-                if let Some(overrides) = &output_config.edge_triggers {
-                    niri_config::utils::MergeWith::merge_with(&mut edges, overrides);
-                }
-            }
-        }
-        edges
     }
 
     fn edge_trigger_cue_tick(
@@ -796,7 +804,6 @@ impl Niri {
             return;
         }
 
-        let output_name = output.name();
         let Some(geometry) = self.global_space.output_geometry(output) else {
             self.clear_edge_trigger_at(Some(position));
             return;
@@ -821,7 +828,10 @@ impl Niri {
                 position.y - pointer_position.y,
             ],
         );
-        let edges = self.edge_triggers_for_output(output);
+        // Keep the config borrow local so the `&mut self` calls below stay valid.
+        let config = self.config.clone();
+        let config = config.borrow();
+        let edges = edge_triggers_for_output(&config, output);
         let edge_lengths = [
             edge_span_width(edges.left.as_ref()),
             edge_span_width(edges.right.as_ref()),
@@ -884,6 +894,7 @@ impl Niri {
             return;
         };
 
+        let output_name = output.name();
         if self
             .edge_trigger_candidate
             .as_ref()
@@ -1098,15 +1109,18 @@ impl Niri {
             candidate.edge,
             candidate.trigger_length,
         );
-        let edges = self.edge_triggers_for_output(output);
+        let config = self.config.clone();
+        let config = config.borrow();
+        let edges = edge_triggers_for_output(&config, output);
         let enabled = match candidate.edge {
-            niri_ipc::Edge::Left => edges.left,
-            niri_ipc::Edge::Right => edges.right,
-            niri_ipc::Edge::Top => edges.top,
-            niri_ipc::Edge::Bottom => edges.bottom,
+            niri_ipc::Edge::Left => &edges.left,
+            niri_ipc::Edge::Right => &edges.right,
+            niri_ipc::Edge::Top => &edges.top,
+            niri_ipc::Edge::Bottom => &edges.bottom,
         }
+        .as_ref()
         .is_some_and(|trigger| !trigger.off);
-        if !self.config.borrow().nacre.edge_triggers
+        if !config.nacre.edge_triggers
             || output.name() != candidate.output
             || !inside
             || !inside_span
