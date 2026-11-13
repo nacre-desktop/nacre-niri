@@ -380,7 +380,6 @@ impl DndGrabHandler for State {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
                 let window = mapped.window.clone();
                 self.niri.layout.activate_window(&window);
-                self.niri.retire_moved_launch_followers();
                 self.niri.layer_shell_on_demand_focus = None;
                 activate_output = false;
             }
@@ -556,7 +555,6 @@ impl ForeignToplevelHandler for State {
         if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&wl_surface) {
             let window = mapped.window.clone();
             self.niri.layout.activate_window(&window);
-            self.niri.retire_moved_launch_followers();
             self.niri.layer_shell_on_demand_focus = None;
             self.niri.queue_redraw_all();
         }
@@ -847,7 +845,11 @@ impl XdgActivationHandler for State {
         surface: WlSurface,
     ) {
         let now = std::time::Instant::now();
-        let launch_intent = self.niri.launch_tracker.peek_token(token.as_str(), now);
+        let launch_workspace = self
+            .niri
+            .launch_tracker
+            .pending(token.as_str(), now)
+            .map(|intent| intent.workspace);
         let mapped_window = self
             .niri
             .layout
@@ -876,9 +878,10 @@ impl XdgActivationHandler for State {
             && self
                 .niri
                 .launch_tracker
-                .token_was_consumed(token.as_str(), now)
+                .get(token.as_str(), now)
+                .is_some_and(|intent| intent.consumed)
             && mapped_destination.map_or(!mapped_window_is_focused, |destination| {
-                crate::launch::suppress_late_activation(true, Some(destination), active_workspace)
+                Some(destination) != active_workspace
             });
         if late_activation {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface) {
@@ -886,10 +889,10 @@ impl XdgActivationHandler for State {
                 self.niri.queue_redraw_all();
             }
         } else if let Some((window, mapped_launch_token, _)) = mapped_window {
-            if launch_intent.is_some() {
-                self.niri.launch_tracker.discard_token(token.as_str(), now);
+            if launch_workspace.is_some() {
+                self.niri.launch_tracker.discard(token.as_str(), now);
                 if let Some(mapped_token) = mapped_launch_token {
-                    self.niri.launch_tracker.discard_token(&mapped_token, now);
+                    self.niri.launch_tracker.discard(&mapped_token, now);
                 }
             }
             if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
@@ -901,15 +904,14 @@ impl XdgActivationHandler for State {
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.activate_window(&window);
-                    self.niri.retire_moved_launch_followers();
                     self.niri.layer_shell_on_demand_focus = None;
                     self.niri.queue_redraw_all();
                 }
             }
         } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
-            if let Some(intent) = launch_intent {
-                unmapped.launch_token = Some(intent.token);
-                unmapped.launch_workspace_id = Some(intent.workspace);
+            if let Some(workspace) = launch_workspace {
+                unmapped.launch_token = Some(token.as_str().to_owned());
+                unmapped.launch_workspace_id = Some(workspace);
             }
             if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
                 unmapped.activation_token_data = Some(token_data);

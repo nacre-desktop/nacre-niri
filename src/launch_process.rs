@@ -96,10 +96,9 @@ pub fn prepare_gate(event_loop: LoopHandle<'static, State>, token: String) -> Op
                 return Ok(PostAction::Continue);
             }
             if let Some((identity, _)) = read_stat(u32::from_ne_bytes(bytes)) {
-                state
-                    .niri
-                    .launch_tracker
-                    .bind_process(&token, identity, Instant::now());
+                if let Some(intent) = state.niri.launch_tracker.pending(&token, Instant::now()) {
+                    intent.process = Some(identity);
+                }
             }
             // Release even if the intent expired or procfs is unavailable.
             let _ = socket.write_all(&[1]);

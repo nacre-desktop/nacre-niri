@@ -1,11 +1,14 @@
 use std::fmt::{self, Write as _};
 use std::time::Instant;
 
+use client::ClientId;
 use insta::assert_snapshot;
 use niri_config::Config;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use wayland_client::protocol::wl_surface::WlSurface;
 
 use super::*;
+use crate::layout::workspace::WorkspaceId;
 use crate::layout::LayoutElement as _;
 use crate::utils::spawning::store_and_increase_nofile_rlimit;
 use crate::utils::with_toplevel_role;
@@ -517,7 +520,7 @@ window-rule {{
         assert!(fixture
             .niri()
             .launch_tracker
-            .peek_token(&token, now + crate::launch::LAUNCH_WORKSPACE_TIMEOUT)
+            .get(&token, now + crate::launch::LAUNCH_WORKSPACE_TIMEOUT)
             .is_none());
     } else {
         fixture.niri().layout.focus_output(&view_output);
@@ -598,8 +601,10 @@ window-rule {{
     }
 }
 
-#[test]
-fn launch_follower_keeps_splash_and_main_toplevels_on_launch_workspace() {
+type ServerSurface = smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+
+/// Two workspaces on one output, with `ws-view` active and `ws-launch` as the launch target.
+fn launch_follower_fixture() -> (Fixture, WorkspaceId, WorkspaceId) {
     store_and_increase_nofile_rlimit();
     let mut fixture = Fixture::with_config(
         Config::parse_mem(
@@ -615,384 +620,159 @@ workspace "ws-view" {
         .unwrap(),
     );
     fixture.add_output(1, (1280, 720));
-    let output = fixture.niri().layout.active_output().unwrap().clone();
-    let launch_index = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-launch")
-        .unwrap()
-        .0;
-    let view_index = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-view")
-        .unwrap()
-        .0;
-    let launch_workspace = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-launch")
-        .unwrap()
-        .1
-        .id();
-    let view_workspace = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-view")
-        .unwrap()
-        .1
-        .id();
-    fixture.niri().layout.focus_output(&output);
+    let layout = &fixture.niri().layout;
+    let launch = layout.find_workspace_by_name("ws-launch").unwrap().1.id();
+    let (view_index, view) = layout.find_workspace_by_name("ws-view").unwrap();
+    let view = view.id();
     fixture.niri().layout.switch_workspace(view_index);
+    (fixture, launch, view)
+}
 
-    let client = fixture.add_client();
-    let splash_surface = {
-        let splash = fixture.client(client).create_window();
-        splash.xdg_toplevel.set_app_id("org.nacre.discord".into());
-        splash.set_title("discord-updater-splash");
-        splash.surface.clone()
-    };
+/// Create a toplevel and send its initial commit; returns the client and server surfaces.
+fn create_toplevel(
+    fixture: &mut Fixture,
+    client: ClientId,
+    app_id: &str,
+    title: &str,
+) -> (WlSurface, ServerSurface) {
+    let window = fixture.client(client).create_window();
+    window.xdg_toplevel.set_app_id(app_id.into());
+    window.set_title(title);
+    let surface = window.surface.clone();
     fixture.roundtrip(client);
-    let splash_server_surface = fixture
+    let server_surface = fixture
         .niri()
         .unmapped_windows
         .keys()
         .next()
         .unwrap()
         .clone();
-    let token = {
-        let (token, _) = fixture.niri().activation_state.create_external_token(None);
-        token.as_str().to_owned()
-    };
+    (surface, server_surface)
+}
+
+fn map_toplevel(fixture: &mut Fixture, client: ClientId, surface: &WlSurface) {
+    fixture.client(client).window(surface).commit();
+    fixture.roundtrip(client);
+    let window = fixture.client(client).window(surface);
+    window.attach_new_buffer();
+    window.ack_last_and_commit();
+    fixture.double_roundtrip(client);
+}
+
+fn workspace_of(fixture: &mut Fixture, title: &str) -> Option<WorkspaceId> {
+    fixture.niri().layout.workspaces().find_map(|(_, _, workspace)| {
+        workspace.windows().find_map(|window| {
+            with_toplevel_role(window.toplevel(), |role| {
+                (role.title.as_deref() == Some(title)).then_some(workspace.id())
+            })
+        })
+    })
+}
+
+/// Prepare a launch for `workspace` and attach it to the unmapped `surface`, as activation would.
+fn attach_launch(
+    fixture: &mut Fixture,
+    surface: &ServerSurface,
+    unit: &str,
+    workspace: WorkspaceId,
+) -> String {
+    let (token, _) = fixture.niri().activation_state.create_external_token(None);
+    let token = token.as_str().to_owned();
     fixture.niri().launch_tracker.prepare(
         token.clone(),
-        Some("nacre-app-discord.service".into()),
-        launch_workspace,
+        Some(unit.into()),
+        workspace,
         Instant::now(),
     );
-    {
-        let unmapped = fixture
-            .niri()
-            .unmapped_windows
-            .get_mut(&splash_server_surface)
-            .unwrap();
-        unmapped.launch_token = Some(token.clone());
-        unmapped.launch_workspace_id = Some(launch_workspace);
-    }
-    fixture.client(client).window(&splash_surface).commit();
-    fixture.roundtrip(client);
-    fixture
-        .client(client)
-        .window(&splash_surface)
-        .attach_new_buffer();
-    fixture
-        .client(client)
-        .window(&splash_surface)
-        .ack_last_and_commit();
-    fixture.double_roundtrip(client);
+    let unmapped = fixture.niri().unmapped_windows.get_mut(surface).unwrap();
+    unmapped.launch_token = Some(token.clone());
+    unmapped.launch_workspace_id = Some(workspace);
+    token
+}
 
-    assert_eq!(
-        fixture
-            .niri()
-            .layout
-            .workspaces()
-            .find_map(|(_, _, workspace)| {
-                workspace.windows().find_map(|window| {
-                    with_toplevel_role(window.toplevel(), |role| {
-                        (role.title.as_deref() == Some("discord-updater-splash"))
-                            .then_some(workspace.id())
-                    })
-                })
-            }),
-        Some(launch_workspace)
-    );
-    assert_eq!(
-        fixture.niri().layout.active_workspace().unwrap().id(),
-        view_workspace
-    );
+#[test]
+fn launch_follower_keeps_splash_and_main_toplevels_on_launch_workspace() {
+    let (mut fixture, launch, view) = launch_follower_fixture();
+    // The test client shares this process's PID, so the main window matches by ancestry.
+    let client = fixture.add_client();
+    let (splash, splash_server) =
+        create_toplevel(&mut fixture, client, "org.nacre.discord", "discord-splash");
+    let token = attach_launch(&mut fixture, &splash_server, "nacre-app-discord.service", launch);
+    map_toplevel(&mut fixture, client, &splash);
+    assert_eq!(workspace_of(&mut fixture, "discord-splash"), Some(launch));
 
-    fixture.niri().layout.switch_workspace(launch_index);
-    fixture.niri().layout.switch_workspace(view_index);
-    let main_surface = {
-        let main = fixture.client(client).create_window();
-        main.xdg_toplevel.set_app_id("org.nacre.discord".into());
-        main.set_title("discord-main");
-        main.surface.clone()
-    };
-    fixture.roundtrip(client);
-    let main_server_surface = fixture
-        .niri()
-        .unmapped_windows
-        .keys()
-        .next()
-        .unwrap()
-        .clone();
-    fixture.client(client).window(&main_surface).commit();
+    let (main, main_server) = create_toplevel(&mut fixture, client, "org.nacre.main", "discord-main");
+    fixture.client(client).window(&main).commit();
     fixture.roundtrip(client);
     assert_eq!(
-        fixture
-            .niri()
-            .unmapped_windows
-            .get(&main_server_surface)
-            .unwrap()
-            .launch_workspace_id,
-        Some(launch_workspace),
-        "second main surface should be a launch follower"
+        fixture.niri().unmapped_windows[&main_server].launch_workspace_id,
+        Some(launch),
+        "second surface should be a launch follower"
     );
-    fixture
-        .client(client)
-        .window(&main_surface)
-        .attach_new_buffer();
-    fixture
-        .client(client)
-        .window(&main_surface)
-        .ack_last_and_commit();
-    fixture.double_roundtrip(client);
-
-    for title in ["discord-updater-splash", "discord-main"] {
-        assert_eq!(
-            fixture
-                .niri()
-                .layout
-                .workspaces()
-                .find_map(|(_, _, workspace)| {
-                    workspace.windows().find_map(|window| {
-                        with_toplevel_role(window.toplevel(), |role| {
-                            (role.title.as_deref() == Some(title)).then_some(workspace.id())
-                        })
-                    })
-                }),
-            Some(launch_workspace),
-            "{title} must remain on the launch workspace"
-        );
-    }
-    assert_eq!(
-        fixture.niri().layout.active_workspace().unwrap().id(),
-        view_workspace
-    );
+    map_toplevel(&mut fixture, client, &main);
+    assert_eq!(workspace_of(&mut fixture, "discord-main"), Some(launch));
+    assert_eq!(fixture.niri().layout.active_workspace().unwrap().id(), view);
     assert!(fixture
         .niri()
         .launch_tracker
-        .token_was_consumed(&token, std::time::Instant::now()));
+        .get(&token, Instant::now())
+        .is_some_and(|intent| intent.consumed));
 }
 
 #[test]
 fn launch_follower_app_id_keeps_same_app_and_leaves_other_apps_at_active_workspace() {
-    store_and_increase_nofile_rlimit();
-    let mut fixture = Fixture::with_config(
-        Config::parse_mem(
-            r##"
-workspace "ws-launch" {
-    open-on-output "headless-1"
-}
-workspace "ws-view" {
-    open-on-output "headless-1"
-}
-"##,
-        )
-        .unwrap(),
-    );
-    fixture.add_output(1, (1280, 720));
-    let output = fixture.niri().layout.active_output().unwrap().clone();
-    let launch_index = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-launch")
-        .unwrap()
-        .0;
-    let view_index = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-view")
-        .unwrap()
-        .0;
-    let launch_workspace = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-launch")
-        .unwrap()
-        .1
-        .id();
-    let view_workspace = fixture
-        .niri()
-        .layout
-        .find_workspace_by_name("ws-view")
-        .unwrap()
-        .1
-        .id();
-    fixture.niri().layout.focus_output(&output);
-    fixture.niri().layout.switch_workspace(view_index);
-
+    let (mut fixture, launch, view) = launch_follower_fixture();
     // This simulated satellite has no PID identity; the app-id follower is the only match.
     let app_client = fixture.add_client_with_xwayland_satellite(true);
-    let first_surface = {
-        let first = fixture.client(app_client).create_window();
-        first.xdg_toplevel.set_app_id("org.nacre.discord".into());
-        first.set_title("app-first");
-        first.surface.clone()
-    };
-    fixture.roundtrip(app_client);
-    let first_server_surface = fixture
-        .niri()
-        .unmapped_windows
-        .keys()
-        .next()
-        .unwrap()
-        .clone();
-    let token = {
-        let (token, _) = fixture.niri().activation_state.create_external_token(None);
-        token.as_str().to_owned()
-    };
-    fixture.niri().launch_tracker.prepare(
-        token.clone(),
-        Some("nacre-app-discord.service".into()),
-        launch_workspace,
-        Instant::now(),
-    );
-    {
-        let unmapped = fixture
-            .niri()
-            .unmapped_windows
-            .get_mut(&first_server_surface)
-            .unwrap();
-        unmapped.launch_token = Some(token.clone());
-        unmapped.launch_workspace_id = Some(launch_workspace);
-    }
-    fixture.client(app_client).window(&first_surface).commit();
-    fixture.roundtrip(app_client);
-    fixture
-        .client(app_client)
-        .window(&first_surface)
-        .attach_new_buffer();
-    fixture
-        .client(app_client)
-        .window(&first_surface)
-        .ack_last_and_commit();
-    fixture.double_roundtrip(app_client);
+    let (first, first_server) =
+        create_toplevel(&mut fixture, app_client, "org.nacre.discord", "app-first");
+    let token = attach_launch(&mut fixture, &first_server, "nacre-app-discord.service", launch);
+    map_toplevel(&mut fixture, app_client, &first);
 
-    fixture.niri().layout.switch_workspace(launch_index);
-    fixture.niri().layout.switch_workspace(view_index);
-    let second_surface = {
-        let second = fixture.client(app_client).create_window();
-        second.xdg_toplevel.set_app_id("org.nacre.discord".into());
-        second.set_title("app-second");
-        second.surface.clone()
-    };
-    fixture.roundtrip(app_client);
-    let second_server_surface = fixture
-        .niri()
-        .unmapped_windows
-        .keys()
-        .next()
-        .unwrap()
-        .clone();
-    fixture.client(app_client).window(&second_surface).commit();
-    fixture.roundtrip(app_client);
-    assert_eq!(
-        fixture
-            .niri()
-            .unmapped_windows
-            .get(&second_server_surface)
-            .unwrap()
-            .launch_workspace_id,
-        Some(launch_workspace),
-        "same-app surface should match without a PID ancestry bridge"
-    );
-    fixture
-        .client(app_client)
-        .window(&second_surface)
-        .attach_new_buffer();
-    fixture
-        .client(app_client)
-        .window(&second_surface)
-        .ack_last_and_commit();
-    fixture.double_roundtrip(app_client);
+    let (second, second_server) =
+        create_toplevel(&mut fixture, app_client, "org.nacre.discord", "app-second");
+    map_toplevel(&mut fixture, app_client, &second);
 
     let other_client = fixture.add_client();
-    let other_surface = {
-        let other = fixture.client(other_client).create_window();
-        other.xdg_toplevel.set_app_id("org.nacre.other".into());
-        other.set_title("other-app");
-        other.surface.clone()
-    };
-    fixture.roundtrip(other_client);
-    let other_server_surface = fixture
-        .niri()
-        .unmapped_windows
-        .keys()
-        .next()
-        .unwrap()
-        .clone();
-    fixture.client(other_client).window(&other_surface).commit();
+    let (other, other_server) =
+        create_toplevel(&mut fixture, other_client, "org.nacre.other", "other-app");
+    fixture.client(other_client).window(&other).commit();
     fixture.roundtrip(other_client);
     assert_eq!(
-        fixture
-            .niri()
-            .unmapped_windows
-            .get(&other_server_surface)
-            .unwrap()
-            .launch_workspace_id,
+        fixture.niri().unmapped_windows[&other_server].launch_workspace_id,
         None
     );
-    fixture
-        .client(other_client)
-        .window(&other_surface)
-        .attach_new_buffer();
-    fixture
-        .client(other_client)
-        .window(&other_surface)
-        .ack_last_and_commit();
-    fixture.double_roundtrip(other_client);
+    map_toplevel(&mut fixture, other_client, &other);
 
     for (title, expected) in [
-        ("app-first", launch_workspace),
-        ("app-second", launch_workspace),
-        ("other-app", view_workspace),
+        ("app-first", launch),
+        ("app-second", launch),
+        ("other-app", view),
     ] {
-        let actual = fixture
-            .niri()
-            .layout
-            .workspaces()
-            .find_map(|(_, _, workspace)| {
-                workspace.windows().find_map(|window| {
-                    with_toplevel_role(window.toplevel(), |role| {
-                        (role.title.as_deref() == Some(title)).then_some(workspace.id())
-                    })
-                })
-            });
-        assert_eq!(actual, Some(expected), "{title}");
+        assert_eq!(workspace_of(&mut fixture, title), Some(expected), "{title}");
     }
-    assert_eq!(
-        fixture.niri().layout.active_workspace().unwrap().id(),
-        view_workspace
-    );
+    assert_eq!(fixture.niri().layout.active_workspace().unwrap().id(), view);
 
-    let (second_launch_token, activation_data) = {
+    // A second launch activating the mapped follower retires both records.
+    let (second_token, activation_data) = {
         let (token, data) = fixture.niri().activation_state.create_external_token(None);
         (token.clone(), data.clone())
     };
-    let second_launch_token_value = second_launch_token.as_str().to_owned();
     fixture.niri().launch_tracker.prepare(
-        second_launch_token_value.clone(),
+        second_token.as_str().to_owned(),
         Some("nacre-app-discord-second.service".into()),
-        view_workspace,
+        view,
         Instant::now(),
     );
     <crate::niri::State as smithay::wayland::xdg_activation::XdgActivationHandler>::request_activation(
         fixture.niri_state(),
-        second_launch_token,
+        second_token.clone(),
         activation_data,
-        second_server_surface,
+        second_server,
     );
-    assert!(!fixture
-        .niri()
-        .launch_tracker
-        .token_was_consumed(&token, Instant::now()));
-    assert!(fixture
-        .niri()
-        .launch_tracker
-        .peek_token(&second_launch_token_value, Instant::now())
-        .is_none());
+    let tracker = &mut fixture.niri().launch_tracker;
+    assert!(tracker.get(&token, Instant::now()).is_none());
+    assert!(tracker.get(second_token.as_str(), Instant::now()).is_none());
 }
 
 fn check_target_output_and_workspace(

@@ -708,11 +708,16 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             ctx.event_loop.insert_idle(move |state| {
                 let now = std::time::Instant::now();
                 if let Some(token) = launch_token.as_deref() {
-                    let reusable = if let Some(unit) = unit {
-                        state.niri.launch_tracker.bind_unit(token, unit, now)
-                    } else {
-                        state.niri.launch_tracker.peek_token(token, now).is_some()
-                    };
+                    let reusable = state
+                        .niri
+                        .launch_tracker
+                        .pending(token, now)
+                        .map(|intent| {
+                            if unit.is_some() {
+                                intent.unit = unit;
+                            }
+                        })
+                        .is_some();
                     let _ = tx.send_blocking(reusable.then(|| token.to_owned()));
                     return;
                 }

@@ -104,7 +104,6 @@ impl TouchOverviewGrab {
             }
         };
 
-        state.niri.retire_moved_launch_followers();
         state.niri.queue_redraw_all();
     }
 }

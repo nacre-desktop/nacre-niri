@@ -2593,7 +2593,6 @@ impl State {
                 }
             }
         }
-        self.niri.retire_moved_launch_followers();
     }
 
     fn on_pointer_motion<I: InputBackend>(&mut self, event: I::PointerMotionEvent) {
@@ -3124,7 +3123,6 @@ impl State {
 
                         if !is_overview_open {
                             self.niri.layout.activate_window(&window);
-                            self.niri.retire_moved_launch_followers();
                         }
 
                         let start_data = PointerGrabStartData {
@@ -3189,12 +3187,10 @@ impl State {
                                         // FIXME: don't activate once we can pass specific windows
                                         // to actions.
                                         self.niri.layout.activate_window(&window);
-                                        self.niri.retire_moved_launch_followers();
                                         self.niri.layout.toggle_full_width();
                                     }
                                     if intersection.intersects(ResizeEdge::TOP_BOTTOM) {
                                         self.niri.layout.activate_window(&window);
-                                        self.niri.retire_moved_launch_followers();
                                         self.niri.layout.reset_window_height(Some(&window));
                                     }
                                     // FIXME: granular.
@@ -3204,7 +3200,6 @@ impl State {
                             }
 
                             self.niri.layout.activate_window(&window);
-                            self.niri.retire_moved_launch_followers();
 
                             if self
                                 .niri
@@ -3228,7 +3223,6 @@ impl State {
 
                 if !is_overview_open {
                     self.niri.layout.activate_window(&window);
-                    self.niri.retire_moved_launch_followers();
                 }
 
                 // FIXME: granular.
@@ -3890,7 +3884,6 @@ impl State {
                         }
 
                         self.niri.layout.activate_window(&window);
-                        self.niri.retire_moved_launch_followers();
 
                         // FIXME: granular.
                         self.niri.queue_redraw_all();
@@ -4531,7 +4524,6 @@ impl State {
                 handle.set_grab(self, grab, serial);
             } else if let Some((window, _)) = under.window {
                 self.niri.layout.activate_window(&window);
-                self.niri.retire_moved_launch_followers();
 
                 // Check if we need to start a touch move grab.
                 if mod_down {

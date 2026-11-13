@@ -103,7 +103,6 @@ impl MoveGrab {
                 layout.view_offset_gesture_end(Some(false));
             }
         }
-        data.niri.retire_moved_launch_followers();
 
         if self.start_data.is_pointer() {
             data.niri

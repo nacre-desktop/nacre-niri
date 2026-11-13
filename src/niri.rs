@@ -839,6 +839,7 @@ impl State {
 
         // Needs to be called after updating the keyboard focus.
         self.niri.refresh_layout();
+        self.niri.retire_moved_launches();
 
         self.niri.cursor_manager.check_cursor_image_surface_alive();
         self.niri.refresh_pointer_outputs();
@@ -1007,7 +1008,6 @@ impl State {
         let active_output = self.niri.layout.active_output().cloned();
 
         self.niri.layout.activate_window(window);
-        self.niri.retire_moved_launch_followers();
 
         let new_active = self.niri.layout.active_output().cloned();
         if new_active != active_output {
@@ -2333,31 +2333,17 @@ impl LayerMotionHandler for State {
 }
 
 impl Niri {
-    /// Retire launch followers after user input so a relocated app cannot drag later windows
-    /// back to the workspace that originally launched it.
-    pub fn retire_moved_launch_followers(&mut self) {
-        let now = Instant::now();
-        if !self.launch_tracker.has_followers(now) {
+    fn retire_moved_launches(&mut self) {
+        if self.launch_tracker.is_empty() {
             return;
         }
-        let windows = self
-            .layout
-            .workspaces()
-            .flat_map(|(_, _, workspace)| {
-                workspace.windows().filter_map(|window| {
-                    window
-                        .launch_token
-                        .as_deref()
-                        .map(|token| (token.to_owned(), window.id(), workspace.id()))
-                })
+        let windows = self.layout.workspaces().flat_map(|(_, _, workspace)| {
+            workspace.windows().filter_map(move |window| {
+                let token = window.launch_token.as_deref()?;
+                Some((token, workspace.id()))
             })
-            .collect::<Vec<_>>();
-        for (token, window, workspace) in windows {
-            if self.launch_tracker.follower_window(&token, now) == Some(window) {
-                self.launch_tracker
-                    .retire_follower_if_moved(&token, workspace, now);
-            }
-        }
+        });
+        self.launch_tracker.retire_moved(windows, Instant::now());
     }
 
     pub fn prepare_launch(&mut self, unit: Option<String>) -> Option<XdgActivationToken> {
@@ -2556,7 +2542,7 @@ impl Niri {
                         .activation_state
                         .retain_tokens(|token, token_data| {
                             token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT
-                                || tracker.contains_token(token.as_str(), Instant::now())
+                                || tracker.get(token.as_str(), Instant::now()).is_some()
                         });
                     TimeoutAction::ToDuration(XDG_ACTIVATION_TOKEN_TIMEOUT)
                 },
