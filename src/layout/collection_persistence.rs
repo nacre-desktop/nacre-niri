@@ -836,6 +836,33 @@ impl<W: super::LayoutElement> super::Layout<W> {
         None
     }
 
+    /// Cheap change detector for the persisted inputs, run on every refresh: workspace
+    /// revisions cover window membership and toplevel commits (app ids, titles).
+    pub(crate) fn persisted_fingerprint(&self) -> u64 {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        for collection in self.collections.iter().filter(|c| c.persistent) {
+            (
+                collection.id,
+                &collection.name,
+                &collection.configured_name,
+                &collection.original_output,
+                self.collection_active_workspace(collection.id),
+            )
+                .hash(&mut hasher);
+            for workspace in self.collection_workspaces(collection.id) {
+                (
+                    workspace.id(),
+                    workspace.name(),
+                    workspace.overview_revision(),
+                    workspace.collection_persistent(),
+                )
+                    .hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
     /// Snapshot only persistent named collections; workspace vector order records unnamed slots.
     pub(crate) fn persisted_collection_snapshot(&self) -> Vec<PersistedCollection> {
         self.collections

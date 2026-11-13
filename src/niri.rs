@@ -238,6 +238,9 @@ pub struct Niri {
     pub(crate) collection_persistence: Option<PersistedCollections>,
     pub launch_tracker: crate::launch::LaunchTracker,
     collection_state_writer: Option<CollectionStateWriter>,
+    /// One-shot save timer, armed when the persisted inputs change; no periodic wakeup.
+    collection_persist_timer: Option<RegistrationToken>,
+    collection_persist_fingerprint: u64,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
     // according to their global position.
@@ -841,6 +844,7 @@ impl State {
         // Needs to be called after updating the keyboard focus.
         self.niri.refresh_layout();
         self.niri.retire_moved_launches();
+        self.niri.schedule_collection_persist();
 
         self.niri.cursor_manager.check_cursor_image_surface_alive();
         self.niri.refresh_pointer_outputs();
@@ -2624,16 +2628,6 @@ impl Niri {
             )
             .unwrap();
 
-        event_loop
-            .insert_source(
-                Timer::from_duration(Duration::from_secs(1)),
-                |_, _, state| {
-                    state.niri.persist_collection_state();
-                    TimeoutAction::ToDuration(Duration::from_secs(1))
-                },
-            )
-            .unwrap();
-
         let socket_name = create_wayland_socket.then(|| {
             let socket_source = ListeningSocketSource::new_auto().unwrap();
             let socket_name = socket_source.socket_name().to_os_string();
@@ -2705,6 +2699,8 @@ impl Niri {
             collection_persistence,
             launch_tracker: crate::launch::LaunchTracker::default(),
             collection_state_writer,
+            collection_persist_timer: None,
+            collection_persist_fingerprint: 0,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
@@ -2850,6 +2846,34 @@ impl Niri {
         niri.reset_pointer_inactivity_timer();
 
         niri
+    }
+
+    /// Called from every refresh. Hashing the persisted inputs costs no allocation; the save
+    /// itself runs once, a second after the first change, so idle has no timer wakeups.
+    pub fn schedule_collection_persist(&mut self) {
+        if self.collection_persistence.is_none() {
+            return;
+        }
+        let fingerprint = self.layout.persisted_fingerprint();
+        if fingerprint == self.collection_persist_fingerprint {
+            return;
+        }
+        self.collection_persist_fingerprint = fingerprint;
+        if self.collection_persist_timer.is_some() {
+            return;
+        }
+        let token = self
+            .event_loop
+            .insert_source(
+                Timer::from_duration(Duration::from_secs(1)),
+                |_, _, state| {
+                    state.niri.collection_persist_timer = None;
+                    state.niri.persist_collection_state();
+                    TimeoutAction::Drop
+                },
+            )
+            .unwrap();
+        self.collection_persist_timer = Some(token);
     }
 
     pub fn persist_collection_state(&mut self) {
