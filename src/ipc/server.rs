@@ -176,31 +176,36 @@ impl IpcServer {
     }
 
     #[cfg(test)]
-    pub(crate) fn subscribe_standard_events(&self) -> Receiver<Event> {
+    fn subscribe_test_events(
+        &self,
+        edge_triggers: bool,
+        include_collections: bool,
+    ) -> Receiver<Event> {
         let (events, receiver) = async_channel::bounded(64);
         let (disconnect, _disconnect_receiver) = async_channel::bounded(1);
         self.event_streams.borrow_mut().push(EventStreamSender {
             overview_hover: false,
-            edge_triggers: false,
+            edge_triggers,
             events,
             disconnect,
-            include_collections: false,
+            include_collections,
         });
         receiver
     }
 
     #[cfg(test)]
+    pub(crate) fn subscribe_standard_events(&self) -> Receiver<Event> {
+        self.subscribe_test_events(false, false)
+    }
+
+    #[cfg(test)]
     pub(crate) fn subscribe_edge_events(&self) -> Receiver<Event> {
-        let (events, receiver) = async_channel::bounded(64);
-        let (disconnect, _disconnect_receiver) = async_channel::bounded(1);
-        self.event_streams.borrow_mut().push(EventStreamSender {
-            overview_hover: false,
-            edge_triggers: true,
-            events,
-            disconnect,
-            include_collections: false,
-        });
-        receiver
+        self.subscribe_test_events(true, false)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn subscribe_collection_events(&self) -> Receiver<Event> {
+        self.subscribe_test_events(false, true)
     }
 
     pub fn has_overview_hover_clients(&self) -> bool {
@@ -270,11 +275,15 @@ impl IpcServer {
     }
 }
 
+// Stock niri-ipc clients (plain `EventStream`) fail on unknown variants, so Nacre-only
+// events go to the Nacre collection streams that Nacre's daemon always requests.
 fn stream_event_allowed(event: &Event, include_collections: bool) -> bool {
     include_collections
         || !matches!(
             event,
-            Event::CollectionsChanged { .. } | Event::CollectionActivated { .. }
+            Event::CollectionsChanged { .. }
+                | Event::CollectionActivated { .. }
+                | Event::KeyboardLockStateChanged { .. }
         )
 }
 
@@ -327,7 +336,17 @@ mod tests {
         assert!(extension
             .iter()
             .any(|event| matches!(event, Event::CollectionsChanged { .. })));
-        assert_eq!(extension.len(), legacy.len() + 1);
+        assert!(!legacy
+            .iter()
+            .any(|event| matches!(event, Event::KeyboardLockStateChanged { .. })));
+        assert!(extension.iter().any(|event| matches!(
+            event,
+            Event::KeyboardLockStateChanged {
+                caps_lock: false,
+                num_lock: false
+            }
+        )));
+        assert_eq!(extension.len(), legacy.len() + 2);
     }
 
     #[test]
@@ -692,6 +711,7 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     window_restore: config.nacre.window_restore && config.nacre.scratchpad,
                     launch_workspace: true,
                     cursor_shake: true,
+                    keyboard_lock_state: true,
                 });
             });
             let capabilities = rx
@@ -1102,6 +1122,33 @@ impl State {
         let state = &mut state.keyboard_layouts;
 
         let event = Event::KeyboardLayoutsChanged { keyboard_layouts };
+        state.apply(event.clone());
+        server.send_event(event);
+    }
+
+    /// Emits `KeyboardLockStateChanged` when the Caps/Num Lock LEDs changed since the last one.
+    pub fn ipc_refresh_keyboard_lock_state(&mut self) {
+        let led_state = self.niri.seat.get_keyboard().unwrap().led_state();
+        let (caps_lock, num_lock) = (
+            led_state.caps.unwrap_or(false),
+            led_state.num.unwrap_or(false),
+        );
+
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+
+        let mut state = server.event_stream_state.borrow_mut();
+        let state = &mut state.keyboard_layouts;
+
+        if state.caps_lock == caps_lock && state.num_lock == num_lock {
+            return;
+        }
+
+        let event = Event::KeyboardLockStateChanged {
+            caps_lock,
+            num_lock,
+        };
         state.apply(event.clone());
         server.send_event(event);
     }

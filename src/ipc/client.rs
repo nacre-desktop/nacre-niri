@@ -514,6 +514,12 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     Event::KeyboardLayoutSwitched { idx } => {
                         println!("Keyboard layout switched: {idx}");
                     }
+                    Event::KeyboardLockStateChanged {
+                        caps_lock,
+                        num_lock,
+                    } => {
+                        println!("Keyboard lock state changed: caps {caps_lock}, num {num_lock}");
+                    }
                     Event::OverviewOpenedOrClosed { is_open: opened } => {
                         println!("Overview toggled: {opened}");
                     }

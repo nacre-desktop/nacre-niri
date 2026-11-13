@@ -128,7 +128,7 @@ pub enum Request {
     EventStream,
     /// Start an event stream that includes overview preview hover changes.
     NacreOverviewHoverStream,
-    /// Start an event stream including both overview hover and collection events.
+    /// Start an event stream including overview hover, collection and keyboard lock events.
     NacreOverviewHoverStreamWithCollections,
     /// Start a regular event stream that opts in to native screen-edge trigger events.
     ///
@@ -136,7 +136,7 @@ pub enum Request {
     /// pre-dwell cue and trigger events are delivered only to clients using this request,
     /// preserving compatibility with older event clients.
     NacreEdgeTriggerStream,
-    /// Start an event stream including Nacre-Niri workspace collection events.
+    /// Start an event stream including Nacre-Niri workspace collection and keyboard lock events.
     ///
     /// Use this extension when communicating with a compositor that supports it. The standard
     /// [`EventStream`][Request::EventStream] remains compatible with clients that do not know
@@ -244,6 +244,9 @@ pub struct NacreCapabilities {
     /// Shake cursor enlargement is implemented by this compositor build.
     #[serde(default)]
     pub cursor_shake: bool,
+    /// Event streams that include collection events carry [`Event::KeyboardLockStateChanged`].
+    #[serde(default)]
+    pub keyboard_lock_state: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -1869,6 +1872,16 @@ pub enum Event {
         /// Index of the newly active layout.
         idx: u8,
     },
+    /// A keyboard lock key (Caps Lock or Num Lock) toggled.
+    ///
+    /// Sent once with the initial state, then only on change, and only on event streams that
+    /// include collection events (stock clients of [`Request::EventStream`] never see it).
+    KeyboardLockStateChanged {
+        /// Whether Caps Lock is on.
+        caps_lock: bool,
+        /// Whether Num Lock is on.
+        num_lock: bool,
+    },
     /// The overview was opened or closed.
     OverviewOpenedOrClosed {
         /// The new state of the overview.
@@ -2380,10 +2393,19 @@ mod tests {
             window_restore: true,
             launch_workspace: true,
             cursor_shake: true,
+            keyboard_lock_state: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true,"cursor_shake":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true,"cursor_shake":true,"keyboard_lock_state":true}}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::KeyboardLockStateChanged {
+                caps_lock: true,
+                num_lock: false,
+            })
+            .unwrap(),
+            r#"{"KeyboardLockStateChanged":{"caps_lock":true,"num_lock":false}}"#,
         );
         let old_capabilities: NacreCapabilities = serde_json::from_str(
             r#"{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true}"#,
@@ -2396,6 +2418,7 @@ mod tests {
         assert!(!old_capabilities.monitor_workspace_actions);
         assert!(!old_capabilities.window_restore);
         assert!(!old_capabilities.cursor_shake);
+        assert!(!old_capabilities.keyboard_lock_state);
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,

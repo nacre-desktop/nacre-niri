@@ -73,6 +73,10 @@ pub struct WindowsState {
 pub struct KeyboardLayoutsState {
     /// Configured keyboard layouts.
     pub keyboard_layouts: Option<KeyboardLayouts>,
+    /// Whether Caps Lock is on.
+    pub caps_lock: bool,
+    /// Whether Num Lock is on.
+    pub num_lock: bool,
 }
 
 /// The overview state communicated over the event stream.
@@ -267,11 +271,15 @@ impl EventStreamStatePart for WindowsState {
 
 impl EventStreamStatePart for KeyboardLayoutsState {
     fn replicate(&self) -> Vec<Event> {
+        let mut events = Vec::new();
         if let Some(keyboard_layouts) = self.keyboard_layouts.clone() {
-            vec![Event::KeyboardLayoutsChanged { keyboard_layouts }]
-        } else {
-            vec![]
+            events.push(Event::KeyboardLayoutsChanged { keyboard_layouts });
         }
+        events.push(Event::KeyboardLockStateChanged {
+            caps_lock: self.caps_lock,
+            num_lock: self.num_lock,
+        });
+        events
     }
 
     fn apply(&mut self, event: Event) -> Option<Event> {
@@ -283,6 +291,13 @@ impl EventStreamStatePart for KeyboardLayoutsState {
                 let kb = self.keyboard_layouts.as_mut();
                 let kb = kb.expect("keyboard layouts must be set before a layout can be switched");
                 kb.current_idx = idx;
+            }
+            Event::KeyboardLockStateChanged {
+                caps_lock,
+                num_lock,
+            } => {
+                self.caps_lock = caps_lock;
+                self.num_lock = num_lock;
             }
             event => return Some(event),
         }
@@ -351,7 +366,7 @@ impl EventStreamStatePart for CastsState {
 }
 
 #[cfg(test)]
-mod collections_tests {
+mod tests {
     use super::*;
 
     #[test]
@@ -386,5 +401,24 @@ mod collections_tests {
             EventStreamStatePart::apply(&mut state, Event::CollectionActivated { id: 17 }),
             Some(Event::CollectionActivated { id: 17 })
         ));
+    }
+
+    #[test]
+    fn lock_state_applies_and_replicates() {
+        let mut state = KeyboardLayoutsState::default();
+        assert!(state
+            .apply(Event::KeyboardLockStateChanged {
+                caps_lock: true,
+                num_lock: false,
+            })
+            .is_none());
+        assert!(state.caps_lock && !state.num_lock);
+
+        // Replicated even before any keyboard layouts are known.
+        let mut replicated = KeyboardLayoutsState::default();
+        for event in state.replicate() {
+            assert!(replicated.apply(event).is_none());
+        }
+        assert!(replicated.caps_lock && !replicated.num_lock);
     }
 }

@@ -776,6 +776,7 @@ impl State {
         state.load_xkb_file();
         // Initialize some IPC server state.
         state.ipc_keyboard_layouts_changed();
+        state.ipc_refresh_keyboard_lock_state();
         // Focus the default monitor if set by the user.
         state.focus_default_monitor();
 
@@ -1438,6 +1439,8 @@ impl State {
         if mods_state.num_lock != num_lock {
             mods_state.num_lock = num_lock;
             keyboard.set_modifier_state(mods_state);
+            // set_modifier_state updates the LEDs without calling led_state_changed.
+            self.ipc_refresh_keyboard_lock_state();
         }
 
         Ok(())
@@ -1465,6 +1468,8 @@ impl State {
         if mods_state.num_lock != num_lock {
             mods_state.num_lock = num_lock;
             keyboard.set_modifier_state(mods_state);
+            // set_modifier_state updates the LEDs without calling led_state_changed.
+            self.ipc_refresh_keyboard_lock_state();
         }
     }
 

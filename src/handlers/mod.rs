@@ -145,6 +145,8 @@ impl SeatHandler for State {
         for mut keyboard in keyboards {
             keyboard.led_update(led_state.into());
         }
+
+        self.ipc_refresh_keyboard_lock_state();
     }
 }
 delegate_seat!(State);
