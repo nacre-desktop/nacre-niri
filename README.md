@@ -1,6 +1,5 @@
 <p align="center"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/nacre/images/nacre-niri-horizontal-dark.svg"><img src="docs/nacre/images/nacre-niri-horizontal.svg" width="380" alt="nacre-niri logo"></picture></p>
 
-# nacre-niri
 
 Nacre's fork of the [niri](https://github.com/niri-wm/niri) scrollable-tiling
 Wayland compositor. It is niri 26.04 plus the compositor-side features the Nacre
