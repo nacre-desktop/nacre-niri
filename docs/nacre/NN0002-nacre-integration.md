@@ -123,6 +123,16 @@ for runtime workarounds. It skips legacy reconnect focus restoration when
 collections are enabled, retains fixed-slot/visitor product policy, and avoids
 actions on hidden workspaces. The width helper remains active in this unit.
 
+NN0035: zero-scroll hover selection (`focus-follows-mouse
+max-scroll-amount="0%"`) can leave the active column partly off-screen. The
+keyboard actions `focus-column-left`, `focus-column-right`,
+`focus-column-first`, `focus-column-last` and `focus-column N` therefore scroll
+the view to show the focused column fully even when there is no column in that
+direction or the target is already active. At the edge,
+`focus-column-left-or-last`, `focus-column-right-or-first` and
+`focus-column-or-monitor-left/right` still wrap or move to the next output.
+Pointer hover, clicks and floating windows are unchanged.
+
 Other proposed NN follow-ups are intentionally unassigned: sticky floating
 windows (pin semantics across workspace/collection changes), scratchpad/hide
 actions (explicit collection lifetime and focus rules), and non-consuming input

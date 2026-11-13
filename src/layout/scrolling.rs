@@ -1578,8 +1578,23 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             .any(|col| col.start_open_animation(id))
     }
 
+    /// Keyboard column focus. Unlike `activate_column`, an already-active target is still
+    /// brought fully into view: no-scroll hover focus can leave it partially off-screen.
+    fn focus_column_idx(&mut self, idx: usize) {
+        if self.columns.is_empty() {
+            return;
+        }
+
+        if idx == self.active_column_idx {
+            self.animate_view_offset_to_column(None, idx, None);
+        } else {
+            self.activate_column(idx);
+        }
+    }
+
     pub fn focus_left(&mut self) -> bool {
         if self.active_column_idx == 0 {
+            self.focus_column_idx(0);
             return false;
         }
         self.activate_column(self.active_column_idx - 1);
@@ -1588,6 +1603,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
 
     pub fn focus_right(&mut self) -> bool {
         if self.active_column_idx + 1 >= self.columns.len() {
+            self.focus_column_idx(self.active_column_idx);
             return false;
         }
 
@@ -1596,23 +1612,16 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     pub fn focus_column_first(&mut self) {
-        self.activate_column(0);
+        self.focus_column_idx(0);
     }
 
     pub fn focus_column_last(&mut self) {
-        if self.columns.is_empty() {
-            return;
-        }
-
-        self.activate_column(self.columns.len() - 1);
+        self.focus_column_idx(self.columns.len().saturating_sub(1));
     }
 
     pub fn focus_column(&mut self, index: usize) {
-        if self.columns.is_empty() {
-            return;
-        }
-
-        self.activate_column(index.saturating_sub(1).min(self.columns.len() - 1));
+        let last = self.columns.len().saturating_sub(1);
+        self.focus_column_idx(index.saturating_sub(1).min(last));
     }
 
     pub fn focus_window_in_column(&mut self, index: u8) {

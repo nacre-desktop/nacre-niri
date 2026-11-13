@@ -75,6 +75,9 @@ and `hyprland-lock-notify-v1.xml` (BSD-3-Clause; [NN0031](NN0031-lock-notify.md)
 - Overview geometry, GPU reveal and input are tuned for a shell drawing over it
   ([NN0012](NN0012-overview-geometry.md), [NN0016](NN0016-gpu-reveal.md),
   [NN0022](NN0022-overview-input.md)).
+- Keyboard column focus at an edge, or onto the already-active column, scrolls
+  that column fully into view after zero-scroll hover focus
+  ([NN0002](NN0002-nacre-integration.md), NN0035).
 - Promoted (detached) panels keep pointer priority over layout windows,
   including during layer motion ([NN0027](NN0027-panel-drag.md)).
 - Named collections and their window placement persist in

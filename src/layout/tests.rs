@@ -4225,6 +4225,93 @@ fn hover_focus_preserves_view_for_partially_visible_tile() {
     layout.verify_invariants();
 }
 
+/// A 75%-wide column 1 and a half-width column 2 on a 1280 px view: whichever column is
+/// active, the other one is only partially visible (the owner's "large + half window" layout).
+fn wide_then_half_column_ops() -> Vec<Op> {
+    vec![
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::SetColumnWidth(SizeChange::SetProportion(75.)),
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::SetColumnWidth(SizeChange::SetProportion(50.)),
+        Op::Communicate(2),
+        Op::CompleteAnimations,
+    ]
+}
+
+fn view_pos(layout: &Layout<TestWindow>) -> f64 {
+    layout.active_workspace().unwrap().scrolling().view_pos()
+}
+
+#[test]
+fn keyboard_focus_left_at_first_column_reveals_hover_focused_column() {
+    let mut ops = wide_then_half_column_ops();
+    let hover_view = view_pos(&check_ops(ops.clone()));
+    ops.extend([Op::FocusColumnLeft, Op::CompleteAnimations]);
+    let expected = view_pos(&check_ops(ops));
+    assert_ne!(expected, hover_view);
+
+    let mut layout = check_ops(wide_then_half_column_ops());
+    layout.activate_window_without_scrolling(&1);
+    assert_eq!(view_pos(&layout), hover_view);
+    check_ops_on_layout(&mut layout, [Op::FocusColumnLeft, Op::CompleteAnimations]);
+    assert_eq!(*layout.focus().unwrap().id(), 1);
+    assert_eq!(view_pos(&layout), expected);
+
+    // focus_left still reports "no neighbour", so the or-last variant wraps around.
+    let mut layout = check_ops(wide_then_half_column_ops());
+    layout.activate_window_without_scrolling(&1);
+    check_ops_on_layout(
+        &mut layout,
+        [Op::FocusColumnLeftOrLast, Op::CompleteAnimations],
+    );
+    assert_eq!(*layout.focus().unwrap().id(), 2);
+
+    // The same holds for first/last/index targets that are already active.
+    for op in [Op::FocusColumnFirst, Op::FocusColumn(1)] {
+        let mut layout = check_ops(wide_then_half_column_ops());
+        layout.activate_window_without_scrolling(&1);
+        check_ops_on_layout(&mut layout, [op, Op::CompleteAnimations]);
+        assert_eq!(view_pos(&layout), expected);
+    }
+}
+
+#[test]
+fn keyboard_focus_right_at_last_column_reveals_hover_focused_column() {
+    let mut ops = wide_then_half_column_ops();
+    ops.extend([Op::FocusColumnFirst, Op::CompleteAnimations]);
+    let hover_view = view_pos(&check_ops(ops.clone()));
+    ops.extend([Op::FocusColumnRight, Op::CompleteAnimations]);
+    let expected = view_pos(&check_ops(ops.clone()));
+    assert_ne!(expected, hover_view);
+
+    for op in [
+        Op::FocusColumnRight,
+        Op::FocusColumnLast,
+        Op::FocusColumn(2),
+    ] {
+        let mut layout = check_ops(ops[..ops.len() - 2].to_vec());
+        layout.activate_window_without_scrolling(&2);
+        assert_eq!(view_pos(&layout), hover_view);
+        check_ops_on_layout(&mut layout, [op, Op::CompleteAnimations]);
+        assert_eq!(*layout.focus().unwrap().id(), 2);
+        assert_eq!(view_pos(&layout), expected);
+    }
+
+    // A move with a real neighbour is unchanged: focus-left from the hover-focused last column
+    // goes back to the already visible column 1 and keeps the view where it was.
+    let mut layout = check_ops(ops[..ops.len() - 2].to_vec());
+    layout.activate_window_without_scrolling(&2);
+    check_ops_on_layout(&mut layout, [Op::FocusColumnLeft, Op::CompleteAnimations]);
+    assert_eq!(*layout.focus().unwrap().id(), 1);
+    assert_eq!(view_pos(&layout), hover_view);
+}
+
 #[test]
 fn hover_focus_in_overview_preserves_workspace_camera_until_close() {
     let mut layout = check_ops([
