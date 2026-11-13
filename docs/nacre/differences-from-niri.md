@@ -85,6 +85,9 @@ and `hyprland-lock-notify-v1.xml` (BSD-3-Clause; [NN0031](NN0031-lock-notify.md)
 - Named collections and their window placement persist in
   `~/.local/state/nacre-niri/collections.json`
   ([collection-persistence.md](collection-persistence.md)).
+- The 1 Hz fallback frame-callback timer runs only after commits and stops once
+  idle, so the compositor has no periodic wakeup with nothing changing
+  ([NN0043](NN0043-idle-frame-timer.md)).
 
 ## Packaging
 

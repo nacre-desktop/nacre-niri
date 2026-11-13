@@ -610,6 +610,12 @@ impl Window {
         self.surface.commit();
     }
 
+    pub fn frame(&self) -> Arc<SyncData> {
+        let data = Arc::new(SyncData::default());
+        self.surface.frame(&self.qh, data.clone());
+        data
+    }
+
     pub fn ack_last(&self) {
         let serial = self.configures_received.last().unwrap().0;
         self.xdg_surface.ack_configure(serial);

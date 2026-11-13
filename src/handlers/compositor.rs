@@ -76,6 +76,9 @@ impl CompositorHandler for State {
             return;
         }
 
+        // A frame callback can only become current through a commit.
+        self.niri.arm_fallback_frame_timer();
+
         if surface == &root_surface {
             // This is a root surface commit. It might have mapped a previously-unmapped toplevel.
             if let Entry::Occupied(entry) = self.niri.unmapped_windows.entry(surface.clone()) {

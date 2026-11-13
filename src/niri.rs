@@ -241,6 +241,10 @@ pub struct Niri {
     /// One-shot save timer, armed when the persisted inputs change; no periodic wakeup.
     pub(crate) collection_persist_timer: Option<RegistrationToken>,
     collection_persist_fingerprint: u64,
+    /// The 1 Hz fallback frame callback timer: armed by commits, dropped once no commit arrived
+    /// during a tick, so an idle compositor has no periodic wakeup.
+    pub(crate) fallback_frame_timer: Option<RegistrationToken>,
+    fallback_frame_pending: bool,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
     // according to their global position.
@@ -2620,16 +2624,6 @@ impl Niri {
         #[cfg(feature = "dbus")]
         let a11y = A11y::new(event_loop.clone());
 
-        event_loop
-            .insert_source(
-                Timer::from_duration(Duration::from_secs(1)),
-                |_, _, state| {
-                    state.niri.send_frame_callbacks_on_fallback_timer();
-                    TimeoutAction::ToDuration(Duration::from_secs(1))
-                },
-            )
-            .unwrap();
-
         let socket_name = create_wayland_socket.then(|| {
             let socket_source = ListeningSocketSource::new_auto().unwrap();
             let socket_name = socket_source.socket_name().to_os_string();
@@ -2703,6 +2697,8 @@ impl Niri {
             collection_state_writer,
             collection_persist_timer: None,
             collection_persist_fingerprint: 0,
+            fallback_frame_timer: None,
+            fallback_frame_pending: false,
             global_space: Space::default(),
             sorted_outputs: Vec::default(),
             output_state: HashMap::new(),
@@ -3386,6 +3382,7 @@ impl Niri {
         backend.set_monitors_active(true);
 
         self.queue_redraw_all();
+        self.arm_fallback_frame_timer();
     }
 
     pub fn output_under(&self, pos: Point<f64, Logical>) -> Option<(&Output, Point<f64, Logical>)> {
@@ -5773,6 +5770,36 @@ impl Niri {
                 should_send,
             );
         }
+    }
+
+    /// Arms the fallback frame callback timer after a commit.
+    ///
+    /// Surfaces that requested a frame callback but won't be redrawn (occluded, offscreen,
+    /// unchanged) still get one from the timer, like upstream. It keeps ticking while commits keep
+    /// coming and drops after the first tick without one: by then every outstanding callback was
+    /// either sent by that tick, or already sent by a redraw within the 995 ms throttle window.
+    pub fn arm_fallback_frame_timer(&mut self) {
+        self.fallback_frame_pending = true;
+        if self.fallback_frame_timer.is_some() {
+            return;
+        }
+        let token = self
+            .event_loop
+            .insert_source(
+                Timer::from_duration(Duration::from_secs(1)),
+                |_, _, state| {
+                    let niri = &mut state.niri;
+                    niri.send_frame_callbacks_on_fallback_timer();
+                    if mem::take(&mut niri.fallback_frame_pending) {
+                        TimeoutAction::ToDuration(Duration::from_secs(1))
+                    } else {
+                        niri.fallback_frame_timer = None;
+                        TimeoutAction::Drop
+                    }
+                },
+            )
+            .unwrap();
+        self.fallback_frame_timer = Some(token);
     }
 
     pub fn send_frame_callbacks_on_fallback_timer(&mut self) {

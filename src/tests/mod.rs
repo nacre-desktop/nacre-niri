@@ -12,6 +12,7 @@ mod server;
 mod animations;
 mod collection_persistence;
 mod floating;
+mod frame_callbacks;
 mod fullscreen;
 mod layer_motion;
 mod layer_motion_render;

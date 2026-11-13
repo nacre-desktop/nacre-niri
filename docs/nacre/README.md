@@ -14,6 +14,7 @@ These documents describe fork-specific behavior and integration contracts. They 
 - [Fail-closed session-lock acquisition](NN0029-lock-fail-closed.md)
 - [Session-lock owner checks from upstream Smithay](NN0030-smithay-session-lock.md)
 - [Lock readiness notifications for suspend](NN0031-lock-notify.md)
+- [No idle wakeup from the fallback frame-callback timer](NN0043-idle-frame-timer.md)
 
 ## Historical and integration notes
 
