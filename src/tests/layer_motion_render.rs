@@ -507,7 +507,8 @@ fn reveal_fill_raster_is_under_content_and_survives_capture_rendering() {
 fn reveal_skips_invisible_frames_and_a_reopened_panel_reuses_the_edge_template() {
     // Nacre's dashboard open: the frame header is a static rect, the body grows down from it,
     // its opacity stays under Bead's opaque-above threshold for the first frames, Bead resets the
-    // motion once the open is done, and it maps a new layer surface for every open.
+    // motion and replaces the controller around the close, and it maps a new layer surface for
+    // every open.
     let (w, h) = (400_f32, 300_f32);
     let mut reveal = RevealDescriptor::empty();
     reveal.output_bounds = RevealRect::new(0., 0., w, h);
@@ -628,8 +629,11 @@ fn reveal_skips_invisible_frames_and_a_reopened_panel_reuses_the_edge_template()
             Some(first) => assert_eq!(&template, first, "the reopen reuses the baked template"),
         }
 
+        // Bead resets the motion after the open and creates a new controller for the close.
         runtime.lock().unwrap().planes.clear();
         assert!(render(&mut f, start + Duration::from_millis(400)).is_empty());
+        let mapped = f.niri().mapped_layer_surfaces.values_mut().next().unwrap();
+        mapped.set_motion_runtime(Arc::default());
         let layer = f.client(client_id).layer(&surface);
         layer.surface.attach(None, 0, 0);
         layer.surface.commit();

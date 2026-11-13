@@ -833,7 +833,6 @@ impl MappedLayer {
     }
 
     pub fn set_motion_runtime(&mut self, motion: Arc<Mutex<LayerMotionRuntime>>) {
-        self.reveal_edge_cache.borrow_mut().take();
         self.reveal_edge_rejected.borrow_mut().take();
         self.reveal_texture_cache.borrow_mut().clear();
         self.terminal_texture_cache.borrow_mut().take();
@@ -1219,9 +1218,10 @@ impl MappedLayer {
         alpha: f32,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
-        // The baked edge template (`reveal_edge_cache`) survives a close, a motion reset (Bead
-        // resets the dashboard after its open) and, through `RETIRED_REVEAL_EDGE`, a reopen: its
-        // key rejects a changed descriptor, and rebuilding it cost one 6 ms frame per open.
+        // The baked edge template (`reveal_edge_cache`) survives a close, a motion reset or a new
+        // controller (Bead does both around the dashboard's close) and, through
+        // `RETIRED_REVEAL_EDGE`, a reopen: its key rejects a changed descriptor, and rebuilding it
+        // cost one 6 ms frame per open.
         let Some((reveal, progress, opacity)) = self.reveal_state(runtime) else {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_rejected.borrow_mut().take();
