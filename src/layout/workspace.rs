@@ -2049,8 +2049,12 @@ impl<W: LayoutElement> Workspace<W> {
     }
 
     pub fn view_offset_gesture_end(&mut self, is_touchpad: Option<bool>) -> bool {
-        self.overview_revision = self.overview_revision.wrapping_add(1);
-        self.scrolling.view_offset_gesture_end(is_touchpad)
+        // Layout::refresh calls this for every inactive workspace; only a real end changes pixels.
+        let ended = self.scrolling.view_offset_gesture_end(is_touchpad);
+        if ended {
+            self.overview_revision = self.overview_revision.wrapping_add(1);
+        }
+        ended
     }
 
     pub fn dnd_scroll_gesture_begin(&mut self) {
