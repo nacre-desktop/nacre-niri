@@ -520,6 +520,9 @@ pub fn handle_msg(mut msg: Msg, json: bool) -> anyhow::Result<()> {
                     } => {
                         println!("Keyboard lock state changed: caps {caps_lock}, num {num_lock}");
                     }
+                    Event::OutputNeighboursChanged { neighbours } => {
+                        println!("Output neighbours changed: {neighbours:?}");
+                    }
                     Event::OverviewOpenedOrClosed { is_open: opened } => {
                         println!("Overview toggled: {opened}");
                     }

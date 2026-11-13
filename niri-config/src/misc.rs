@@ -262,10 +262,51 @@ pub struct EdgeTrigger {
     pub trigger_length: Option<FloatOrInt<1, 1_000_000>>,
 }
 
+/// Sticky inner monitor edges: the pointer is held at an edge shared with another output while
+/// that edge's trigger runs, unless the push is fast or long enough to cross. On by default.
+#[derive(knuffel::Decode, Debug, Clone, PartialEq)]
+pub struct InnerEdgePush {
+    #[knuffel(child)]
+    pub off: bool,
+    /// Hold against the edge before the trigger fires; replaces `dwell-time-ms` on inner edges.
+    #[knuffel(child, unwrap(argument), default = 180)]
+    pub hold_time_ms: u16,
+    /// Inward pointer speed, in logical pixels per second, that crosses immediately.
+    #[knuffel(child, unwrap(argument), default = FloatOrInt(1500.))]
+    pub cross_velocity: FloatOrInt<0, 1_000_000>,
+    /// Accumulated inward push, in logical pixels, that crosses.
+    #[knuffel(child, unwrap(argument), default = FloatOrInt(64.))]
+    pub cross_distance: FloatOrInt<1, 1_000_000>,
+    #[knuffel(child, unwrap(argument), default = true)]
+    pub left: bool,
+    #[knuffel(child, unwrap(argument), default = true)]
+    pub right: bool,
+    #[knuffel(child, unwrap(argument), default = true)]
+    pub top: bool,
+    #[knuffel(child, unwrap(argument), default = true)]
+    pub bottom: bool,
+}
+
+impl Default for InnerEdgePush {
+    fn default() -> Self {
+        Self {
+            off: false,
+            hold_time_ms: 180,
+            cross_velocity: FloatOrInt(1500.),
+            cross_distance: FloatOrInt(64.),
+            left: true,
+            right: true,
+            top: true,
+            bottom: true,
+        }
+    }
+}
+
 /// Global edge trigger policy. Output blocks may override individual edges.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct EdgeTriggers {
     pub cue: bool,
+    pub inner_edge_push: InnerEdgePush,
     pub left: Option<EdgeTrigger>,
     pub right: Option<EdgeTrigger>,
     pub top: Option<EdgeTrigger>,
@@ -276,6 +317,8 @@ pub struct EdgeTriggers {
 pub struct EdgeTriggersPart {
     #[knuffel(child)]
     pub cue: Option<Flag>,
+    #[knuffel(child)]
+    pub inner_edge_push: Option<InnerEdgePush>,
     #[knuffel(child)]
     pub left: Option<EdgeTrigger>,
     #[knuffel(child)]
@@ -290,6 +333,9 @@ impl MergeWith<EdgeTriggersPart> for EdgeTriggers {
     fn merge_with(&mut self, part: &EdgeTriggersPart) {
         if let Some(cue) = part.cue {
             self.cue = cue.0;
+        }
+        if let Some(push) = &part.inner_edge_push {
+            self.inner_edge_push = push.clone();
         }
         merge_clone_opt!((self, part), left, right, top, bottom);
     }

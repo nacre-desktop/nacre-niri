@@ -858,6 +858,7 @@ mod tests {
             r#"
             edge-triggers {
                 cue
+                inner-edge-push { hold-time-ms 120; cross-velocity 900; cross-distance 40; top false; }
                 left {
                     action { event; }
                     dwell-time-ms 250
@@ -882,6 +883,22 @@ mod tests {
 
         assert!(!config.nacre.edge_triggers);
         assert!(config.edge_triggers.cue);
+        let push = &config.edge_triggers.inner_edge_push;
+        assert!(!push.off);
+        assert_eq!(push.hold_time_ms, 120);
+        assert_eq!(push.cross_velocity.0, 900.0);
+        assert_eq!(push.cross_distance.0, 40.0);
+        assert!(push.left && push.right && !push.top && push.bottom);
+        assert_eq!(
+            do_parse("").edge_triggers.inner_edge_push,
+            InnerEdgePush::default()
+        );
+        assert!(
+            do_parse("edge-triggers { inner-edge-push { off; }; }")
+                .edge_triggers
+                .inner_edge_push
+                .off
+        );
         let left = config.edge_triggers.left.as_ref().unwrap();
         assert_eq!(left.dwell_time_ms, Some(250));
         assert_eq!(left.trigger_distance.map(|v| v.0), Some(10.0));
@@ -2019,6 +2036,20 @@ mod tests {
             },
             edge_triggers: EdgeTriggers {
                 cue: false,
+                inner_edge_push: InnerEdgePush {
+                    off: false,
+                    hold_time_ms: 180,
+                    cross_velocity: FloatOrInt(
+                        1500.0,
+                    ),
+                    cross_distance: FloatOrInt(
+                        64.0,
+                    ),
+                    left: true,
+                    right: true,
+                    top: true,
+                    bottom: true,
+                },
                 left: None,
                 right: None,
                 top: None,

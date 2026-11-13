@@ -390,6 +390,7 @@ pub struct Niri {
     pub(crate) edge_trigger_candidate: Option<crate::edge_triggers::EdgeTriggerCandidate>,
     pub(crate) edge_trigger_generation: u64,
     pub(crate) edge_trigger_last_motion: Option<(Point<f64, Logical>, Instant)>,
+    pub(crate) inner_edge_push: Option<crate::edge_triggers::InnerEdgePushState>,
     pub tablet_cursor_location: Option<Point<f64, Logical>>,
     pub gesture_swipe_3f_cumulative: Option<(f64, f64)>,
     pub gesture_swipe_collection_cumulative: Option<(f64, f64)>,
@@ -2032,6 +2033,7 @@ impl State {
 
         #[cfg(feature = "dbus")]
         self.niri.on_ipc_outputs_changed();
+        self.ipc_refresh_output_neighbours();
 
         let new_config = self.backend.ipc_outputs().lock().unwrap().clone();
         self.niri.output_management_state.notify_changes(new_config);
@@ -2790,6 +2792,7 @@ impl Niri {
             edge_trigger_candidate: None,
             edge_trigger_generation: 0,
             edge_trigger_last_motion: None,
+            inner_edge_push: None,
             tablet_cursor_location: None,
             gesture_swipe_3f_cumulative: None,
             gesture_swipe_collection_cumulative: None,
@@ -3242,6 +3245,7 @@ impl Niri {
         self.layout.remove_output(output);
         self.global_space.unmap_output(output);
         self.reposition_outputs(None);
+        self.ipc_outputs_changed = true;
         self.gamma_control_manager_state.output_removed(output);
 
         let state = self.output_state.remove(output).unwrap();

@@ -5,11 +5,15 @@ use std::time::{Duration, Instant};
 
 use calloop::timer::{TimeoutAction, Timer};
 use niri_config::OutputName;
-use niri_ipc::Edge;
+use niri_ipc::{Edge, OutputNeighbour};
 use smithay::output::Output;
-use smithay::utils::{Logical, Point};
+use smithay::utils::{Logical, Point, Rectangle};
 
 use crate::niri::Niri;
+
+/// Logical pixels per second by which accumulated inner-edge push decays, so a slow lean keeps
+/// the pointer on the edge while a sustained shove still crosses (see NN0041).
+const PUSH_DECAY_PX_PER_S: f64 = 250.;
 
 /// Whether the native edge event source can emit any configured IPC events.
 ///
@@ -284,6 +288,73 @@ pub fn pointer_motion_is_eligible(pointer_confined: bool, spatial_wrapping: bool
     !pointer_confined && !spatial_wrapping
 }
 
+/// Every (output, edge, neighbour) triple where two output rectangles touch, with the shared
+/// segment in the first output's local logical coordinates.
+pub fn output_neighbours(outputs: &[(String, Rectangle<i32, Logical>)]) -> Vec<OutputNeighbour> {
+    let mut neighbours = Vec::new();
+    for (name, geo) in outputs {
+        for edge in [Edge::Left, Edge::Right, Edge::Top, Edge::Bottom] {
+            for (other_name, other) in outputs {
+                if other_name == name {
+                    continue;
+                }
+                let touching = match edge {
+                    Edge::Left => other.loc.x + other.size.w == geo.loc.x,
+                    Edge::Right => geo.loc.x + geo.size.w == other.loc.x,
+                    Edge::Top => other.loc.y + other.size.h == geo.loc.y,
+                    Edge::Bottom => geo.loc.y + geo.size.h == other.loc.y,
+                };
+                let (start, end) = match edge {
+                    Edge::Left | Edge::Right => (
+                        geo.loc.y.max(other.loc.y) - geo.loc.y,
+                        (geo.loc.y + geo.size.h).min(other.loc.y + other.size.h) - geo.loc.y,
+                    ),
+                    Edge::Top | Edge::Bottom => (
+                        geo.loc.x.max(other.loc.x) - geo.loc.x,
+                        (geo.loc.x + geo.size.w).min(other.loc.x + other.size.w) - geo.loc.x,
+                    ),
+                };
+                if touching && start < end {
+                    neighbours.push(OutputNeighbour {
+                        output: name.clone(),
+                        edge,
+                        neighbour: other_name.clone(),
+                        start: f64::from(start),
+                        end: f64::from(end),
+                    });
+                }
+            }
+        }
+    }
+    neighbours
+}
+
+/// Which output edge a move from inside `geo` to `new_pos` leaves through, if any.
+pub fn exit_edge(geo: Rectangle<f64, Logical>, new_pos: Point<f64, Logical>) -> Option<Edge> {
+    if geo.contains(new_pos) {
+        return None;
+    }
+    [
+        (Edge::Left, geo.loc.x - new_pos.x),
+        (Edge::Right, new_pos.x - (geo.loc.x + geo.size.w)),
+        (Edge::Top, geo.loc.y - new_pos.y),
+        (Edge::Bottom, new_pos.y - (geo.loc.y + geo.size.h)),
+    ]
+    .into_iter()
+    .max_by(|a, b| a.1.total_cmp(&b.1))
+    .map(|(edge, _)| edge)
+}
+
+/// Whether an inner-edge push releases the pointer: a fling, or enough accumulated push.
+pub fn push_crosses(push: f64, velocity: f64, cross_distance: f64, cross_velocity: f64) -> bool {
+    velocity >= cross_velocity || push >= cross_distance
+}
+
+/// Accumulated push after `elapsed` seconds of decay plus this event's inward motion.
+pub fn decayed_push(push: f64, elapsed: f64, inward: f64) -> f64 {
+    (push - PUSH_DECAY_PX_PER_S * elapsed).max(0.) + inward
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -398,6 +469,57 @@ mod tests {
         assert!(!pointer_motion_is_eligible(true, false));
         assert!(!pointer_motion_is_eligible(false, true));
         assert!(pointer_motion_is_eligible(false, false));
+    }
+
+    #[test]
+    fn output_neighbours_follow_touching_rectangles_only() {
+        let rect = |x, y, w, h| Rectangle::new(Point::new(x, y), (w, h).into());
+        let outputs = vec![
+            (String::from("a"), rect(0, 0, 1920, 1080)),
+            // Right of a, scaled smaller and shifted down: partial overlap with a, and its
+            // bottom edge sits on c.
+            (String::from("b"), rect(1920, 280, 1280, 800)),
+            // Below a, overlapping its full width.
+            (String::from("c"), rect(0, 1080, 2560, 1440)),
+            // One pixel gap from c: not adjacent to c, but it touches b's bottom too.
+            (String::from("d"), rect(2561, 1080, 1920, 1080)),
+        ];
+        let neighbours = output_neighbours(&outputs);
+        let triple = |output: &str, edge: Edge, neighbour: &str| {
+            neighbours
+                .iter()
+                .find(|n| n.output == output && n.edge == edge && n.neighbour == neighbour)
+                .map(|n| (n.start, n.end))
+        };
+        assert_eq!(triple("a", Edge::Right, "b"), Some((280., 1080.)));
+        assert_eq!(triple("b", Edge::Left, "a"), Some((0., 800.)));
+        assert_eq!(triple("a", Edge::Bottom, "c"), Some((0., 1920.)));
+        assert_eq!(triple("c", Edge::Top, "a"), Some((0., 1920.)));
+        assert_eq!(triple("b", Edge::Bottom, "c"), Some((0., 640.)));
+        assert_eq!(triple("c", Edge::Top, "b"), Some((1920., 2560.)));
+        assert_eq!(triple("b", Edge::Bottom, "d"), Some((641., 1280.)));
+        assert_eq!(triple("d", Edge::Top, "b"), Some((0., 639.)));
+        assert_eq!(triple("c", Edge::Right, "d"), None);
+        assert_eq!(triple("a", Edge::Left, "b"), None);
+        assert_eq!(neighbours.len(), 8);
+    }
+
+    #[test]
+    fn exit_edge_picks_the_crossed_side_and_push_gates_combine() {
+        let geo = Rectangle::new(Point::new(0., 0.), (1920., 1080.).into());
+        assert_eq!(exit_edge(geo, Point::new(1919.5, 10.)), None);
+        assert_eq!(exit_edge(geo, Point::new(1925., 10.)), Some(Edge::Right));
+        assert_eq!(exit_edge(geo, Point::new(-3., 10.)), Some(Edge::Left));
+        assert_eq!(exit_edge(geo, Point::new(10., -1.)), Some(Edge::Top));
+        assert_eq!(exit_edge(geo, Point::new(10., 1100.)), Some(Edge::Bottom));
+        assert_eq!(exit_edge(geo, Point::new(1930., 1082.)), Some(Edge::Right));
+
+        assert!(!push_crosses(63., 1499., 64., 1500.));
+        assert!(push_crosses(64., 0., 64., 1500.));
+        assert!(push_crosses(1., 1500., 64., 1500.));
+        // 250 px/s of decay: a 50 px lean is gone after a quarter second.
+        assert_eq!(decayed_push(50., 0.1, 10.), 35.);
+        assert_eq!(decayed_push(50., 1., 10.), 10.);
     }
 
     #[test]
@@ -944,7 +1066,13 @@ impl Niri {
                 armed: false,
                 fired: false,
                 armed_at: None,
-                dwell_time: Duration::from_millis(u64::from(trigger.dwell_time_ms.unwrap_or(250))),
+                dwell_time: Duration::from_millis(u64::from(
+                    if self.inner_edge_is_sticky(&edges.inner_edge_push, geometry, edge, local) {
+                        edges.inner_edge_push.hold_time_ms
+                    } else {
+                        trigger.dwell_time_ms.unwrap_or(250)
+                    },
+                )),
                 trigger_distance: edge_band_width(Some(trigger)),
                 trigger_length: edge_span_width(Some(trigger)),
                 cue,
@@ -1151,6 +1279,121 @@ impl Niri {
             candidate.fired = true;
         }
     }
+
+    /// Whether `edge` of the output at `geometry` is enabled for inner-edge push and another
+    /// output lies straight across it at the pointer's along-edge coordinate.
+    fn inner_edge_is_sticky(
+        &self,
+        push: &niri_config::InnerEdgePush,
+        geometry: Rectangle<i32, Logical>,
+        edge: Edge,
+        local: Point<f64, Logical>,
+    ) -> bool {
+        let enabled = match edge {
+            Edge::Left => push.left,
+            Edge::Right => push.right,
+            Edge::Top => push.top,
+            Edge::Bottom => push.bottom,
+        };
+        if push.off || !enabled {
+            return false;
+        }
+        let geo = geometry.to_f64();
+        let probe = match edge {
+            Edge::Left => Point::new(geo.loc.x - 1., geo.loc.y + local.y),
+            Edge::Right => Point::new(geo.loc.x + geo.size.w, geo.loc.y + local.y),
+            Edge::Top => Point::new(geo.loc.x + local.x, geo.loc.y - 1.),
+            Edge::Bottom => Point::new(geo.loc.x + local.x, geo.loc.y + geo.size.h),
+        };
+        self.global_space.output_under(probe).next().is_some()
+    }
+
+    /// Holds relative pointer motion at a sticky inner edge (NN0041). Returns the position to
+    /// use: `new_pos` unchanged when the move stays on the output, the edge has no enabled
+    /// trigger or inner-edge push, or the push is fast or long enough to cross; otherwise the
+    /// position clamped to the current output so the edge trigger's dwell and pressure run.
+    pub(crate) fn sticky_inner_edge(
+        &mut self,
+        pos: Point<f64, Logical>,
+        new_pos: Point<f64, Logical>,
+        raw_delta: Point<f64, Logical>,
+        time_us: u64,
+    ) -> Point<f64, Logical> {
+        let Some((output, local)) = self.output_under(pos) else {
+            return new_pos;
+        };
+        let output = output.clone();
+        let Some(geometry) = self.global_space.output_geometry(&output) else {
+            return new_pos;
+        };
+        let geo = geometry.to_f64();
+        let Some(edge) = exit_edge(geo, new_pos) else {
+            return new_pos;
+        };
+        let config = self.config.borrow();
+        if !config.nacre.edge_triggers || self.edge_trigger_is_suppressed(&output) {
+            return new_pos;
+        }
+        let edges = edge_triggers_for_output(&config, &output);
+        let trigger = match edge {
+            Edge::Left => edges.left.as_ref(),
+            Edge::Right => edges.right.as_ref(),
+            Edge::Top => edges.top.as_ref(),
+            Edge::Bottom => edges.bottom.as_ref(),
+        };
+        let Some(trigger) = trigger.filter(|trigger| !trigger.off) else {
+            return new_pos;
+        };
+        if !is_inside_edge_span(
+            [geo.size.w, geo.size.h],
+            [local.x, local.y],
+            edge,
+            edge_span_width(Some(trigger)),
+        ) || !self.inner_edge_is_sticky(&edges.inner_edge_push, geometry, edge, local)
+        {
+            return new_pos;
+        }
+        let push_config = &edges.inner_edge_push;
+
+        let inward = inward_delta(edge, [raw_delta.x, raw_delta.y]);
+        let (push, velocity) = match &self.inner_edge_push {
+            Some(state) if state.output == output && state.edge == edge => {
+                let elapsed = time_us.saturating_sub(state.time_us) as f64 / 1_000_000.;
+                let velocity = if elapsed > 0. { inward / elapsed } else { 0. };
+                (decayed_push(state.push, elapsed, inward), velocity)
+            }
+            _ => (inward, 0.),
+        };
+        if push_crosses(
+            push,
+            velocity,
+            push_config.cross_distance.0,
+            push_config.cross_velocity.0,
+        ) {
+            self.inner_edge_push = None;
+            return new_pos;
+        }
+        self.inner_edge_push = Some(InnerEdgePushState {
+            output,
+            edge,
+            push,
+            time_us,
+        });
+        Point::new(
+            new_pos.x.clamp(geo.loc.x, geo.loc.x + geo.size.w - 1.),
+            new_pos.y.clamp(geo.loc.y, geo.loc.y + geo.size.h - 1.),
+        )
+    }
+}
+
+/// Push accumulated against the most recently held inner edge.
+#[derive(Debug)]
+pub(crate) struct InnerEdgePushState {
+    output: Output,
+    edge: Edge,
+    push: f64,
+    /// Event time of the last held motion, in microseconds.
+    time_us: u64,
 }
 
 #[cfg(test)]

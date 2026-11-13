@@ -9,7 +9,7 @@
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
-use crate::{Cast, Collection, Event, KeyboardLayouts, Window, Workspace};
+use crate::{Cast, Collection, Event, KeyboardLayouts, OutputNeighbour, Window, Workspace};
 
 /// Part of the state communicated via the event stream.
 pub trait EventStreamStatePart {
@@ -52,6 +52,16 @@ pub struct EventStreamState {
 
     /// State of screencasts.
     pub casts: CastsState,
+
+    /// Inner (shared) output edges.
+    pub output_neighbours: OutputNeighboursState,
+}
+
+/// The inner output edges communicated over the Nacre event streams.
+#[derive(Debug, Default)]
+pub struct OutputNeighboursState {
+    /// Latest neighbour list received from the compositor.
+    pub neighbours: Vec<OutputNeighbour>,
 }
 
 /// The workspaces state communicated over the event stream.
@@ -110,6 +120,7 @@ impl EventStreamStatePart for EventStreamState {
         events.extend(self.overview.replicate());
         events.extend(self.config.replicate());
         events.extend(self.casts.replicate());
+        events.extend(self.output_neighbours.replicate());
         events
     }
 
@@ -121,7 +132,24 @@ impl EventStreamStatePart for EventStreamState {
         let event = self.overview.apply(event)?;
         let event = self.config.apply(event)?;
         let event = self.casts.apply(event)?;
+        let event = self.output_neighbours.apply(event)?;
         Some(event)
+    }
+}
+
+impl EventStreamStatePart for OutputNeighboursState {
+    fn replicate(&self) -> Vec<Event> {
+        vec![Event::OutputNeighboursChanged {
+            neighbours: self.neighbours.clone(),
+        }]
+    }
+
+    fn apply(&mut self, event: Event) -> Option<Event> {
+        match event {
+            Event::OutputNeighboursChanged { neighbours } => self.neighbours = neighbours,
+            event => return Some(event),
+        }
+        None
     }
 }
 

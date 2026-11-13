@@ -17,6 +17,7 @@ New or extended nodes in `config.kdl`:
 | `layout { collections { on; collection "name" {} } }` | on | [NN0001](NN0001-collections.md). `collections { on false; }` restores upstream, including appending unplugged workspaces onto the primary output. |
 | `gestures { collection-switch { fingers 4 } }` | on, 4 fingers | swipe between collections |
 | `edge-triggers { left|right|top|bottom { action { … }; dwell-time-ms N; pressure N; velocity N; off } }` | none | [NN0010](NN0010-native-widths-edges.md), [NN0019](NN0019-edge-hover-cues.md). Per-output override inside `output "…" { edge-triggers { … } }`. |
+| `edge-triggers { inner-edge-push { off; hold-time-ms 180; cross-velocity 1500; cross-distance 64; left|right|top|bottom true } }` | on | [NN0041](NN0041-inner-edge-push.md): an edge shared with another output holds the pointer while its trigger runs; a fling or a sustained push crosses. |
 | `nacre { overview-hover; scratchpad; window-pinning; proportional-x11-widths; edge-triggers; window-restore; force-close; monitor-workspace-actions; }` | all on | `nacre { name false; }` disables one (`niri-config/src/misc.rs`). |
 | `cursor { shake-to-enlarge; }` | off | fork-only |
 
@@ -48,9 +49,9 @@ right/left with a 150 ms cooldown.
 ## IPC
 
 `niri msg` gains `collections` (the collection registry), `window-under-cursor`,
-`event-stream --collections` (adds `CollectionsChanged`, `CollectionActivated` and
-`KeyboardLockStateChanged` events) and `nacre-capabilities` (which fork features are
-active). The
+`event-stream --collections` (adds `CollectionsChanged`, `CollectionActivated`,
+`KeyboardLockStateChanged` and `OutputNeighboursChanged` events) and
+`nacre-capabilities` (which fork features are active). The
 `niri-ipc` crate also adds requests that have no `niri msg` spelling and are
 meant for shells: `NacreOverviewHoverStream` and
 `NacreOverviewHoverStreamWithCollections` (`NacreOverviewHoverChanged` events),
@@ -58,7 +59,7 @@ meant for shells: `NacreOverviewHoverStream` and
 `EdgeLeft`), `EventStreamWithCollections`, and `NacrePrepareLaunch`, which
 returns a `NacreLaunchToken` so the launched app lands on the launching
 workspace ([launch-workspace.md](launch-workspace.md)). New types: `Collection`,
-`Edge`, `NacreCapabilities`.
+`Edge`, `NacreCapabilities`, `OutputNeighbour`.
 
 ## Protocols
 

@@ -247,6 +247,10 @@ pub struct NacreCapabilities {
     /// Event streams that include collection events carry [`Event::KeyboardLockStateChanged`].
     #[serde(default)]
     pub keyboard_lock_state: bool,
+    /// Inner monitor edges hold the pointer for edge triggers (`inner-edge-push`), and collection
+    /// streams carry [`Event::OutputNeighboursChanged`].
+    #[serde(default)]
+    pub inner_edge_push: bool,
 }
 
 /// Screen edge that activated a configured edge trigger.
@@ -261,6 +265,23 @@ pub enum Edge {
     Top,
     /// Bottom output edge.
     Bottom,
+}
+
+/// An output that touches one edge of another output (an inner edge).
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct OutputNeighbour {
+    /// Connector name of the output whose edge this is.
+    pub output: String,
+    /// Edge of `output` that the neighbour touches.
+    pub edge: Edge,
+    /// Connector name of the touching output.
+    pub neighbour: String,
+    /// Start of the shared segment along the edge, in `output`-local logical coordinates
+    /// (y for left/right edges, x for top/bottom edges).
+    pub start: f64,
+    /// Half-open end of the shared segment.
+    pub end: f64,
 }
 
 /// Overview information.
@@ -1882,6 +1903,14 @@ pub enum Event {
         /// Whether Num Lock is on.
         num_lock: bool,
     },
+    /// The set of inner (shared) output edges changed; this replaces the previous list.
+    ///
+    /// Sent once in the snapshot, then on output hotplug, removal or layout change, and only on
+    /// event streams that include collection events.
+    OutputNeighboursChanged {
+        /// Every touching (output, edge, neighbour) triple, both directions listed.
+        neighbours: Vec<OutputNeighbour>,
+    },
     /// The overview was opened or closed.
     OverviewOpenedOrClosed {
         /// The new state of the overview.
@@ -2394,10 +2423,24 @@ mod tests {
             launch_workspace: true,
             cursor_shake: true,
             keyboard_lock_state: true,
+            inner_edge_push: true,
         }));
         assert_eq!(
             serde_json::to_string(&reply).unwrap(),
-            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true,"cursor_shake":true,"keyboard_lock_state":true}}}"#,
+            r#"{"Ok":{"NacreCapabilities":{"workspace_collections":true,"proportional_x11_widths":false,"overview_hover":true,"scratchpad":true,"window_pinning":true,"edge_triggers":true,"edge_trigger_cues":true,"force_close":true,"monitor_workspace_actions":true,"window_restore":true,"launch_workspace":true,"cursor_shake":true,"keyboard_lock_state":true,"inner_edge_push":true}}}"#,
+        );
+        assert_eq!(
+            serde_json::to_string(&Event::OutputNeighboursChanged {
+                neighbours: vec![OutputNeighbour {
+                    output: String::from("DP-1"),
+                    edge: Edge::Right,
+                    neighbour: String::from("DP-2"),
+                    start: 0.,
+                    end: 1080.,
+                }],
+            })
+            .unwrap(),
+            r#"{"OutputNeighboursChanged":{"neighbours":[{"output":"DP-1","edge":"Right","neighbour":"DP-2","start":0.0,"end":1080.0}]}}"#,
         );
         assert_eq!(
             serde_json::to_string(&Event::KeyboardLockStateChanged {
@@ -2419,6 +2462,7 @@ mod tests {
         assert!(!old_capabilities.window_restore);
         assert!(!old_capabilities.cursor_shake);
         assert!(!old_capabilities.keyboard_lock_state);
+        assert!(!old_capabilities.inner_edge_push);
         assert_eq!(
             serde_json::to_string(&Action::MoveWindowToScratchpad { id: None }).unwrap(),
             r#"{"MoveWindowToScratchpad":{"id":null}}"#,

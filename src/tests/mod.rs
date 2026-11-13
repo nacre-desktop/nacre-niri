@@ -4,6 +4,7 @@ mod client;
 mod collections;
 mod fixture;
 mod force_close;
+mod inner_edge_push;
 mod keyboard_lock;
 mod scratchpad_pin;
 mod server;

@@ -284,6 +284,7 @@ fn stream_event_allowed(event: &Event, include_collections: bool) -> bool {
             Event::CollectionsChanged { .. }
                 | Event::CollectionActivated { .. }
                 | Event::KeyboardLockStateChanged { .. }
+                | Event::OutputNeighboursChanged { .. }
         )
 }
 
@@ -346,7 +347,10 @@ mod tests {
                 num_lock: false
             }
         )));
-        assert_eq!(extension.len(), legacy.len() + 2);
+        assert!(!legacy
+            .iter()
+            .any(|event| matches!(event, Event::OutputNeighboursChanged { .. })));
+        assert_eq!(extension.len(), legacy.len() + 3);
     }
 
     #[test]
@@ -712,6 +716,8 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                     launch_workspace: true,
                     cursor_shake: true,
                     keyboard_lock_state: true,
+                    inner_edge_push: config.nacre.edge_triggers
+                        && !config.edge_triggers.inner_edge_push.off,
                 });
             });
             let capabilities = rx
@@ -1149,6 +1155,34 @@ impl State {
             caps_lock,
             num_lock,
         };
+        state.apply(event.clone());
+        server.send_event(event);
+    }
+
+    /// Emits `OutputNeighboursChanged` when the set of touching output edges changed.
+    pub fn ipc_refresh_output_neighbours(&mut self) {
+        let Some(server) = &self.niri.ipc_server else {
+            return;
+        };
+        let outputs: Vec<_> = self
+            .niri
+            .global_space
+            .outputs()
+            .map(|output| {
+                (
+                    output.name(),
+                    self.niri.global_space.output_geometry(output).unwrap(),
+                )
+            })
+            .collect();
+        let neighbours = crate::edge_triggers::output_neighbours(&outputs);
+
+        let mut state = server.event_stream_state.borrow_mut();
+        let state = &mut state.output_neighbours;
+        if state.neighbours == neighbours {
+            return;
+        }
+        let event = Event::OutputNeighboursChanged { neighbours };
         state.apply(event.clone());
         server.send_event(event);
     }

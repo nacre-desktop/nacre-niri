@@ -48,8 +48,10 @@ Once both gates pass, the pointer must remain at that edge for the dwell time.
 A fired edge stays latched until the pointer leaves it. Geometry uses the same
 rounded logical output bounds as pointer clamping, including fractional scale.
 
-Overview, fullscreen, lock, and outputs without a layout monitor suppress
-actions. Pointer grabs, confinement, and spatial wrapping suppress edge input.
+On an edge shared with another output the pointer normally passes through, so
+a trigger there only fires if `inner-edge-push` holds it; see
+[NN0041](NN0041-inner-edge-push.md). Overview, fullscreen, lock, and outputs
+without a layout monitor suppress actions. Pointer grabs, confinement, and spatial wrapping suppress edge input.
 Reload and output geometry/removal cancel pending triggers. No lookup
 assumes that a workspace has a monitor.
 

@@ -2712,6 +2712,15 @@ impl State {
             }
         }
 
+        if crate::edge_triggers::pointer_motion_is_eligible(
+            pointer_confined.is_some(),
+            spatial_wrapping,
+        ) {
+            new_pos = self
+                .niri
+                .sticky_inner_edge(pos, new_pos, event.delta(), event.time());
+        }
+
         if self
             .niri
             .global_space
