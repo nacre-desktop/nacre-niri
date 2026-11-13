@@ -48,8 +48,9 @@ right/left with a 150 ms cooldown.
 ## IPC
 
 `niri msg` gains `collections` (the collection registry), `window-under-cursor`,
-`event-stream --collections` (adds `CollectionsChanged` and `CollectionActivated`
-events) and `nacre-capabilities` (which fork features are active). The
+`event-stream --collections` (adds `CollectionsChanged`, `CollectionActivated` and
+`KeyboardLockStateChanged` events) and `nacre-capabilities` (which fork features are
+active). The
 `niri-ipc` crate also adds requests that have no `niri msg` spelling and are
 meant for shells: `NacreOverviewHoverStream` and
 `NacreOverviewHoverStreamWithCollections` (`NacreOverviewHoverChanged` events),
