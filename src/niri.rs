@@ -239,7 +239,7 @@ pub struct Niri {
     pub launch_tracker: crate::launch::LaunchTracker,
     collection_state_writer: Option<CollectionStateWriter>,
     /// One-shot save timer, armed when the persisted inputs change; no periodic wakeup.
-    collection_persist_timer: Option<RegistrationToken>,
+    pub(crate) collection_persist_timer: Option<RegistrationToken>,
     collection_persist_fingerprint: u64,
 
     // This space does not actually contain any windows, but all outputs are mapped into it
@@ -2874,6 +2874,12 @@ impl Niri {
             )
             .unwrap();
         self.collection_persist_timer = Some(token);
+    }
+
+    /// Title and app id requests can arrive without a commit, so no workspace revision covers
+    /// them; 0 makes the next refresh arm the save.
+    pub fn invalidate_collection_persist(&mut self) {
+        self.collection_persist_fingerprint = 0;
     }
 
     pub fn persist_collection_state(&mut self) {

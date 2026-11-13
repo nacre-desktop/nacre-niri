@@ -1,5 +1,7 @@
 use niri_config::Config;
+use wayland_client::protocol::wl_surface::WlSurface;
 
+use super::client::ClientId;
 use super::Fixture;
 use crate::layout::collection_persistence::{
     PersistedCollection, PersistedCollections, PersistedWindowRoute, PersistedWorkspace,
@@ -8,7 +10,7 @@ use crate::layout::collection_persistence::{
 use crate::layout::workspace::WorkspaceId;
 use crate::utils::with_toplevel_role;
 
-fn mapped_window(fixture: &mut Fixture, app_id: &str, title: &str) {
+fn mapped_window(fixture: &mut Fixture, app_id: &str, title: &str) -> (ClientId, WlSurface) {
     let client = fixture.add_client();
     let surface = {
         let window = fixture.client(client).create_window();
@@ -24,6 +26,7 @@ fn mapped_window(fixture: &mut Fixture, app_id: &str, title: &str) {
     window.set_size(100, 100);
     window.ack_last_and_commit();
     fixture.double_roundtrip(client);
+    (client, surface)
 }
 
 fn assignment(
@@ -167,4 +170,52 @@ window-rule {
     assert!(persisted
         .route_for_window(Some("org.example.Output"), Some("Output"))
         .is_some());
+}
+
+#[test]
+fn persistence_timer_arms_only_on_change() {
+    // Collections are on by default; a running open animation would move the workspace
+    // revision on every refresh.
+    let mut config = Config::default();
+    config.animations.off = true;
+    let mut fixture = Fixture::with_config(config);
+    let mut state = PersistedCollections::empty();
+    state.collections.push(PersistedCollection {
+        name: "kept".into(),
+        configured_origin: None,
+        original_output: None,
+        workspaces: vec![PersistedWorkspace {
+            name: None,
+            retain_empty: true,
+        }],
+        active_workspace: 0,
+    });
+    {
+        let niri = fixture.niri();
+        assert!(niri.layout.restore_persisted_collections(&mut state));
+        niri.collection_persistence = Some(state);
+    }
+    fixture.add_output(1, (1280, 720));
+    let (client, surface) = mapped_window(&mut fixture, "org.example.Kept", "Kept");
+
+    // Returns whether the one-shot save timer was armed, and disarms it.
+    let disarm = |fixture: &mut Fixture| {
+        let niri = fixture.niri();
+        let token = niri.collection_persist_timer.take();
+        if let Some(token) = token {
+            niri.event_loop.remove(token);
+        }
+        token.is_some()
+    };
+    disarm(&mut fixture);
+    fixture.double_roundtrip(client);
+    assert!(
+        !disarm(&mut fixture),
+        "idle refreshes must not arm the save timer"
+    );
+
+    // Titles can change without a commit, so no workspace revision moves.
+    fixture.client(client).window(&surface).set_title("Renamed");
+    fixture.double_roundtrip(client);
+    assert!(disarm(&mut fixture), "a title change arms the save timer");
 }

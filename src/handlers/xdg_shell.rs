@@ -928,10 +928,12 @@ impl XdgShellHandler for State {
 
     fn app_id_changed(&mut self, toplevel: ToplevelSurface) {
         self.update_window_rules(&toplevel);
+        self.niri.invalidate_collection_persist();
     }
 
     fn title_changed(&mut self, toplevel: ToplevelSurface) {
         self.update_window_rules(&toplevel);
+        self.niri.invalidate_collection_persist();
     }
 
     fn parent_changed(&mut self, toplevel: ToplevelSurface) {
