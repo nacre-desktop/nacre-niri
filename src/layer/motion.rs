@@ -92,6 +92,9 @@ impl MotionPose {
 
     fn interpolate(self, to: Self, progress: f64, opacity_mode: OpacityMode) -> Self {
         let lerp = |a: f64, b: f64| a + (b - a) * progress;
+        // An overshooting curve (out-back) may push sizes below zero and opacity outside 0..1.
+        let size = |a: f64, b: f64| lerp(a, b).max(0.);
+        let opacity = |a: f64, b: f64| lerp(a, b).clamp(0., 1.);
         Self {
             destination: Rectangle::new(
                 Point::from((
@@ -99,8 +102,8 @@ impl MotionPose {
                     lerp(self.destination.loc.y, to.destination.loc.y),
                 )),
                 Size::from((
-                    lerp(self.destination.size.w, to.destination.size.w),
-                    lerp(self.destination.size.h, to.destination.size.h),
+                    size(self.destination.size.w, to.destination.size.w),
+                    size(self.destination.size.h, to.destination.size.h),
                 )),
             ),
             clip: Rectangle::new(
@@ -109,14 +112,14 @@ impl MotionPose {
                     lerp(self.clip.loc.y, to.clip.loc.y),
                 )),
                 Size::from((
-                    lerp(self.clip.size.w, to.clip.size.w),
-                    lerp(self.clip.size.h, to.clip.size.h),
+                    size(self.clip.size.w, to.clip.size.w),
+                    size(self.clip.size.h, to.clip.size.h),
                 )),
             ),
             opacity: match opacity_mode {
-                OpacityMode::Linear => lerp(self.opacity, to.opacity),
+                OpacityMode::Linear => opacity(self.opacity, to.opacity),
                 OpacityMode::OpaqueAbove(threshold) => {
-                    let opacity = lerp(self.opacity, to.opacity);
+                    let opacity = opacity(self.opacity, to.opacity);
                     if opacity > threshold as f64 / 1_000_000. {
                         1.
                     } else {
@@ -136,6 +139,10 @@ pub enum MotionCurve {
     EaseInOutCubic,
     EmphasizedAccelerate,
     CriticalSpring,
+    EaseOutQuint,
+    EaseInCubic,
+    /// Overshoots past 1 (Bead's out-back, c1 = 1.70158).
+    EaseOutBack,
 }
 
 /// Post-interpolation opacity behavior for a plane.
@@ -163,6 +170,15 @@ impl MotionCurve {
             Self::EaseInOutCubic if t < 0.5 => 4. * t.powi(3),
             Self::EaseInOutCubic => 1. - (-2. * t + 2.).powi(3) / 2.,
             Self::EmphasizedAccelerate => t.powi(4),
+            Self::EaseOutQuint => 1. - (1. - t).powi(5),
+            Self::EaseInCubic => t.powi(3),
+            // Exactly 0 at t = 0, so a retarget at its start reproduces the sampled pose.
+            Self::EaseOutBack if t == 0. => 0.,
+            Self::EaseOutBack => {
+                const C1: f64 = 1.70158;
+                const C3: f64 = C1 + 1.;
+                1. + C3 * (t - 1.).powi(3) + C1 * (t - 1.).powi(2)
+            }
             Self::CriticalSpring => {
                 let terminal = 9. * (-8_f64).exp();
                 (1. - (1. + 8. * t) * (-8. * t).exp()) / (1. - terminal)
@@ -383,7 +399,7 @@ mod tests {
             to_w in 0.0f64..10_000.0,
             to_h in 0.0f64..10_000.0,
             to_opacity in 0.0f64..=1.0,
-            curve_index in 0u8..5,
+            curve_index in 0u8..8,
             elapsed_ms in 0u64..10_000,
         ) {
             let from = MotionPose::new(
@@ -397,7 +413,10 @@ mod tests {
                 1 => MotionCurve::EaseOutCubic,
                 2 => MotionCurve::EaseInOutCubic,
                 3 => MotionCurve::EmphasizedAccelerate,
-                _ => MotionCurve::CriticalSpring,
+                4 => MotionCurve::CriticalSpring,
+                5 => MotionCurve::EaseOutQuint,
+                6 => MotionCurve::EaseInCubic,
+                _ => MotionCurve::EaseOutBack,
             };
             let duration = Duration::from_millis(10_000);
             let motion = LayerMotion::new(
@@ -445,6 +464,9 @@ mod tests {
             MotionCurve::EaseInOutCubic,
             MotionCurve::EmphasizedAccelerate,
             MotionCurve::CriticalSpring,
+            MotionCurve::EaseOutQuint,
+            MotionCurve::EaseInCubic,
+            MotionCurve::EaseOutBack,
         ] {
             assert!((curve.sample(0.)).abs() < 1e-12);
             assert!((curve.sample(1.) - 1.).abs() < 1e-12);
@@ -452,6 +474,53 @@ mod tests {
         assert!((MotionCurve::EaseOutCubic.sample(0.5) - 0.875).abs() < 1e-12);
         assert!((MotionCurve::EaseInOutCubic.sample(0.5) - 0.5).abs() < 1e-12);
         assert!((MotionCurve::EmphasizedAccelerate.sample(0.5) - 0.0625).abs() < 1e-12);
+        assert!((MotionCurve::EaseOutQuint.sample(0.5) - 0.96875).abs() < 1e-12);
+        assert!((MotionCurve::EaseInCubic.sample(0.5) - 0.125).abs() < 1e-12);
+    }
+
+    #[test]
+    fn v3_curves_are_monotonic_and_out_back_overshoots_once() {
+        let samples = |curve: MotionCurve| (0..=1000).map(move |i| curve.sample(i as f64 / 1000.));
+        for curve in [MotionCurve::EaseOutQuint, MotionCurve::EaseInCubic] {
+            let values: Vec<f64> = samples(curve).collect();
+            assert!(
+                values.windows(2).all(|w| w[1] >= w[0]),
+                "{curve:?} not monotonic"
+            );
+            assert!(values.iter().all(|v| (0. ..=1.).contains(v)));
+        }
+        // Bead's out-back: 1 + c3 (t - 1)^3 + c1 (t - 1)^2, c1 = 1.70158, c3 = c1 + 1.
+        let back = MotionCurve::EaseOutBack;
+        assert!((back.sample(0.8) - 1.046_450_56).abs() < 1e-6);
+        let peak = samples(back).fold(0_f64, f64::max);
+        assert!(peak > 1.05 && peak < 1.15, "overshoot peak {peak}");
+        assert!(back.sample(0.5) > 0.5 && back.sample(1.2) == 1.);
+        // Overshoot moves and grows planes but never breaks the pose invariants.
+        let motion = LayerMotion::new(
+            1,
+            pose(-100., 0., 0.),
+            pose(0., 200., 1.),
+            Duration::ZERO,
+            Duration::from_millis(100),
+            back,
+            OpacityMode::Linear,
+        )
+        .unwrap();
+        let overshot = motion.sample(Duration::from_millis(80));
+        assert!(overshot.destination.loc.x > 0. && overshot.destination.size.w > 200.);
+        assert!(overshot.is_valid() && overshot.opacity == 1.);
+        let shrinking = LayerMotion::new(
+            1,
+            pose(0., 200., 1.),
+            pose(0., 0., 0.),
+            Duration::ZERO,
+            Duration::from_millis(100),
+            back,
+            OpacityMode::Linear,
+        )
+        .unwrap()
+        .sample(Duration::from_millis(80));
+        assert!(shrinking.is_valid() && shrinking.destination.size.w == 0.);
     }
 
     #[test]

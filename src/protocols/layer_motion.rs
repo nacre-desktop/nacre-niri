@@ -24,7 +24,7 @@ use crate::protocols::raw::bead_layer_motion::v1::server::{
 };
 use crate::render_helpers::damage::ExtraDamage;
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const MAX_PLANES: usize = 64;
 const MAX_REVEAL_RECTS: usize = 16;
 const MAX_TERMINAL_BYTES: usize = 64 * 1024 * 1024;
@@ -1016,6 +1016,15 @@ where
                     }
                     WEnum::Value(bead_layer_motion_v1::Curve::Spring) => {
                         MotionCurve::CriticalSpring
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::EaseOutQuint) => {
+                        MotionCurve::EaseOutQuint
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::EaseInCubic) => {
+                        MotionCurve::EaseInCubic
+                    }
+                    WEnum::Value(bead_layer_motion_v1::Curve::EaseOutBack) => {
+                        MotionCurve::EaseOutBack
                     }
                     WEnum::Unknown(_) => {
                         resource.post_error(

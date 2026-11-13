@@ -676,3 +676,59 @@ fn unmap_cancels_active_motion_and_controller_can_be_reused_after_remap() {
     assert!(runtime.terminal.is_none(), "reset clears terminal pixels");
     assert!(!runtime.terminal_ready);
 }
+
+#[test]
+fn v3_advertises_new_curves_and_out_back_overshoots_the_target() {
+    let mut f = Fixture::new();
+    let (id, client_surface) = setup_panel(&mut f);
+    // Wire compatibility: the v1/v2 curve values are unchanged and v3 only appends.
+    assert_eq!(Curve::Spring as u32, 4);
+    assert_eq!(Curve::EaseOutQuint as u32, 5);
+    assert_eq!(Curve::EaseInCubic as u32, 6);
+    assert_eq!(Curve::EaseOutBack as u32, 7);
+    let manager = f
+        .client(id)
+        .state
+        .globals
+        .iter()
+        .find(|global| global.interface == "bead_layer_motion_manager_v1")
+        .unwrap();
+    assert_eq!(manager.version, 3);
+
+    let motion_proxy = {
+        let client = f.client(id);
+        client.state.layer_motion(&client_surface).motion.clone()
+    };
+    create_plane(&motion_proxy, -100., 0.);
+    motion_proxy.set_curve(Curve::EaseOutBack);
+    motion_proxy.animate(1, 100, 0);
+    let layer = f.client(id).layer(&client_surface);
+    layer.attach_new_buffer();
+    layer.set_size(100, 100);
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    let root_surface = mapped_surface(&f);
+    let runtime = f
+        .niri()
+        .layer_motion_manager_state
+        .runtime(&root_surface)
+        .unwrap();
+    let start = runtime
+        .lock()
+        .unwrap()
+        .active
+        .as_ref()
+        .unwrap()
+        .start_time();
+    f.niri()
+        .layer_motion_manager_state
+        .tick(&root_surface, start + Duration::from_millis(60));
+    // Past the target (x = 0) at 60 %: 1 + c3 (t-1)^3 + c1 (t-1)^2 = 1.0994.
+    let x = runtime.lock().unwrap().current[0].1.destination.loc.x;
+    assert!((x - 9.94).abs() < 0.1, "x = {x}");
+    f.niri()
+        .layer_motion_manager_state
+        .tick(&root_surface, start + Duration::from_millis(100));
+    assert_eq!(runtime.lock().unwrap().current[0].1.destination.loc.x, 0.);
+}
