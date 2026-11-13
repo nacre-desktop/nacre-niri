@@ -5142,13 +5142,9 @@ impl Niri {
         // Freeze the clock at the target time.
         self.clock.set_unadjusted(target_presentation_time);
 
-        let layer_surfaces = layer_map_for_output(output)
-            .layers()
-            .map(|layer| layer.wl_surface().clone())
-            .collect::<Vec<_>>();
-        for surface in layer_surfaces {
+        for layer in layer_map_for_output(output).layers() {
             self.layer_motion_manager_state
-                .tick(&surface, target_presentation_time);
+                .tick(layer.wl_surface(), target_presentation_time);
         }
 
         {

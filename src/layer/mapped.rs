@@ -1,6 +1,7 @@
 use std::any::Any;
+use std::borrow::Cow;
 use std::cell::RefCell;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use niri_config::utils::MergeWith as _;
 use niri_config::{Color, Config, CornerRadius, GradientInterpolation, LayerRule};
@@ -23,7 +24,7 @@ use super::ResolvedLayerRules;
 use crate::animation::Clock;
 use crate::layout::shadow::Shadow;
 use crate::niri_render_elements;
-use crate::protocols::layer_motion::{LayerMotionRuntime, LayerMotionTerminal, MotionPlane};
+use crate::protocols::layer_motion::{LayerMotionRuntime, LayerMotionTerminal};
 use crate::render_helpers::background_effect::BackgroundEffectElement;
 use crate::render_helpers::border::BorderRenderElement;
 use crate::render_helpers::renderer::NiriRenderer;
@@ -208,8 +209,6 @@ pub struct MotionPlaneRenderElement<R: NiriRenderer> {
     id: Id,
     damage: crate::render_helpers::damage::ExtraDamage,
 }
-
-type LayerMotionSnapshot = (Vec<MotionPlane>, Vec<(u32, MotionPose)>);
 
 fn to_physical_cover(
     rect: Rectangle<f64, Logical>,
@@ -834,12 +833,14 @@ impl MappedLayer {
     }
 
     pub fn motion_poses(&self) -> Option<Vec<(u32, MotionPose)>> {
-        self.motion_snapshot().map(|(_, poses)| poses)
+        let runtime = self.motion_runtime()?;
+        Some(self.motion_poses_in(&runtime).into_owned())
     }
 
-    fn motion_snapshot(&self) -> Option<LayerMotionSnapshot> {
-        let motion = self.motion.as_ref()?;
-        let runtime = motion.lock().unwrap();
+    /// Lock the motion runtime for one render or hit test; callers borrow from the guard
+    /// instead of cloning planes and reveal descriptors per frame. None when no planes exist.
+    fn motion_runtime(&self) -> Option<MutexGuard<'_, LayerMotionRuntime>> {
+        let runtime = self.motion.as_ref()?.lock().unwrap();
         if runtime.planes.is_empty() {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_cache.borrow_mut().take();
@@ -847,18 +848,21 @@ impl MappedLayer {
             self.terminal_texture_cache.borrow_mut().take();
             return None;
         }
-        let poses = runtime
-            .active
-            .as_ref()
-            .map(|active| active.sample(self.clock.now_unadjusted()))
-            .unwrap_or_else(|| runtime.current.clone());
-        Some((runtime.planes.clone(), poses))
+        Some(runtime)
     }
 
-    fn reveal_snapshot(&self) -> Option<(RevealDescriptor, f64, f64)> {
-        let motion = self.motion.as_ref()?;
-        let runtime = motion.lock().unwrap();
-        let reveal = runtime.reveal.clone()?;
+    fn motion_poses_in<'a>(&self, runtime: &'a LayerMotionRuntime) -> Cow<'a, [(u32, MotionPose)]> {
+        match &runtime.active {
+            Some(active) => Cow::Owned(active.sample(self.clock.now_unadjusted())),
+            None => Cow::Borrowed(&runtime.current),
+        }
+    }
+
+    fn reveal_state<'a>(
+        &self,
+        runtime: &'a LayerMotionRuntime,
+    ) -> Option<(&'a RevealDescriptor, f64, f64)> {
+        let reveal = runtime.reveal.as_ref()?;
         let (progress, opacity) = if let Some(active) = runtime.active.as_ref() {
             let progress = active.progress(self.clock.now_unadjusted());
             let opacity = active
@@ -878,9 +882,10 @@ impl MappedLayer {
         Some((reveal, progress, opacity))
     }
 
-    fn terminal_snapshot(&self) -> Option<(Arc<LayerMotionTerminal>, bool, f64)> {
-        let motion = self.motion.as_ref()?;
-        let runtime = motion.lock().unwrap();
+    fn terminal_state(
+        &self,
+        runtime: &LayerMotionRuntime,
+    ) -> Option<(Arc<LayerMotionTerminal>, bool, f64)> {
         let snapshot = runtime.terminal.clone()?;
         let reveal = runtime.reveal.as_ref()?;
         if !reveal.visible {
@@ -1197,12 +1202,13 @@ impl MappedLayer {
     fn render_reveal<R: NiriRenderer>(
         &self,
         renderer: &mut R,
+        runtime: &LayerMotionRuntime,
         location: Point<f64, Logical>,
         scale: Scale<f64>,
         alpha: f32,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
-        let Some((reveal, progress, opacity)) = self.reveal_snapshot() else {
+        let Some((reveal, progress, opacity)) = self.reveal_state(runtime) else {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
@@ -1303,7 +1309,7 @@ impl MappedLayer {
             )
             .with_location(location + Point::from((crop.x as f64, crop.y as f64)));
             push(border.into());
-            if let Some(shadow) = self.create_reveal_shadow(&reveal, progress, location, scale) {
+            if let Some(shadow) = self.create_reveal_shadow(reveal, progress, location, scale) {
                 push(shadow.with_alpha(alpha * opacity as f32).into());
             }
             self.reveal_texture_cache.borrow_mut().clear();
@@ -1311,7 +1317,7 @@ impl MappedLayer {
         }
         if self.render_edge_template(
             renderer,
-            &reveal,
+            reveal,
             progress,
             alpha * opacity as f32,
             location,
@@ -1346,8 +1352,8 @@ impl MappedLayer {
             (buffer, crop, shadow)
         } else {
             let surface_size = (surface_geo.size.w as f32, surface_geo.size.h as f32);
-            let sliced = reveal_edge_spec(&reveal).and_then(|spec| {
-                build_sliced_reveal_pixels(&reveal, &spec, progress, scale.x as f32, surface_size)
+            let sliced = reveal_edge_spec(reveal).and_then(|spec| {
+                build_sliced_reveal_pixels(reveal, &spec, progress, scale.x as f32, surface_size)
             });
             let raster =
                 sliced.or_else(|| reveal.rasterize(progress, scale.x as f32, surface_size));
@@ -1367,7 +1373,7 @@ impl MappedLayer {
             ) else {
                 return;
             };
-            let shadow = self.create_reveal_shadow(&reveal, progress, location, scale);
+            let shadow = self.create_reveal_shadow(reveal, progress, location, scale);
             let mut cache = self.reveal_texture_cache.borrow_mut();
             cache.retain(|entry| entry.key != key);
             cache.push(RevealTextureCache {
@@ -1495,14 +1501,15 @@ impl MappedLayer {
                 }
             }
         }
-        let (planes, poses) = self.motion_snapshot()?;
+        let runtime = self.motion_runtime()?;
+        let poses = self.motion_poses_in(&runtime);
         let pose_for = |id| {
             poses
                 .iter()
                 .find(|(plane, _)| *plane == id)
                 .map(|(_, pose)| *pose)
         };
-        let hit = planes.iter().rev().find_map(|plane| {
+        let hit = runtime.planes.iter().rev().find_map(|plane| {
             let pose = pose_for(plane.id)?;
             pose.map_input(point, plane.source)
         });
@@ -1676,8 +1683,8 @@ impl MappedLayer {
                 Kind::Unspecified,
             );
             push(elem.into());
-        } else if let Some((planes, poses)) = self.motion_snapshot() {
-            let terminal = self.terminal_snapshot();
+        } else if let Some(runtime) = self.motion_runtime() {
+            let terminal = self.terminal_state(&runtime);
             if terminal.is_none() {
                 self.terminal_texture_cache.borrow_mut().take();
             }
@@ -1698,11 +1705,10 @@ impl MappedLayer {
                     location,
                     scale,
                     alpha,
-                    &planes,
-                    &poses,
+                    &runtime,
                     push,
                 );
-                self.render_reveal(ctx.renderer, location, scale, alpha, push);
+                self.render_reveal(ctx.renderer, &runtime, location, scale, alpha, push);
             }
         } else {
             // Layer surfaces don't have extra geometry like windows.
@@ -1756,13 +1762,13 @@ impl MappedLayer {
         location: Point<f64, Logical>,
         scale: Scale<f64>,
         alpha: f32,
-        planes: &[MotionPlane],
-        poses: &[(u32, MotionPose)],
+        runtime: &LayerMotionRuntime,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
         let root_location = location.to_physical_precise_round(scale);
         let root_id = Id::from_wayland_resource(surface);
-        let reveal_state = self.reveal_snapshot();
+        let poses = self.motion_poses_in(runtime);
+        let reveal_state = self.reveal_state(runtime);
         let animated_content_clip = reveal_state.as_ref().and_then(|(reveal, progress, _)| {
             reveal
                 .visible
@@ -1775,7 +1781,7 @@ impl MappedLayer {
                     )
                 })
         });
-        for plane in planes {
+        for plane in &runtime.planes {
             let Some((_, pose)) = poses.iter().find(|(id, _)| *id == plane.id) else {
                 continue;
             };
