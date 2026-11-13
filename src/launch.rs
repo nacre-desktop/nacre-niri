@@ -33,9 +33,7 @@ pub fn unit_from_cgroup(cgroup: &[u8]) -> Option<&str> {
         .ok()?
         .lines()
         .filter_map(|line| line.rsplit('/').next())
-        .find(|name| {
-            name.len() <= 255 && (name.ends_with(".service") || name.ends_with(".scope"))
-        })
+        .find(|name| name.len() <= 255 && (name.ends_with(".service") || name.ends_with(".scope")))
 }
 
 /// One launch. Until its first window maps it is a pending intent; afterwards it stays for its
@@ -110,7 +108,8 @@ impl LaunchTracker {
             .find(|intent| !intent.consumed && intent.unit.as_deref() == Some(unit))
     }
 
-    /// Match a toplevel by process ancestry, else by an app ID that names exactly one launch.
+    /// Match a toplevel by process ancestry (newest launch first), else by an app ID that names
+    /// exactly one launch.
     pub fn find_process(
         &mut self,
         ancestry: &[ProcessIdentity],
@@ -121,7 +120,7 @@ impl LaunchTracker {
         let by_process = self
             .pending
             .iter()
-            .position(|intent| intent.process.is_some_and(|root| ancestry.contains(&root)));
+            .rposition(|intent| intent.process.is_some_and(|root| ancestry.contains(&root)));
         let index = by_process.or_else(|| {
             let app_id = app_id.filter(|app_id| !app_id.is_empty())?;
             let mut matches = self
@@ -183,7 +182,10 @@ mod tests {
         let mut tracker = LaunchTracker::default();
         tracker.prepare("t".into(), None, WorkspaceId::specific(101), now);
         assert!(tracker
-            .pending("t", now + LAUNCH_WORKSPACE_TIMEOUT - Duration::from_nanos(1))
+            .pending(
+                "t",
+                now + LAUNCH_WORKSPACE_TIMEOUT - Duration::from_nanos(1)
+            )
             .is_some());
         assert!(tracker.get("t", now + LAUNCH_WORKSPACE_TIMEOUT).is_none());
     }
@@ -314,7 +316,9 @@ mod tests {
 
         tracker.prepare("second".into(), None, WorkspaceId::specific(406), now);
         consume(&mut tracker, "second", "org.discord", now);
-        assert!(tracker.find_process(&[], Some("org.discord"), now).is_none());
+        assert!(tracker
+            .find_process(&[], Some("org.discord"), now)
+            .is_none());
     }
 
     #[test]

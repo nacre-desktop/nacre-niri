@@ -1112,9 +1112,11 @@ impl State {
                 }
             };
             if let Some(intent) = intent {
-                // Cached here so mapping never reads /proc again.
-                if intent.process.is_none() {
-                    intent.process = ancestry.first().copied();
+                // Cached here so mapping never reads /proc again. Until consumed, a launch root
+                // that is not this client's ancestor (service unit, exited launcher) yields to it.
+                if !intent.consumed && !intent.process.is_some_and(|root| ancestry.contains(&root))
+                {
+                    intent.process = ancestry.first().copied().or(intent.process);
                 }
                 unmapped.launch_token = Some(intent.token.clone());
                 unmapped.launch_workspace_id = Some(intent.workspace);

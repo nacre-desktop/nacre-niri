@@ -660,13 +660,17 @@ fn map_toplevel(fixture: &mut Fixture, client: ClientId, surface: &WlSurface) {
 }
 
 fn workspace_of(fixture: &mut Fixture, title: &str) -> Option<WorkspaceId> {
-    fixture.niri().layout.workspaces().find_map(|(_, _, workspace)| {
-        workspace.windows().find_map(|window| {
-            with_toplevel_role(window.toplevel(), |role| {
-                (role.title.as_deref() == Some(title)).then_some(workspace.id())
+    fixture
+        .niri()
+        .layout
+        .workspaces()
+        .find_map(|(_, _, workspace)| {
+            workspace.windows().find_map(|window| {
+                with_toplevel_role(window.toplevel(), |role| {
+                    (role.title.as_deref() == Some(title)).then_some(workspace.id())
+                })
             })
         })
-    })
 }
 
 /// Prepare a launch for `workspace` and attach it to the unmapped `surface`, as activation would.
@@ -697,11 +701,24 @@ fn launch_follower_keeps_splash_and_main_toplevels_on_launch_workspace() {
     let client = fixture.add_client();
     let (splash, splash_server) =
         create_toplevel(&mut fixture, client, "org.nacre.discord", "discord-splash");
-    let token = attach_launch(&mut fixture, &splash_server, "nacre-app-discord.service", launch);
+    let token = attach_launch(
+        &mut fixture,
+        &splash_server,
+        "nacre-app-discord.service",
+        launch,
+    );
+    // A launch root that is not the client's ancestor must yield to the client's own process.
+    let root = crate::launch_process::ProcessIdentity {
+        pid: u32::MAX,
+        starttime: 0,
+    };
+    let tracker = &mut fixture.niri().launch_tracker;
+    tracker.get(&token, Instant::now()).unwrap().process = Some(root);
     map_toplevel(&mut fixture, client, &splash);
     assert_eq!(workspace_of(&mut fixture, "discord-splash"), Some(launch));
 
-    let (main, main_server) = create_toplevel(&mut fixture, client, "org.nacre.main", "discord-main");
+    let (main, main_server) =
+        create_toplevel(&mut fixture, client, "org.nacre.main", "discord-main");
     fixture.client(client).window(&main).commit();
     fixture.roundtrip(client);
     assert_eq!(
@@ -726,7 +743,12 @@ fn launch_follower_app_id_keeps_same_app_and_leaves_other_apps_at_active_workspa
     let app_client = fixture.add_client_with_xwayland_satellite(true);
     let (first, first_server) =
         create_toplevel(&mut fixture, app_client, "org.nacre.discord", "app-first");
-    let token = attach_launch(&mut fixture, &first_server, "nacre-app-discord.service", launch);
+    let token = attach_launch(
+        &mut fixture,
+        &first_server,
+        "nacre-app-discord.service",
+        launch,
+    );
     map_toplevel(&mut fixture, app_client, &first);
 
     let (second, second_server) =

@@ -8,8 +8,9 @@ to the transient app unit without changing its original workspace or 60-second
 deadline.
 
 At map time, the first eligible unparented toplevel consumes the still-valid
-launch record, which then stays for the rest of its 60 s lifetime with the
-client's process identity (cached at its initial configure, so mapping reads no
+launch record, which then stays for the rest of its 60 s lifetime with its
+process identity (the spawned launch root while it is the client's ancestor,
+otherwise the client itself; cached at initial configure, so mapping reads no
 /proc) and app ID. Later unparented toplevels from that launch keep the launch
 workspace when their PID ancestry matches or their app ID uniquely identifies
 the consumed record.
