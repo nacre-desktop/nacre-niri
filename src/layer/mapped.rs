@@ -282,6 +282,13 @@ fn reveal_edge_clip_pixels(
     )
 }
 
+/// A body under one logical pixel (the first frames of an open, the last of a close) draws no
+/// contour, so the whole-crop raster it would otherwise trigger is skipped.
+fn reveal_body_is_degenerate(reveal: &RevealDescriptor, progress: f64) -> bool {
+    let body = reveal.sample(progress).body;
+    reveal.static_rects.is_empty() && body.w.min(body.h) < 1.
+}
+
 fn reveal_edge_spec(reveal: &RevealDescriptor) -> Option<RevealEdgeSpec> {
     if !reveal.visible
         || reveal.corner_mode != super::reveal::CornerMode::QuadraticCut
@@ -998,7 +1005,7 @@ impl MappedLayer {
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) -> bool {
         let Some(spec) = reveal_edge_spec(reveal) else {
-            self.reveal_edge_cache.borrow_mut().take();
+            // Keep the template: the close plays this descriptor backwards and has no spec.
             self.reveal_edge_rejected.borrow_mut().take();
             return false;
         };
@@ -1208,15 +1215,15 @@ impl MappedLayer {
         alpha: f32,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
+        // The baked edge template (`reveal_edge_cache`) survives a close and a reopen: its key
+        // rejects a changed descriptor, and rebuilding it cost one 6 ms frame per open.
         let Some((reveal, progress, opacity)) = self.reveal_state(runtime) else {
             self.reveal_texture_cache.borrow_mut().clear();
-            self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
             return;
         };
         if !reveal.visible {
             self.reveal_texture_cache.borrow_mut().clear();
-            self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
             return;
         }
@@ -1312,6 +1319,10 @@ impl MappedLayer {
             if let Some(shadow) = self.create_reveal_shadow(reveal, progress, location, scale) {
                 push(shadow.with_alpha(alpha * opacity as f32).into());
             }
+            self.reveal_texture_cache.borrow_mut().clear();
+            return;
+        }
+        if reveal_body_is_degenerate(reveal, progress) {
             self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
@@ -1933,5 +1944,29 @@ impl MappedLayer {
 impl Drop for MappedLayer {
     fn drop(&mut self) {
         remove_pre_commit_hook(self.surface.wl_surface(), &self.pre_commit_hook);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sub_pixel_reveal_body_skips_the_contour_raster() {
+        // The dashboard open as Bead sends it: the body grows from the bar edge, 0 to 650 px.
+        let mut reveal = RevealDescriptor::empty();
+        reveal.output_bounds = RevealRect::new(0., 0., 1920., 1080.);
+        reveal.crop = reveal.output_bounds;
+        reveal.animated_from = RevealRect::new(32., 32., 984., 0.);
+        reveal.animated_to = RevealRect::new(32., 32., 984., 650.);
+        assert!(reveal_body_is_degenerate(&reveal, 0.));
+        assert!(reveal_body_is_degenerate(&reveal, 0.5 / 650.));
+        assert!(!reveal_body_is_degenerate(&reveal, 1.5 / 650.));
+        assert!(!reveal_body_is_degenerate(&reveal, 1.));
+        // A compound contour still has its static rectangles to draw.
+        reveal
+            .static_rects
+            .push(RevealRect::new(0., 0., 1920., 50.));
+        assert!(!reveal_body_is_degenerate(&reveal, 0.));
     }
 }
