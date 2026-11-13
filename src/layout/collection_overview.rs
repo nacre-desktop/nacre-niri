@@ -165,7 +165,6 @@ impl<W: LayoutElement> Layout<W> {
         let Some(prewarm) = self.collection_overview.take_active_prewarm(output) else {
             return;
         };
-        let _trace = crate::frame_trace::span("overview_prewarm_active");
         let Some(monitor) = self.monitor_for_output(output) else {
             return;
         };
@@ -180,7 +179,6 @@ impl<W: LayoutElement> Layout<W> {
         if workspace.overview_revision() != prewarm.revision {
             // A changing client must not turn this finite opening queue into continuous work.
             // Its current buffer will use the normal, correctness-preserving reveal path.
-            crate::frame_trace::marker("overview_prewarm_stale");
             return;
         }
 
@@ -207,6 +205,8 @@ impl<W: LayoutElement> Layout<W> {
         self.collection_overview
             .active_warm_attempts
             .set(self.collection_overview.active_warm_attempts.get() + 1);
+        // A failed prewarm needs no handling: the normal reveal path renders the workspace.
+        #[cfg_attr(not(test), allow(unused_variables))]
         let result = render_to_texture(
             ctx.renderer,
             size,
@@ -215,9 +215,6 @@ impl<W: LayoutElement> Layout<W> {
             Fourcc::Abgr8888,
             elements.iter().rev(),
         );
-        if result.is_err() {
-            crate::frame_trace::marker("overview_prewarm_failed");
-        }
         #[cfg(test)]
         if result.is_ok() {
             self.collection_overview
@@ -1234,7 +1231,6 @@ impl Overview {
         if let Some(cached) = self.textures.borrow().iter().find(|entry| entry.key == key) {
             return Some(cached.buffer.clone());
         }
-        let _trace = crate::frame_trace::span("overview_preview_cache_miss");
         let mut elements: Vec<
             HiddenSnapshotRenderElement<smithay::backend::renderer::gles::GlesRenderer>,
         > = Vec::new();
@@ -1364,7 +1360,6 @@ impl Overview {
             labels.clear();
         }
         if !labels.contains_key(&key) {
-            let _trace = crate::frame_trace::span("overview_label_cache_miss");
             let surface =
                 ImageSurface::create(cairo::Format::ARgb32, width, (32. * scale).ceil() as i32)
                     .ok()?;

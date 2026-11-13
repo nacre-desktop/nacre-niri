@@ -49,11 +49,7 @@ pub fn render_snapshot_from_surface_tree(
                 };
                 location += view.offset.to_f64();
 
-                let imported = {
-                    let _trace = crate::frame_trace::surface_import();
-                    import_surface(renderer, states)
-                };
-                if let Err(err) = imported {
+                if let Err(err) = import_surface(renderer, states) {
                     warn!("failed to import surface: {err:?}");
                     return;
                 }
@@ -133,13 +129,9 @@ pub fn push_elements_from_surface_tree<R>(
                 };
 
                 if has_view {
-                    let imported = {
-                        let _trace = crate::frame_trace::surface_import();
-                        WaylandSurfaceRenderElement::from_surface(
-                            renderer, surface, states, location, alpha, kind,
-                        )
-                    };
-                    match imported {
+                    match WaylandSurfaceRenderElement::from_surface(
+                        renderer, surface, states, location, alpha, kind,
+                    ) {
                         Ok(Some(surface)) => push(surface),
                         Ok(None) => {} // surface is not mapped
                         Err(err) => {

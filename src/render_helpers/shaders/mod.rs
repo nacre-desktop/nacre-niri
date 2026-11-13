@@ -212,7 +212,6 @@ impl Shaders {
 }
 
 pub fn init(renderer: &mut GlesRenderer) {
-    let _trace = crate::frame_trace::span("renderer_shader_init");
     let shaders = Shaders::compile(renderer);
     let data = renderer.egl_context().user_data();
     if !data.insert_if_missing(|| shaders) {

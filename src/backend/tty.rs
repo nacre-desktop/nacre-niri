@@ -1941,7 +1941,6 @@ impl Tty {
                 if needs_sync {
                     if let PrimaryPlaneElement::Swapchain(element) = res.primary_element {
                         let _span = tracy_client::span!("wait for completion");
-                        let _trace = crate::frame_trace::span("drm_frame_completion_wait");
                         if let Err(err) = element.sync.wait() {
                             warn!("error waiting for frame completion: {err:?}");
                         }

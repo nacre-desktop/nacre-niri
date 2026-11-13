@@ -3706,7 +3706,6 @@ impl<W: LayoutElement> Layout<W> {
                         .collection_overview
                         .schedule_active_prewarm(&mon.output, candidates)
                     {
-                        let _trace = crate::frame_trace::span("overview_prewarm_prepare");
                         if let Some(workspace) =
                             mon.workspaces.iter_mut().find(|ws| ws.id() == workspace)
                         {
@@ -4792,9 +4791,6 @@ impl<W: LayoutElement> Layout<W> {
     }
 
     pub fn overview_gesture_begin(&mut self) {
-        if !self.overview_open {
-            crate::frame_trace::overview_open();
-        }
         self.overview_open = true;
 
         let value = self.overview_progress.take().map_or(0., |p| p.value());
@@ -5714,9 +5710,6 @@ impl<W: LayoutElement> Layout<W> {
         self.overview_open = !self.overview_open;
         if self.overview_open {
             self.collection_overview.clear();
-            crate::frame_trace::overview_open();
-        } else {
-            crate::frame_trace::marker("overview_close");
         }
 
         let from = self.overview_progress.take().map_or(0., |p| p.value());

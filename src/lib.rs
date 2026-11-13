@@ -13,7 +13,6 @@ pub mod cursor_shake;
 pub mod dbus;
 pub(crate) mod edge_triggers;
 pub mod frame_clock;
-pub(crate) mod frame_trace;
 pub mod handlers;
 pub mod input;
 pub mod ipc;
