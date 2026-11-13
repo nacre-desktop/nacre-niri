@@ -51,15 +51,18 @@ done
 export UWSM_FINALIZE_VARNAMES
 unset HYPRLAND_INSTANCE_SIGNATURE HYPRCURSOR_THEME HYPRCURSOR_SIZE GDK_BACKEND
 
+# Find units installed after the user manager started.
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload || exit $?
+fi
+
 if command -v uwsm >/dev/null 2>&1; then
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user daemon-reload || exit $?
-    fi
     exec uwsm start -e -D niri -- /usr/bin/nacre-niri --session --config "$config"
 fi
 
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user reset-failed nacre-niri.service nacre-niri-shutdown.target || exit $?
+    # Fails with "not loaded" until the units have been used once; nothing to reset then.
+    systemctl --user reset-failed nacre-niri.service nacre-niri-shutdown.target 2>/dev/null || :
     systemctl --user import-environment || exit $?
     if command -v dbus-update-activation-environment >/dev/null 2>&1; then
         dbus-update-activation-environment --all || exit $?

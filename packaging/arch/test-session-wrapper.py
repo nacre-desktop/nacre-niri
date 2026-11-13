@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 WRAPPER = ROOT / "nacre-niri-session"
 
 
-def run(active="", start_fails=False, with_nacre=False, no_config=False, overlay=False):
+def run(active="", start_fails=False, reset_fails=False, with_nacre=False, no_config=False, overlay=False):
     with tempfile.TemporaryDirectory(prefix="nacre-niri-session-") as temp:
         root = Path(temp)
         home = root / "home"
@@ -40,6 +40,8 @@ def run(active="", start_fails=False, with_nacre=False, no_config=False, overlay
             "  exit 3\n"
             "fi\n"
             "if [ \"$*\" = '--user --wait start nacre-niri.service' ] && [ \"${START_FAIL-0}\" = 1 ]; then exit 31; fi\n"
+            # systemd 262 on a fresh install: the units exist on disk but were never loaded.
+            "if [ \"$2\" = reset-failed ] && [ \"${RESET_FAIL-0}\" = 1 ]; then echo \"Unit $3 not loaded.\" >&2; exit 1; fi\n"
         )
         systemctl.chmod(0o755)
         dbus = bindir / "dbus-update-activation-environment"
@@ -63,6 +65,7 @@ def run(active="", start_fails=False, with_nacre=False, no_config=False, overlay
             "TEST_LOG": str(log),
             "ACTIVE_UNITS": active,
             "START_FAIL": "1" if start_fails else "0",
+            "RESET_FAIL": "1" if reset_fails else "0",
             "NIRI_CONFIG": env_niri_config,
         }
         env.pop("MANAGERPID", None)
@@ -105,6 +108,11 @@ code, calls, _ = run(start_fails=True)
 check(code == 31, f"service failure status was hidden: {code}, {calls}")
 check(any("start --job-mode=replace-irreversibly nacre-niri-shutdown.target" in call for call in calls),
       f"did not clean up failed compositor session: {calls}")
+code, calls, _ = run(reset_fails=True)
+starts = [i for i, call in enumerate(calls) if "--wait start nacre-niri.service" in call]
+check(code == 0 and starts, f"unloaded units blocked the session without UWSM: {code}, {calls}")
+check(any("--user daemon-reload" in call for call in calls[:starts[0]]),
+      f"did not reload user units before starting without UWSM: {calls}")
 code, calls, config = run(with_nacre=True)
 uwsm_call = next((call for call in calls if call.startswith("uwsm|")), "")
 check(code == 0 and f"uwsm|start -e -D niri -- /usr/bin/nacre-niri --session --config {config}" in uwsm_call,
@@ -120,4 +128,4 @@ for prepared in (False, True):
     check(any(f"NIRI_CONFIG={config}" in call for call in calls
               if "import-environment" in call or call.startswith("uwsm|")),
           f"fork overlay was not selected: {calls}")
-print("PASS: active-session guards, renamed units, config fallback and overlay preference, error cleanup, UWSM config launch")
+print("PASS: active-session guards, renamed units, config fallback and overlay preference, error cleanup, unloaded units without UWSM, UWSM config launch")

@@ -14,7 +14,7 @@ _commit=${_commit:-$(git rev-parse --verify HEAD)}
 source=("nacre-niri::git+https://github.com/nacre-desktop/nacre-niri.git#commit=${_commit}"
         'nacre-niri-session' 'nacre-niri-fork.desktop')
 sha256sums=('SKIP'
-            '8277cae0d13d870f4067bbd7e5ff51285df25e2f3e4e57e2834a25e1219af6ee'
+            'a788ddf93efe6dd3e36d558a7f0a66ef9e84ccceb5f9294b48c87803ae38ebea'
             '33b55bfedc42a061818b329f75aea93113da8501574ca033bc5c1f2298ff036e')
 # Keep stock niri available for rollback; systemd owns the fallback units and Bash runs the wrapper.
 depends=('niri>=26.04' 'systemd' 'bash' 'cairo' 'glib2' 'glibc' 'libdisplay-info' 'libgcc' 'libinput' 'libpipewire' 'libxkbcommon' 'mesa' 'pango' 'pixman' 'seatd' 'systemd-libs')
