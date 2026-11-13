@@ -2,6 +2,8 @@
 
 These documents describe fork-specific behavior and integration contracts. They supplement the [upstream niri documentation](https://niri-wm.github.io/niri/) and are not general compositor setup guidance.
 
+[Differences from upstream niri](differences-from-niri.md) is the one-page map of every fork change.
+
 ## Current contracts
 
 - [Workspace collections](NN0001-collections.md) and [collection persistence](collection-persistence.md)
