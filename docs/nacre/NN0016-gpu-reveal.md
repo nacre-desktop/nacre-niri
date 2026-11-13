@@ -26,7 +26,11 @@ fallback. Early one-axis grows use Bead's MIT `sliced_art` method when the
 16-logical-pixel center strip is uniform within four channel values: render
 96-logical-pixel end slices and stretch the center line, keeping the legacy
 gradient phase. Tiny-skia still builds initial templates synchronously on the
-first eligible frame. Circular shadows use Niri's rounded-box Gaussian shadow shader
+first eligible frame. A template survives the close, a motion reset and a new
+controller; an unmapped layer hands it to the next layer surface with the same
+cache key (one entry), since Bead maps a new surface for every panel open. Frames
+whose contour alpha is under half an 8-bit level (the start of an open, below
+Bead's opaque-above threshold) draw no contour at all. Circular shadows use Niri's rounded-box Gaussian shadow shader
 with all four sampled radii. The compositor advances the motion timeline and
 does not ask Bead to repaint each refresh. The generic rounded content mask is
 deliberately absent: legacy Nacre reveal output clips to the authored
