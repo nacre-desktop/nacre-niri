@@ -15,7 +15,7 @@ use super::client::bead_layer_motion::v1::client::bead_layer_motion_v1::{
 };
 use super::client::LayerConfigureProps;
 use super::Fixture;
-use crate::layer::motion::{MotionPose, OpacityMode};
+use crate::layer::motion::{LayerMotionGroup, MotionCurve, MotionPose, OpacityMode};
 use crate::layer::reveal::{CornerMode, Rect as RevealRect, RevealDescriptor};
 use crate::protocols::layer_motion::{LayerMotionRuntime, MotionPlane};
 use crate::render_helpers::damage::ExtraDamage;
@@ -501,6 +501,141 @@ fn reveal_fill_raster_is_under_content_and_survives_capture_rendering() {
     assert_eq!(pixel(5, 5), &[0, 0, 255, 255]);
     assert_eq!(pixel(12, 12), &[255, 0, 0, 255]);
     assert_eq!(pixel(0, 0), &[0, 0, 0, 0]);
+}
+
+#[test]
+fn reveal_skips_invisible_frames_and_a_reopened_panel_reuses_the_edge_template() {
+    // Nacre's dashboard open: the frame header is a static rect, the body grows down from it,
+    // its opacity stays under Bead's opaque-above threshold for the first frames, Bead resets the
+    // motion once the open is done, and it maps a new layer surface for every open.
+    let (w, h) = (400_f32, 300_f32);
+    let mut reveal = RevealDescriptor::empty();
+    reveal.output_bounds = RevealRect::new(0., 0., w, h);
+    reveal.crop = reveal.output_bounds;
+    reveal.static_rects = vec![RevealRect::new(0., 0., w, 32.)];
+    reveal.animated_from = RevealRect::new(32., 32., w - 64., 0.);
+    reveal.animated_to = RevealRect::new(32., 32., w - 64., h - 64.);
+    reveal.radii_from = [16.; 4];
+    reveal.radii_to = [16.; 4];
+    reveal.corner_mode = CornerMode::QuadraticCut;
+    reveal.square_edges = 0b1111;
+    reveal.fill = [0, 0, 255, 255];
+    let pose = |opacity| MotionPose {
+        destination: rect(0., 0., f64::from(w), f64::from(h)),
+        clip: rect(0., 0., f64::from(w), f64::from(h)),
+        opacity,
+    };
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.niri_state()
+        .backend
+        .headless()
+        .add_renderer()
+        .expect("surfaceless GLES renderer for reveal reopen");
+    let client_id = f.add_client();
+    // (is the clipped full-open template, element id) of every contour element.
+    let render = |f: &mut Fixture, time: Duration| {
+        use crate::layer::mapped::LayerSurfaceRenderElement as E;
+        f.niri().clock.set_unadjusted(time);
+        let state = f.niri_state();
+        let (backend, niri) = (&mut state.backend, &mut state.niri);
+        backend
+            .with_primary_renderer(|renderer| {
+                let mapped = niri.mapped_layer_surfaces.values().next().unwrap();
+                let mut contour = Vec::new();
+                mapped.render_normal(
+                    RenderCtx {
+                        renderer,
+                        target: RenderTarget::Output,
+                        scale_override: None,
+                        xray: None,
+                    },
+                    None,
+                    Point::from((0., 0.)),
+                    XrayPos::default(),
+                    &mut |element| {
+                        if matches!(element, E::Reveal(_) | E::RevealClip(_) | E::Border(_)) {
+                            contour
+                                .push((matches!(element, E::RevealClip(_)), element.id().clone()));
+                        }
+                    },
+                );
+                contour
+            })
+            .unwrap()
+    };
+
+    let mut first_template = None;
+    for open in 0..2u64 {
+        let start = Duration::from_secs(1 + open);
+        let layer = f
+            .client(client_id)
+            .create_layer(None, Layer::Top, "motion-reveal-reopen");
+        let surface = layer.surface.clone();
+        layer.set_configure_props(LayerConfigureProps {
+            anchor: Some(Anchor::Left | Anchor::Top),
+            size: Some((w as u32, h as u32)),
+            ..Default::default()
+        });
+        layer.commit();
+        f.double_roundtrip(client_id);
+        let layer = f.client(client_id).layer(&surface);
+        let buffer = layer
+            .spbm
+            .create_u32_rgba_buffer(u32::MAX, 0, 0, u32::MAX, &layer.qh, ());
+        layer.surface.attach(Some(&buffer), 0, 0);
+        layer.set_size(w as u16, h as u16);
+        layer.ack_last_and_commit();
+        f.double_roundtrip(client_id);
+
+        let group = LayerMotionGroup::new(
+            1,
+            vec![(0, pose(0.))],
+            vec![(0, pose(1.))],
+            vec![(0, OpacityMode::OpaqueAbove(1_000))],
+            start,
+            Duration::from_millis(360),
+            MotionCurve::Linear,
+        )
+        .unwrap();
+        let mapped = f.niri().mapped_layer_surfaces.values_mut().next().unwrap();
+        mapped.update_sizes(Size::from((f64::from(w), f64::from(h))), 1.);
+        let runtime = Arc::new(Mutex::new(LayerMotionRuntime {
+            planes: vec![plane(0, rect(0., 0., f64::from(w), f64::from(h)), pose(0.))],
+            current: group.sample(start),
+            active: Some(group),
+            reveal: Some(reveal.clone()),
+            reveal_current: Some(reveal.sample(0.)),
+            terminal: None,
+            terminal_ready: false,
+        }));
+        mapped.set_motion_runtime(runtime.clone());
+
+        // Progress 0.0004: opacity 0.0004 and a 0.09 px body under the static header.
+        let invisible = render(&mut f, start + Duration::from_micros(144));
+        assert!(
+            invisible.is_empty(),
+            "open {open}: nothing visible to rasterize: {invisible:?}"
+        );
+        let template = render(&mut f, start + Duration::from_millis(180));
+        assert!(
+            template.iter().any(|(clipped, _)| *clipped),
+            "open {open}: halfway uses the edge template"
+        );
+        match &first_template {
+            None => first_template = Some(template),
+            Some(first) => assert_eq!(&template, first, "the reopen reuses the baked template"),
+        }
+
+        runtime.lock().unwrap().planes.clear();
+        assert!(render(&mut f, start + Duration::from_millis(400)).is_empty());
+        let layer = f.client(client_id).layer(&surface);
+        layer.surface.attach(None, 0, 0);
+        layer.surface.commit();
+        f.double_roundtrip(client_id);
+        assert!(f.niri().mapped_layer_surfaces.is_empty());
+    }
 }
 
 #[test]

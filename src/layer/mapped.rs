@@ -282,11 +282,12 @@ fn reveal_edge_clip_pixels(
     )
 }
 
-/// A body under one logical pixel (the first frames of an open, the last of a close) draws no
-/// contour, so the whole-crop raster it would otherwise trigger is skipped.
-fn reveal_body_is_degenerate(reveal: &RevealDescriptor, progress: f64) -> bool {
-    let body = reveal.sample(progress).body;
-    reveal.static_rects.is_empty() && body.w.min(body.h) < 1.
+thread_local! {
+    /// The edge template of the last unmapped layer. Bead maps a new layer surface for every
+    /// panel open, so the reopen reuses its predecessor's bake when the key still matches.
+    /// shortcut: one entry, so alternating panels re-bake; make it a small LRU if traces show it.
+    static RETIRED_REVEAL_EDGE: RefCell<Option<RevealEdgeTextureCache>> =
+        const { RefCell::new(None) };
 }
 
 fn reveal_edge_spec(reveal: &RevealDescriptor) -> Option<RevealEdgeSpec> {
@@ -850,7 +851,6 @@ impl MappedLayer {
         let runtime = self.motion.as_ref()?.lock().unwrap();
         if runtime.planes.is_empty() {
             self.reveal_texture_cache.borrow_mut().clear();
-            self.reveal_edge_cache.borrow_mut().take();
             self.reveal_edge_rejected.borrow_mut().take();
             self.terminal_texture_cache.borrow_mut().take();
             return None;
@@ -1044,6 +1044,10 @@ impl MappedLayer {
             if cache.as_ref().is_some_and(|entry| entry.key != key) {
                 cache.take();
             }
+            if cache.is_none() {
+                *cache = RETIRED_REVEAL_EDGE
+                    .with_borrow_mut(|retired| retired.take_if(|entry| entry.key == key));
+            }
             cache.as_ref().and_then(|entry| {
                 let open = entry
                     .open
@@ -1215,8 +1219,9 @@ impl MappedLayer {
         alpha: f32,
         push: &mut dyn FnMut(LayerSurfaceRenderElement<R>),
     ) {
-        // The baked edge template (`reveal_edge_cache`) survives a close and a reopen: its key
-        // rejects a changed descriptor, and rebuilding it cost one 6 ms frame per open.
+        // The baked edge template (`reveal_edge_cache`) survives a close, a motion reset (Bead
+        // resets the dashboard after its open) and, through `RETIRED_REVEAL_EDGE`, a reopen: its
+        // key rejects a changed descriptor, and rebuilding it cost one 6 ms frame per open.
         let Some((reveal, progress, opacity)) = self.reveal_state(runtime) else {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_rejected.borrow_mut().take();
@@ -1225,6 +1230,12 @@ impl MappedLayer {
         if !reveal.visible {
             self.reveal_texture_cache.borrow_mut().clear();
             self.reveal_edge_rejected.borrow_mut().take();
+            return;
+        }
+        // Under half a level of Niri's 8-bit outputs everywhere: the first frames of an open,
+        // below Bead's opaque-above threshold, would otherwise rasterize the whole crop.
+        if alpha * opacity as f32 * 255. < 0.5 {
+            self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
         let Some(surface_geo) = with_states(self.surface.wl_surface(), crate::utils::surface_geo)
@@ -1319,10 +1330,6 @@ impl MappedLayer {
             if let Some(shadow) = self.create_reveal_shadow(reveal, progress, location, scale) {
                 push(shadow.with_alpha(alpha * opacity as f32).into());
             }
-            self.reveal_texture_cache.borrow_mut().clear();
-            return;
-        }
-        if reveal_body_is_degenerate(reveal, progress) {
             self.reveal_texture_cache.borrow_mut().clear();
             return;
         }
@@ -1944,29 +1951,8 @@ impl MappedLayer {
 impl Drop for MappedLayer {
     fn drop(&mut self) {
         remove_pre_commit_hook(self.surface.wl_surface(), &self.pre_commit_hook);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sub_pixel_reveal_body_skips_the_contour_raster() {
-        // The dashboard open as Bead sends it: the body grows from the bar edge, 0 to 650 px.
-        let mut reveal = RevealDescriptor::empty();
-        reveal.output_bounds = RevealRect::new(0., 0., 1920., 1080.);
-        reveal.crop = reveal.output_bounds;
-        reveal.animated_from = RevealRect::new(32., 32., 984., 0.);
-        reveal.animated_to = RevealRect::new(32., 32., 984., 650.);
-        assert!(reveal_body_is_degenerate(&reveal, 0.));
-        assert!(reveal_body_is_degenerate(&reveal, 0.5 / 650.));
-        assert!(!reveal_body_is_degenerate(&reveal, 1.5 / 650.));
-        assert!(!reveal_body_is_degenerate(&reveal, 1.));
-        // A compound contour still has its static rectangles to draw.
-        reveal
-            .static_rects
-            .push(RevealRect::new(0., 0., 1920., 50.));
-        assert!(!reveal_body_is_degenerate(&reveal, 0.));
+        if let Some(edge) = self.reveal_edge_cache.get_mut().take() {
+            let _ = RETIRED_REVEAL_EDGE.try_with(|retired| retired.replace(Some(edge)));
+        }
     }
 }
