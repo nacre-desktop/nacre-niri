@@ -3,7 +3,6 @@
 //! The workspace stack continues to be driven by the layout's presentation engines. This module
 //! keeps the stable collection identity separate from an output name so it survives hotplug.
 
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -1477,14 +1476,16 @@ impl<W: LayoutElement> Layout<W> {
         {
             return;
         }
-        let shown: Vec<_> = self.monitors().filter_map(|m| m.collection_id).collect();
-        let outputs: Vec<_> = self.monitors().map(|m| m.output().clone()).collect();
-        let returns: Vec<_> = self.collection_returns.values().copied().collect();
+        // Borrow the fields directly: this runs on every refresh, so no per-call collections.
+        let monitors: &[super::monitor::Monitor<W>] = match &self.monitor_set {
+            super::MonitorSet::Normal { monitors, .. } => monitors,
+            super::MonitorSet::NoOutputs { .. } => &[],
+        };
         if self
             .collection_switch_pending
             .as_ref()
             .is_some_and(|(output, id, _)| {
-                !outputs.iter().any(|candidate| candidate == output)
+                !monitors.iter().any(|m| m.output() == output)
                     || !self
                         .collections
                         .iter()
@@ -1501,24 +1502,22 @@ impl<W: LayoutElement> Layout<W> {
             .collection_switch_pending
             .as_ref()
             .map(|(_, id, _)| *id);
+        let returns = &self.collection_returns;
         self.collections.retain(|c| {
             c.persistent
-                || shown.contains(&c.id)
-                || returns.contains(&c.id)
+                || monitors.iter().any(|m| m.collection_id == Some(c.id))
+                || returns.values().any(|id| *id == c.id)
                 || pending == Some(c.id)
                 || switching.is_some_and(|(current, other)| current == c.id || other == Some(c.id))
                 || (c.name.is_none()
                     && c.home_output
                         .as_ref()
-                        .is_some_and(|home| outputs.iter().any(|output| home.matches(output))))
+                        .is_some_and(|home| monitors.iter().any(|m| home.matches(m.output()))))
                 || c.workspaces.iter().any(|ws| ws.has_windows())
         });
-        let valid: HashSet<_> = self
-            .collections
-            .iter()
-            .map(|collection| collection.id)
-            .collect();
-        self.collection_recent_use.retain(|id| valid.contains(id));
+        let collections = &self.collections;
+        self.collection_recent_use
+            .retain(|id| collections.iter().any(|c| c.id == *id));
         let remove_transition = self.collection_switch.as_ref().is_some_and(|transition| {
             !self
                 .monitors()
