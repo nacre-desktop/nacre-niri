@@ -8,15 +8,19 @@ to the transient app unit without changing its original workspace or 60-second
 deadline.
 
 At map time, the first eligible unparented toplevel consumes the still-valid
-launch record. Explicit `open-on-workspace` and `open-on-output` rules remain authoritative,
+launch record and records a bounded follower for its process ancestry and app ID.
+Later unparented toplevels from that launch keep the launch workspace when their
+PID ancestry matches or their app ID uniquely identifies the live follower.
+Explicit `open-on-workspace` and `open-on-output` rules remain authoritative,
 parented dialogs keep their parent placement, and launch intent takes precedence
 over automatic saved app routing. A window placed off the active workspace does
 not focus or switch the view, including with `open-focused true`; it is marked
 urgent. Late activation for that same mapped surface stays urgent-only while its
 launch token remains valid, including when a rule chooses its off-view
 destination. A second launch that activates an already mapped window retires the
-unused record and retains normal activation behavior. A later independent
-window from an already mapped native client process receives today's placement.
+unused record and retains normal activation behavior. Followers expire with the
+60-second launch record and are retired when the user moves or activates their
+window on another workspace.
 
 Records expire at the 60-second boundary, and the registry is capped at 128.
 The feature's declared additional memory budget is at most 1 MiB for those
@@ -43,6 +47,17 @@ satellite leader window consuming the token as one possibility.
 The QML-only legacy launch path is not instrumented because the QML shell is
 being retired. This feature does not alter persisted app routes or create
 workspaces that have disappeared before map.
+
+## NN0034: launch followers
+
+Chromium/Electron can move its existing process into an `app-<name>-<pid>.scope`
+after launch. This does not change its PID ancestry, but it hides the original
+Nacre unit from later toplevels. NN0034 keeps subsequent toplevels with matching
+process ancestry, or a unique matching app ID, on the original launch workspace.
+The 60-second expiry and 128-record cap are unchanged. A user move or activation
+on another workspace retires that follower. This does not add the
+xwayland-satellite activation-token bridge; X11 launch placement still depends
+on that bridge.
 
 ## Validation
 

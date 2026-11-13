@@ -8,6 +8,7 @@ use crate::layout::workspace::WorkspaceId;
 /// Launch intents expire at this boundary.
 pub const LAUNCH_WORKSPACE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_PENDING_LAUNCHES: usize = 128;
+const MAX_FOLLOWER_APP_ID_BYTES: usize = 255;
 
 pub fn launch_is_off_view(target: Option<WorkspaceId>, active: Option<WorkspaceId>) -> bool {
     target.is_some() && target != active
@@ -47,6 +48,16 @@ pub struct LaunchIntent {
     pub workspace: WorkspaceId,
     pub created: Instant,
     consumed: bool,
+    follower: Option<LaunchFollower>,
+}
+
+#[derive(Debug, Clone)]
+struct LaunchFollower {
+    process: Option<ProcessIdentity>,
+    first_consumer_process: Option<ProcessIdentity>,
+    app_id: Option<String>,
+    first_window: Option<crate::window::mapped::MappedId>,
+    window_workspace: Option<WorkspaceId>,
 }
 
 #[derive(Debug, Default)]
@@ -57,6 +68,11 @@ pub struct LaunchTracker {
 impl LaunchTracker {
     pub fn is_empty(&self) -> bool {
         self.pending.is_empty()
+    }
+
+    pub fn has_followers(&mut self, now: Instant) -> bool {
+        self.expire(now);
+        self.pending.iter().any(|intent| intent.follower.is_some())
     }
 
     pub fn contains_token(&mut self, token: &str, now: Instant) -> bool {
@@ -88,6 +104,7 @@ impl LaunchTracker {
             workspace,
             created: now,
             consumed: false,
+            follower: None,
         });
     }
 
@@ -153,6 +170,128 @@ impl LaunchTracker {
         } else {
             false
         }
+    }
+
+    pub fn set_follower(
+        &mut self,
+        token: &str,
+        process: Option<ProcessIdentity>,
+        app_id: Option<String>,
+        now: Instant,
+    ) -> bool {
+        self.expire(now);
+        let Some(intent) = self
+            .pending
+            .iter_mut()
+            .find(|intent| intent.token == token && intent.consumed)
+        else {
+            return false;
+        };
+        let app_id =
+            app_id.filter(|app_id| !app_id.is_empty() && app_id.len() <= MAX_FOLLOWER_APP_ID_BYTES);
+        if process.is_none() && intent.process.is_none() && app_id.is_none() {
+            return false;
+        }
+        intent.follower = Some(LaunchFollower {
+            process: intent.process,
+            first_consumer_process: process,
+            app_id,
+            first_window: None,
+            window_workspace: None,
+        });
+        true
+    }
+
+    pub fn set_follower_window(
+        &mut self,
+        token: &str,
+        window: crate::window::mapped::MappedId,
+        workspace: Option<WorkspaceId>,
+        now: Instant,
+    ) -> bool {
+        self.expire(now);
+        let Some(follower) = self
+            .pending
+            .iter_mut()
+            .find(|intent| intent.token == token)
+            .and_then(|intent| intent.follower.as_mut())
+        else {
+            return false;
+        };
+        follower.first_window = Some(window);
+        follower.window_workspace = workspace;
+        true
+    }
+
+    /// Match a later toplevel to the first consumer of a still-live launch.
+    /// Process ancestry wins; app-id matching is used only when unambiguous.
+    pub fn peek_follower(
+        &mut self,
+        ancestry: &[ProcessIdentity],
+        app_id: Option<&str>,
+        now: Instant,
+    ) -> Option<LaunchIntent> {
+        self.expire(now);
+        if let Some(intent) = self.pending.iter().rev().find(|intent| {
+            intent.follower.as_ref().is_some_and(|follower| {
+                follower
+                    .process
+                    .is_some_and(|process| ancestry.contains(&process))
+                    || follower
+                        .first_consumer_process
+                        .is_some_and(|process| ancestry.contains(&process))
+            })
+        }) {
+            return Some(intent.clone());
+        }
+        let app_id = app_id.filter(|app_id| !app_id.is_empty())?;
+        let mut matches = self.pending.iter().filter(|intent| {
+            intent
+                .follower
+                .as_ref()
+                .and_then(|follower| follower.app_id.as_deref())
+                == Some(app_id)
+        });
+        let intent = matches.next()?;
+        matches.next().is_none().then(|| intent.clone())
+    }
+
+    pub fn follower_for_token(&mut self, token: &str, now: Instant) -> Option<LaunchIntent> {
+        self.expire(now);
+        self.pending
+            .iter()
+            .find(|intent| intent.token == token && intent.follower.is_some())
+            .cloned()
+    }
+
+    pub fn follower_window(
+        &mut self,
+        token: &str,
+        now: Instant,
+    ) -> Option<crate::window::mapped::MappedId> {
+        self.follower_for_token(token, now)
+            .and_then(|intent| intent.follower.and_then(|follower| follower.first_window))
+    }
+
+    pub fn retire_follower_if_moved(
+        &mut self,
+        token: &str,
+        workspace: WorkspaceId,
+        now: Instant,
+    ) -> bool {
+        self.expire(now);
+        let moved = self.pending.iter().any(|intent| {
+            intent.token == token
+                && intent
+                    .follower
+                    .as_ref()
+                    .and_then(|follower| follower.window_workspace)
+                    .is_some_and(|original| original != workspace)
+        });
+        if moved {
+            self.discard_token(token, now);
+        }
+        moved
     }
 
     pub fn peek_process(
@@ -349,5 +488,105 @@ mod tests {
             )
             .is_none());
         assert_eq!(tracker.peek_process(&[root], now).unwrap().token, "process");
+    }
+
+    #[test]
+    fn follower_matches_pid_ancestry_even_when_app_id_changes() {
+        let now = Instant::now();
+        let workspace = WorkspaceId::specific(401);
+        let process = ProcessIdentity {
+            pid: 42,
+            starttime: 100,
+        };
+        let mut tracker = LaunchTracker::default();
+        tracker.prepare("follower".into(), None, workspace, now);
+        assert!(tracker.take_token("follower", now).is_some());
+        assert!(tracker.set_follower("follower", Some(process), Some("org.discord".into()), now));
+
+        assert_eq!(
+            tracker
+                .peek_follower(&[process], Some("org.other"), now)
+                .unwrap()
+                .workspace,
+            workspace
+        );
+    }
+
+    #[test]
+    fn app_id_only_follower_uses_its_workspace_while_other_apps_use_active_workspace() {
+        let now = Instant::now();
+        let workspace = WorkspaceId::specific(402);
+        let mut tracker = LaunchTracker::default();
+        tracker.prepare("follower".into(), None, workspace, now);
+        assert!(tracker.take_token("follower", now).is_some());
+        assert!(tracker.set_follower(
+            "follower",
+            Some(ProcessIdentity {
+                pid: 42,
+                starttime: 100,
+            }),
+            Some("org.discord".into()),
+            now
+        ));
+
+        assert_eq!(
+            tracker
+                .peek_follower(&[], Some("org.discord"), now)
+                .unwrap()
+                .workspace,
+            workspace
+        );
+        let active_workspace = WorkspaceId::specific(407);
+        let unrelated_window_workspace = tracker
+            .peek_follower(&[], Some("org.other"), now)
+            .map_or(active_workspace, |intent| intent.workspace);
+        assert_eq!(unrelated_window_workspace, active_workspace);
+    }
+
+    #[test]
+    fn follower_expires_and_moving_its_window_retires_it() {
+        let now = Instant::now();
+        let workspace = WorkspaceId::specific(403);
+        let mut tracker = LaunchTracker::default();
+        tracker.prepare("follower".into(), None, workspace, now);
+        tracker.take_token("follower", now).unwrap();
+        tracker.set_follower("follower", None, Some("org.app".into()), now);
+        tracker.set_follower_window(
+            "follower",
+            crate::window::mapped::MappedId::next(),
+            Some(workspace),
+            now,
+        );
+
+        assert!(tracker.retire_follower_if_moved(
+            "follower",
+            WorkspaceId::specific(404),
+            now + Duration::from_secs(1)
+        ));
+        assert!(tracker
+            .follower_for_token("follower", now + Duration::from_secs(1))
+            .is_none());
+
+        tracker.prepare("expires".into(), None, workspace, now);
+        tracker.take_token("expires", now).unwrap();
+        tracker.set_follower("expires", None, Some("org.app".into()), now);
+        assert!(tracker
+            .peek_follower(&[], Some("org.app"), now + LAUNCH_WORKSPACE_TIMEOUT)
+            .is_none());
+    }
+
+    #[test]
+    fn ambiguous_app_ids_do_not_choose_between_live_followers() {
+        let now = Instant::now();
+        let mut tracker = LaunchTracker::default();
+        for (token, workspace) in [
+            ("first", WorkspaceId::specific(405)),
+            ("second", WorkspaceId::specific(406)),
+        ] {
+            tracker.prepare(token.into(), None, workspace, now);
+            tracker.take_token(token, now).unwrap();
+            tracker.set_follower(token, None, Some("org.app".into()), now);
+        }
+        assert!(tracker.peek_follower(&[], Some("org.app"), now).is_none());
     }
 }

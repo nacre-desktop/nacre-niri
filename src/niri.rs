@@ -1007,6 +1007,7 @@ impl State {
         let active_output = self.niri.layout.active_output().cloned();
 
         self.niri.layout.activate_window(window);
+        self.niri.retire_moved_launch_followers();
 
         let new_active = self.niri.layout.active_output().cloned();
         if new_active != active_output {
@@ -2332,6 +2333,33 @@ impl LayerMotionHandler for State {
 }
 
 impl Niri {
+    /// Retire launch followers after user input so a relocated app cannot drag later windows
+    /// back to the workspace that originally launched it.
+    pub fn retire_moved_launch_followers(&mut self) {
+        let now = Instant::now();
+        if !self.launch_tracker.has_followers(now) {
+            return;
+        }
+        let windows = self
+            .layout
+            .workspaces()
+            .flat_map(|(_, _, workspace)| {
+                workspace.windows().filter_map(|window| {
+                    window
+                        .launch_token
+                        .as_deref()
+                        .map(|token| (token.to_owned(), window.id(), workspace.id()))
+                })
+            })
+            .collect::<Vec<_>>();
+        for (token, window, workspace) in windows {
+            if self.launch_tracker.follower_window(&token, now) == Some(window) {
+                self.launch_tracker
+                    .retire_follower_if_moved(&token, workspace, now);
+            }
+        }
+    }
+
     pub fn prepare_launch(&mut self, unit: Option<String>) -> Option<XdgActivationToken> {
         let workspace = self.layout.active_workspace()?.id();
         let now = Instant::now();

@@ -380,6 +380,7 @@ impl DndGrabHandler for State {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&root) {
                 let window = mapped.window.clone();
                 self.niri.layout.activate_window(&window);
+                self.niri.retire_moved_launch_followers();
                 self.niri.layer_shell_on_demand_focus = None;
                 activate_output = false;
             }
@@ -555,6 +556,7 @@ impl ForeignToplevelHandler for State {
         if let Some((mapped, _)) = self.niri.layout.find_window_and_output(&wl_surface) {
             let window = mapped.window.clone();
             self.niri.layout.activate_window(&window);
+            self.niri.retire_moved_launch_followers();
             self.niri.layer_shell_on_demand_focus = None;
             self.niri.queue_redraw_all();
         }
@@ -883,9 +885,12 @@ impl XdgActivationHandler for State {
                 mapped.set_urgent(true);
                 self.niri.queue_redraw_all();
             }
-        } else if let Some((window, _, _)) = mapped_window {
+        } else if let Some((window, mapped_launch_token, _)) = mapped_window {
             if launch_intent.is_some() {
                 self.niri.launch_tracker.discard_token(token.as_str(), now);
+                if let Some(mapped_token) = mapped_launch_token {
+                    self.niri.launch_tracker.discard_token(&mapped_token, now);
+                }
             }
             if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
                 if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
@@ -896,6 +901,7 @@ impl XdgActivationHandler for State {
                     self.niri.queue_redraw_all();
                 } else {
                     self.niri.layout.activate_window(&window);
+                    self.niri.retire_moved_launch_followers();
                     self.niri.layer_shell_on_demand_focus = None;
                     self.niri.queue_redraw_all();
                 }

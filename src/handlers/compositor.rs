@@ -86,6 +86,7 @@ impl CompositorHandler for State {
                         state,
                         activation_token_data,
                         launch_token,
+                        launch_workspace_id: configured_launch_workspace,
                         ..
                     } = entry.remove();
 
@@ -102,6 +103,7 @@ impl CompositorHandler for State {
                         workspace_id,
                         is_pending_maximized,
                         launch_workspace_id,
+                        new_follower_token,
                     ) = if let InitialConfigureState::Configured {
                         rules,
                         width,
@@ -136,25 +138,44 @@ impl CompositorHandler for State {
                                         .is_some_and(|credentials| credentials.pid == pid)
                             })
                         });
-                        let launch_workspace_id = if existing_native_window {
+                        let now = std::time::Instant::now();
+                        let follower = launch_token.as_deref().and_then(|token| {
+                            self.niri.launch_tracker.follower_for_token(token, now)
+                        });
+                        let mut new_follower_token = None;
+                        let launch_workspace_id = if toplevel.parent().is_some() {
+                            None
+                        } else if let Some(follower) = follower {
+                            (configured_launch_workspace == Some(follower.workspace)
+                                && self
+                                    .niri
+                                    .layout
+                                    .find_workspace_by_id(follower.workspace)
+                                    .is_some())
+                            .then_some(follower.workspace)
+                        } else if existing_native_window {
                             if let Some(token) = launch_token.as_deref() {
-                                self.niri
-                                    .launch_tracker
-                                    .discard_token(token, std::time::Instant::now());
+                                self.niri.launch_tracker.discard_token(token, now);
                             }
                             None
-                        } else if toplevel.parent().is_none() {
+                        } else {
                             launch_token.as_deref().and_then(|token| {
-                                let now = std::time::Instant::now();
                                 let intent = self.niri.launch_tracker.peek_token(token, now)?;
                                 self.niri.layout.find_workspace_by_id(intent.workspace)?;
+                                let intent = self.niri.launch_tracker.take_token(token, now)?;
+                                let process =
+                                    client_pid.and_then(|pid| u32::try_from(pid).ok()).and_then(
+                                        |pid| crate::launch_process::ancestry(pid).first().copied(),
+                                    );
+                                let app_id = crate::utils::with_toplevel_role(toplevel, |role| {
+                                    role.app_id.clone()
+                                });
                                 self.niri
                                     .launch_tracker
-                                    .take_token(token, now)
-                                    .map(|intent| intent.workspace)
+                                    .set_follower(token, process, app_id, now);
+                                new_follower_token = Some(token.to_owned());
+                                Some(intent.workspace)
                             })
-                        } else {
-                            None
                         };
                         let workspace_id = if rules.open_on_workspace.is_none()
                             && rules.open_on_output.is_none()
@@ -181,6 +202,7 @@ impl CompositorHandler for State {
                             workspace_id,
                             is_pending_maximized,
                             launch_workspace_id,
+                            new_follower_token,
                         )
                     } else {
                         // Can happen when a surface unmaps by attaching a null buffer while
@@ -194,6 +216,7 @@ impl CompositorHandler for State {
                             None,
                             None,
                             false,
+                            None,
                             None,
                         )
                     };
@@ -268,6 +291,14 @@ impl CompositorHandler for State {
                         let config = self.niri.config.borrow();
                         Mapped::new(window, rules, hook, &config)
                     };
+                    if let Some(token) = new_follower_token.as_deref() {
+                        self.niri.launch_tracker.set_follower_window(
+                            token,
+                            mapped.id(),
+                            destination_workspace,
+                            std::time::Instant::now(),
+                        );
+                    }
                     mapped.launch_token = launch_workspace_id.and(launch_token);
                     let window = mapped.window.clone();
 

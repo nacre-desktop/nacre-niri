@@ -218,6 +218,7 @@ impl XdgShellHandler for State {
                 if intersection.intersects(ResizeEdge::LEFT_RIGHT) {
                     // FIXME: don't activate once we can pass specific windows to actions.
                     self.niri.layout.activate_window(&window);
+                    self.niri.retire_moved_launch_followers();
                     self.niri.layer_shell_on_demand_focus = None;
                     self.niri.layout.toggle_full_width();
                 }
@@ -1077,43 +1078,56 @@ impl State {
         let has_parent = toplevel.parent().is_some();
         let launch_workspace_id = if !has_parent {
             unmapped.launch_workspace_id.or_else(|| {
-                if crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface())
-                    || self.niri.launch_tracker.is_empty()
-                {
+                if self.niri.launch_tracker.is_empty() {
                     return None;
                 }
                 let credentials = crate::utils::get_credentials_for_surface(toplevel.wl_surface())?;
                 let now = std::time::Instant::now();
-                let environ = std::fs::read(format!("/proc/{}/environ", credentials.pid)).ok();
-                if let Some(intent) = environ
-                    .as_deref()
-                    .into_iter()
-                    .flat_map(crate::launch::launch_tokens_from_environ)
-                    .find_map(|token| self.niri.launch_tracker.peek_token(token, now))
-                {
-                    unmapped.launch_token = Some(intent.token.clone());
-                    return Some(intent.workspace);
-                }
-                let cgroup =
-                    std::fs::read_to_string(format!("/proc/{}/cgroup", credentials.pid)).ok();
-                let unit = cgroup.as_deref().and_then(|cgroup| {
-                    cgroup
-                        .lines()
-                        .filter_map(|line| line.rsplit('/').next())
-                        .find(|name| {
-                            name.len() <= 255
-                                && (name.ends_with(".service") || name.ends_with(".scope"))
-                        })
-                });
-                if let Some(intent) =
-                    unit.and_then(|unit| self.niri.launch_tracker.peek_unit(unit, now))
-                {
-                    unmapped.launch_token = Some(intent.token.clone());
-                    return Some(intent.workspace);
-                }
-                let ancestry =
-                    crate::launch_process::ancestry(u32::try_from(credentials.pid).ok()?);
-                let intent = self.niri.launch_tracker.peek_process(&ancestry, now)?;
+                let is_satellite =
+                    crate::niri::is_xwayland_satellite_surface(toplevel.wl_surface());
+                let app_id = with_toplevel_role(toplevel, |role| role.app_id.clone())
+                    .filter(|app_id| !app_id.is_empty());
+                let ancestry = if is_satellite {
+                    Vec::new()
+                } else {
+                    let environ = std::fs::read(format!("/proc/{}/environ", credentials.pid)).ok();
+                    if let Some(intent) = environ
+                        .as_deref()
+                        .into_iter()
+                        .flat_map(crate::launch::launch_tokens_from_environ)
+                        .find_map(|token| self.niri.launch_tracker.peek_token(token, now))
+                    {
+                        unmapped.launch_token = Some(intent.token.clone());
+                        return Some(intent.workspace);
+                    }
+                    let cgroup =
+                        std::fs::read_to_string(format!("/proc/{}/cgroup", credentials.pid)).ok();
+                    let unit = cgroup.as_deref().and_then(|cgroup| {
+                        cgroup
+                            .lines()
+                            .filter_map(|line| line.rsplit('/').next())
+                            .find(|name| {
+                                name.len() <= 255
+                                    && (name.ends_with(".service") || name.ends_with(".scope"))
+                            })
+                    });
+                    if let Some(intent) =
+                        unit.and_then(|unit| self.niri.launch_tracker.peek_unit(unit, now))
+                    {
+                        unmapped.launch_token = Some(intent.token.clone());
+                        return Some(intent.workspace);
+                    }
+                    crate::launch_process::ancestry(u32::try_from(credentials.pid).ok()?)
+                };
+                let intent = self
+                    .niri
+                    .launch_tracker
+                    .peek_process(&ancestry, now)
+                    .or_else(|| {
+                        self.niri
+                            .launch_tracker
+                            .peek_follower(&ancestry, app_id.as_deref(), now)
+                    })?;
                 unmapped.launch_token = Some(intent.token.clone());
                 Some(intent.workspace)
             })
