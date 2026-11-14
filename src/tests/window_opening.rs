@@ -386,7 +386,10 @@ fn check_launch_workspace(
     } else {
         "headless-1"
     };
-    let mut config = Config::parse_mem(&format!(
+    let rule = open_on_workspace
+        .map(|ws| format!("open-on-workspace \"{ws}\""))
+        .unwrap_or_default();
+    let config = Config::parse_mem(&format!(
         r##"
 workspace "ws-launch" {{
     open-on-output "headless-1"
@@ -400,31 +403,11 @@ workspace "ws-rule" {{
 window-rule {{
     match title="launch-test"
     open-focused true
+    {rule}
 }}
 "##,
     ))
     .unwrap();
-    if let Some(workspace) = open_on_workspace {
-        config = Config::parse_mem(&format!(
-            r##"
-workspace "ws-launch" {{
-    open-on-output "headless-1"
-}}
-workspace "ws-view" {{
-    open-on-output "{view_output}"
-}}
-workspace "ws-rule" {{
-    open-on-output "headless-1"
-}}
-window-rule {{
-    match title="launch-test"
-    open-focused true
-    open-on-workspace "{workspace}"
-}}
-"##
-        ))
-        .unwrap();
-    }
     let mut fixture = Fixture::with_config(config);
     fixture.add_output(1, (1280, 720));
     if multi_output {

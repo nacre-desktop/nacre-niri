@@ -101,37 +101,28 @@ impl LaunchTracker {
         self.get(token, now).filter(|intent| !intent.consumed)
     }
 
-    pub fn find_unit(&mut self, unit: &str, now: Instant) -> Option<&mut LaunchIntent> {
-        self.expire(now);
-        self.pending
-            .iter_mut()
-            .find(|intent| !intent.consumed && intent.unit.as_deref() == Some(unit))
-    }
-
-    /// Match a toplevel by process ancestry (newest launch first), else by an app ID that names
-    /// exactly one launch.
-    pub fn find_process(
+    /// Match a toplevel by the unit of a pending launch, else by process ancestry (newest launch
+    /// first), else by an app ID that names exactly one launch (stored app IDs are never empty).
+    pub fn find(
         &mut self,
+        unit: Option<&str>,
         ancestry: &[ProcessIdentity],
         app_id: Option<&str>,
         now: Instant,
     ) -> Option<&mut LaunchIntent> {
         self.expire(now);
-        let by_process = self
-            .pending
+        let by_unit = |i: &LaunchIntent| !i.consumed && unit.is_some() && i.unit.as_deref() == unit;
+        let by_process = |i: &LaunchIntent| i.process.is_some_and(|root| ancestry.contains(&root));
+        let by_app = |i: &LaunchIntent| app_id.is_some() && i.app_id.as_deref() == app_id;
+        let launches = &self.pending;
+        let index = launches
             .iter()
-            .rposition(|intent| intent.process.is_some_and(|root| ancestry.contains(&root)));
-        let index = by_process.or_else(|| {
-            let app_id = app_id.filter(|app_id| !app_id.is_empty())?;
-            let mut matches = self
-                .pending
-                .iter()
-                .enumerate()
-                .filter(|(_, intent)| intent.app_id.as_deref() == Some(app_id))
-                .map(|(index, _)| index);
-            let index = matches.next()?;
-            matches.next().is_none().then_some(index)
-        })?;
+            .position(by_unit)
+            .or_else(|| launches.iter().rposition(by_process))
+            .or_else(|| {
+                let index = launches.iter().position(by_app)?;
+                (launches.iter().rposition(by_app) == Some(index)).then_some(index)
+            })?;
         self.pending.get_mut(index)
     }
 
@@ -152,9 +143,7 @@ impl LaunchTracker {
             let Some(intent) = self.pending.iter_mut().find(|intent| intent.token == token) else {
                 continue;
             };
-            if intent.placed.is_none() {
-                intent.placed = Some(workspace);
-            } else if intent.placed != Some(workspace) {
+            if *intent.placed.get_or_insert(workspace) != workspace {
                 self.pending.retain(|intent| intent.token != token);
             }
         }
@@ -204,14 +193,23 @@ mod tests {
             now + Duration::from_secs(20),
         );
         let intent = tracker
-            .find_unit("nacre-app-a.service", now + Duration::from_secs(59))
+            .find(
+                Some("nacre-app-a.service"),
+                &[],
+                None,
+                now + Duration::from_secs(59),
+            )
             .unwrap();
         assert_eq!(intent.workspace, workspace);
         assert_eq!(intent.created, now);
         intent.consumed = true;
         assert!(tracker.pending("t", now).is_none());
-        assert!(tracker.find_unit("nacre-app-a.service", now).is_none());
-        assert!(tracker.find_unit("nacre-app-other.service", now).is_none());
+        assert!(tracker
+            .find(Some("nacre-app-a.service"), &[], None, now)
+            .is_none());
+        assert!(tracker
+            .find(Some("nacre-app-other.service"), &[], None, now)
+            .is_none());
     }
 
     #[test]
@@ -272,7 +270,8 @@ mod tests {
         tracker.prepare("process".into(), None, workspace, now);
         tracker.pending("process", now).unwrap().process = Some(root);
         assert!(tracker
-            .find_process(
+            .find(
+                None,
                 &[ProcessIdentity {
                     pid: 42,
                     starttime: 101
@@ -282,7 +281,7 @@ mod tests {
             )
             .is_none());
         assert_eq!(
-            tracker.find_process(&[root], None, now).unwrap().token,
+            tracker.find(None, &[root], None, now).unwrap().token,
             "process"
         );
 
@@ -290,7 +289,7 @@ mod tests {
         consume(&mut tracker, "process", "org.discord", now);
         assert_eq!(
             tracker
-                .find_process(&[root], Some("org.other"), now)
+                .find(None, &[root], Some("org.other"), now)
                 .unwrap()
                 .workspace,
             workspace
@@ -306,19 +305,17 @@ mod tests {
         consume(&mut tracker, "follower", "org.discord", now);
         assert_eq!(
             tracker
-                .find_process(&[], Some("org.discord"), now)
+                .find(None, &[], Some("org.discord"), now)
                 .unwrap()
                 .workspace,
             workspace
         );
-        assert!(tracker.find_process(&[], Some("org.other"), now).is_none());
-        assert!(tracker.find_process(&[], Some(""), now).is_none());
+        assert!(tracker.find(None, &[], Some("org.other"), now).is_none());
+        assert!(tracker.find(None, &[], Some(""), now).is_none());
 
         tracker.prepare("second".into(), None, WorkspaceId::specific(406), now);
         consume(&mut tracker, "second", "org.discord", now);
-        assert!(tracker
-            .find_process(&[], Some("org.discord"), now)
-            .is_none());
+        assert!(tracker.find(None, &[], Some("org.discord"), now).is_none());
     }
 
     #[test]
@@ -340,7 +337,7 @@ mod tests {
         tracker.prepare("expires".into(), None, workspace, now);
         consume(&mut tracker, "expires", "org.app", now);
         assert!(tracker
-            .find_process(&[], Some("org.app"), now + LAUNCH_WORKSPACE_TIMEOUT)
+            .find(None, &[], Some("org.app"), now + LAUNCH_WORKSPACE_TIMEOUT)
             .is_none());
     }
 }

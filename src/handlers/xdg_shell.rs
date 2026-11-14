@@ -1100,16 +1100,13 @@ impl State {
                         .into_iter()
                         .flat_map(crate::launch::launch_tokens_from_environ)
                         .find(|token| tracker.pending(token, now).is_some());
-                    let cgroup = token.is_none().then(|| read("cgroup")).flatten();
-                    let unit = cgroup.as_deref().and_then(crate::launch::unit_from_cgroup);
                     if let Some(token) = token {
                         tracker.pending(token, now)
-                    } else if let Some(intent) = unit.and_then(|unit| tracker.find_unit(unit, now))
-                    {
-                        Some(intent)
                     } else {
+                        let cgroup = read("cgroup");
+                        let unit = cgroup.as_deref().and_then(crate::launch::unit_from_cgroup);
                         let app_id = with_toplevel_role(toplevel, |role| role.app_id.clone());
-                        tracker.find_process(&ancestry, app_id.as_deref(), now)
+                        tracker.find(unit, &ancestry, app_id.as_deref(), now)
                     }
                 }
             };

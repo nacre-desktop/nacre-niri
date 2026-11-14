@@ -848,7 +848,14 @@ impl State {
 
         // Needs to be called after updating the keyboard focus.
         self.niri.refresh_layout();
-        self.niri.retire_moved_launches();
+        let tracker = &mut self.niri.launch_tracker;
+        if !tracker.is_empty() {
+            let windows = self.niri.layout.workspaces().flat_map(|(_, _, ws)| {
+                let tokens = ws.windows().filter_map(|w| w.launch_token.as_deref());
+                tokens.map(move |token| (token, ws.id()))
+            });
+            tracker.retire_moved(windows, Instant::now());
+        }
         self.niri.schedule_collection_persist();
 
         self.niri.cursor_manager.check_cursor_image_surface_alive();
@@ -2353,19 +2360,6 @@ impl LayerMotionHandler for State {
 }
 
 impl Niri {
-    fn retire_moved_launches(&mut self) {
-        if self.launch_tracker.is_empty() {
-            return;
-        }
-        let windows = self.layout.workspaces().flat_map(|(_, _, workspace)| {
-            workspace.windows().filter_map(move |window| {
-                let token = window.launch_token.as_deref()?;
-                Some((token, workspace.id()))
-            })
-        });
-        self.launch_tracker.retire_moved(windows, Instant::now());
-    }
-
     pub fn prepare_launch(&mut self, unit: Option<String>) -> Option<XdgActivationToken> {
         let workspace = self.layout.active_workspace()?.id();
         let now = Instant::now();

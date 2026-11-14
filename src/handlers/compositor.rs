@@ -23,7 +23,7 @@ use crate::handlers::XDG_ACTIVATION_TOKEN_TIMEOUT;
 use crate::layout::{ActivateWindow, AddWindowTarget, LayoutElement as _};
 use crate::niri::{CastTarget, ClientState, LockState, State};
 use crate::utils::transaction::Transaction;
-use crate::utils::{is_mapped, send_scale_transform};
+use crate::utils::{is_mapped, send_scale_transform, with_toplevel_role};
 use crate::window::{InitialConfigureState, Mapped, ResolvedWindowRules, Unmapped};
 
 impl CompositorHandler for State {
@@ -155,10 +155,8 @@ impl CompositorHandler for State {
                             if !intent.consumed {
                                 intent.consumed = true;
                                 intent.app_id =
-                                    crate::utils::with_toplevel_role(toplevel, |role| {
-                                        role.app_id.clone()
-                                    })
-                                    .filter(|app_id| !app_id.is_empty() && app_id.len() <= 255);
+                                    with_toplevel_role(toplevel, |role| role.app_id.clone())
+                                        .filter(|id| !id.is_empty() && id.len() <= 255);
                             }
                             Some(intent.workspace)
                         });
@@ -234,7 +232,6 @@ impl CompositorHandler for State {
                         && destination_workspace.is_some()
                         && destination_workspace
                             != self.niri.layout.active_workspace().map(|ws| ws.id());
-                    let launch_workspace_off_view = off_view;
 
                     // Figure out if we should activate the window.
                     let activate = rules.open_focused.map(|focus| {
@@ -296,7 +293,7 @@ impl CompositorHandler for State {
                         activate,
                     );
                     let output = output.cloned();
-                    if launch_workspace_off_view {
+                    if off_view {
                         if let Some((mapped, _)) =
                             self.niri.layout.find_window_and_output_mut(surface)
                         {

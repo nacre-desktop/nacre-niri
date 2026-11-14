@@ -732,32 +732,20 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             }
             let (tx, rx) = async_channel::bounded(1);
             ctx.event_loop.insert_idle(move |state| {
-                let now = std::time::Instant::now();
-                if let Some(token) = launch_token.as_deref() {
-                    let reusable = state
-                        .niri
-                        .launch_tracker
-                        .pending(token, now)
-                        .map(|intent| {
+                let token = match launch_token {
+                    Some(token) => {
+                        let now = std::time::Instant::now();
+                        let intent = state.niri.launch_tracker.pending(&token, now);
+                        intent.map(|intent| {
                             if unit.is_some() {
                                 intent.unit = unit;
                             }
+                            token
                         })
-                        .is_some();
-                    let _ = tx.send_blocking(reusable.then(|| token.to_owned()));
-                    return;
-                }
-                let Some(workspace) = state.niri.layout.active_workspace().map(|ws| ws.id()) else {
-                    let _ = tx.send_blocking(None);
-                    return;
+                    }
+                    None => state.niri.prepare_launch(unit).map(String::from),
                 };
-                let (token, _) = state.niri.activation_state.create_external_token(None);
-                let token = token.as_str().to_owned();
-                state
-                    .niri
-                    .launch_tracker
-                    .prepare(token.clone(), unit, workspace, now);
-                let _ = tx.send_blocking(Some(token));
+                let _ = tx.send_blocking(token);
             });
             match rx
                 .recv()
