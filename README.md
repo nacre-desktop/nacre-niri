@@ -9,7 +9,7 @@ fails closed. Most additions have a config switch; turning one off restores
 upstream behaviour. It is not a desktop shell; the Bead shell is maintained in
 the [Nacre repository](https://github.com/nacre-desktop/nacre).
 
-<!-- media: media/nacre-niri-tabbed-column.png — a tabbed column (Mod+G) with three windows; overview behind showing two collections -->
+<p align="center"><img src="docs/nacre/images/nacre-niri-tabbed-column.png" alt="A tabbed column on nacre-niri: three windows stacked as tabs, with the tab indicator configured along the top"></p>
 
 You can run it without Nacre. It installs beside stock niri and reads the same
 config format.
