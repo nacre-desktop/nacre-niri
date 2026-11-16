@@ -336,7 +336,9 @@ impl RevealDescriptor {
         fill.anti_alias = true;
         pixmap.fill_path(&body_path, &fill, FillRule::EvenOdd, transform, None);
         if let Some(rim) = &self.rim {
-            if rim.width > 0. && rim.opacity > 0. {
+            // A sub-24px contour would draw the 1px rim as a stray light ring on the first frames.
+            let opacity = rim.opacity * (sample.body.w.min(sample.body.h) / 24.).min(1.);
+            if rim.width > 0. && opacity > 0. {
                 let path = path_from_svg_commands(&contour.rim)?;
                 let stops = (0..3)
                     .map(|i| {
@@ -363,7 +365,7 @@ impl RevealDescriptor {
                     line_cap: LineCap::Butt,
                     ..Stroke::default()
                 };
-                draw_rim_group(&mut pixmap, &path, &paint, &stroke, transform, rim.opacity);
+                draw_rim_group(&mut pixmap, &path, &paint, &stroke, transform, opacity);
             }
         }
         Some((pixmap, crop))
@@ -1150,5 +1152,30 @@ mod descriptor_tests {
             opacity: 1.,
         });
         assert!(!descriptor.is_valid());
+    }
+
+    #[test]
+    fn rim_fades_in_with_body_size() {
+        let rim_alpha = |size: f32| {
+            let mut descriptor = RevealDescriptor::empty();
+            descriptor.output_bounds = Rect::new(0., 0., 100., 100.);
+            descriptor.crop = descriptor.output_bounds;
+            descriptor.animated_from = Rect::new(20., 20., size, size);
+            descriptor.animated_to = descriptor.animated_from;
+            descriptor.rim = Some(RimStyle {
+                colors: [[255; 4]; 3],
+                stops: [0., 0.5, 1.],
+                start: (0., 0.),
+                end: (100., 100.),
+                width: 1.,
+                opacity: 1.,
+            });
+            let (pixmap, _) = descriptor.rasterize(0., 1., (100., 100.)).unwrap();
+            pixmap.data().chunks_exact(4).map(|p| p[3]).max().unwrap()
+        };
+        assert!(rim_alpha(0.7) <= 8);
+        let full = rim_alpha(24.);
+        assert!(full > 64);
+        assert_eq!(rim_alpha(40.), full);
     }
 }
