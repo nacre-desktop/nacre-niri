@@ -2869,9 +2869,8 @@ impl State {
             }
         }
 
-        // Redraw to update the cursor position.
-        // FIXME: redraw only outputs overlapping the cursor.
-        self.niri.queue_redraw_all();
+        // Redraw the outputs the cursor left and entered.
+        self.niri.queue_redraw_cursor(&[pos, new_pos]);
     }
 
     fn on_pointer_motion_absolute<I: InputBackend>(
@@ -2969,9 +2968,8 @@ impl State {
             }
         }
 
-        // Redraw to update the cursor position.
-        // FIXME: redraw only outputs overlapping the cursor.
-        self.niri.queue_redraw_all();
+        // Redraw the outputs the cursor left and entered.
+        self.niri.queue_redraw_cursor(&[old_pos, pos]);
     }
 
     fn on_pointer_button<I: InputBackend>(&mut self, event: I::PointerButtonEvent) {

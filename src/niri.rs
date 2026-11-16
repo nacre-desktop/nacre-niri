@@ -1095,10 +1095,9 @@ impl State {
         pointer.frame(self);
 
         // Pointer motion from a surface to nothing triggers a cursor change to default, which
-        // means we may need to redraw.
-
-        // FIXME: granular
-        self.niri.queue_redraw_all();
+        // means we may need to redraw the outputs under the cursor.
+        let cursor = self.niri.tablet_cursor_location.unwrap_or(location);
+        self.niri.queue_redraw_cursor(&[cursor]);
     }
 
     pub fn update_pointer_contents(&mut self) -> bool {
@@ -1426,11 +1425,19 @@ impl State {
                 }
             }
 
+            // Window focus rings and layer focus only redraw on the outputs of the old and new
+            // focus.
+            let old_output = self.niri.keyboard_focus_output(&self.niri.keyboard_focus);
+            let new_output = self.niri.keyboard_focus_output(&focus);
             self.niri.keyboard_focus.clone_from(&focus);
             keyboard.set_focus(self, focus.into_surface(), SERIAL_COUNTER.next_serial());
 
-            // FIXME: can be more granular.
-            self.niri.queue_redraw_all();
+            if let Some((old, new)) = old_output.zip(new_output) {
+                self.niri.queue_redraw(&old);
+                self.niri.queue_redraw(&new);
+            } else {
+                self.niri.queue_redraw_all();
+            }
         }
     }
 
@@ -4119,6 +4126,60 @@ impl Niri {
     pub fn queue_redraw(&mut self, output: &Output) {
         let state = self.output_state.get_mut(output).unwrap();
         state.redraw_state = mem::take(&mut state.redraw_state).queue_redraw();
+    }
+
+    /// Queues a redraw of the outputs the cursor sprite can touch around each of `positions`.
+    ///
+    /// Takes the positions instead of asking the pointer: this also runs inside pointer handlers,
+    /// where the pointer is locked.
+    pub fn queue_redraw_cursor(&mut self, positions: &[Point<f64, Logical>]) {
+        // Cursor sprites, including a shake-enlarged one, stay well inside this reach.
+        const REACH: i32 = 256;
+        // shortcut: a drag-and-drop icon wider than REACH that crosses an output seam can leave a
+        // stale piece on the far output until that output's next redraw; fold the DnD icon geometry
+        // in if that shows up.
+        let near = |output: &Output| {
+            let geo = self.global_space.output_geometry(output).unwrap();
+            positions.iter().any(|pos| {
+                let pos = pos.to_i32_round::<i32>();
+                let reach = Rectangle::new(
+                    pos - Point::new(REACH, REACH),
+                    Size::new(2 * REACH, 2 * REACH),
+                );
+                geo.overlaps(reach)
+            })
+        };
+        let outputs: Vec<_> = self
+            .global_space
+            .outputs()
+            .filter(|o| near(o))
+            .cloned()
+            .collect();
+        if outputs.is_empty() {
+            return self.queue_redraw_all();
+        }
+        for output in &outputs {
+            self.queue_redraw(output);
+        }
+    }
+
+    /// The output a keyboard focus draws on, or `None` for focus that can affect every output.
+    fn keyboard_focus_output(&self, focus: &KeyboardFocus) -> Option<Output> {
+        match focus {
+            KeyboardFocus::Layout { surface: None } => self.layout.active_output().cloned(),
+            KeyboardFocus::Layout {
+                surface: Some(surface),
+            } => {
+                let (_, output) = self.layout.find_window_and_output(surface)?;
+                output.cloned()
+            }
+            KeyboardFocus::LayerShell { surface } => self.layout.outputs().find_map(|output| {
+                let map = layer_map_for_output(output);
+                map.layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+                    .map(|_| output.clone())
+            }),
+            _ => None,
+        }
     }
 
     pub fn redraw_queued_outputs(&mut self, backend: &mut Backend) {
