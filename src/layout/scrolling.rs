@@ -782,8 +782,11 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     fn activate_column_with_anim_config(&mut self, idx: usize, config: niri_config::Animation) {
-        self.hover_view_frozen = false;
+        // Hover-selected without scrolling: the target may be off-screen, so fit it even if active.
+        let was_hover_frozen =
+            std::mem::take(&mut self.hover_view_frozen) && !self.columns.is_empty();
         if self.active_column_idx == idx
+            && !was_hover_frozen
             // During a DnD scroll, animate even when activating the same window, for DnD hold.
             && (self.columns.is_empty() || !self.view_offset.is_dnd_scroll())
         {

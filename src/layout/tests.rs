@@ -4341,3 +4341,51 @@ fn hover_focus_in_overview_preserves_workspace_camera_until_close() {
     assert_eq!(layout.monitors().next().unwrap().workspace_render_idx(), 1.);
     layout.verify_invariants();
 }
+
+/// NN0049: overview hover selects a column without scrolling; the click that follows must still
+/// fit the clicked column into view (the owner's one-full-one-half case).
+#[test]
+fn overview_click_on_hover_selected_column_fits_view() {
+    let mut wrong = Vec::new();
+    for (first, second) in [(100., 50.), (100., 100.), (50., 50.)] {
+        let ops = |focus_last: bool| {
+            let mut ops = vec![
+                Op::AddOutput(1),
+                Op::AddWindow {
+                    params: TestWindowParams::new(1),
+                },
+                Op::SetColumnWidth(SizeChange::SetProportion(first)),
+                Op::Communicate(1),
+                Op::AddWindow {
+                    params: TestWindowParams::new(2),
+                },
+                Op::SetColumnWidth(SizeChange::SetProportion(second)),
+                Op::Communicate(2),
+                Op::CompleteAnimations,
+            ];
+            if !focus_last {
+                ops.push(Op::FocusColumnFirst);
+            }
+            ops.push(Op::CompleteAnimations);
+            ops
+        };
+        let expected = view_pos(&check_ops(ops(true)));
+
+        let mut layout = check_ops(ops(false));
+        check_ops_on_layout(&mut layout, [Op::ToggleOverview, Op::CompleteAnimations]);
+        let before = view_pos(&layout);
+        layout.activate_window_without_scrolling(&2);
+        assert_eq!(view_pos(&layout), before, "hover must not scroll");
+        layout.activate_window(&2);
+        layout.close_overview();
+        check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+        assert_eq!(*layout.focus().unwrap().id(), 2);
+        if view_pos(&layout) != expected {
+            wrong.push((first, second, view_pos(&layout), expected));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "(first, second, got, expected): {wrong:?}"
+    );
+}
