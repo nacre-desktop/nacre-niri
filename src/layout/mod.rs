@@ -2353,6 +2353,20 @@ impl<W: LayoutElement> Layout<W> {
         self.monitors().find(|mon| &mon.output == output)
     }
 
+    /// Hides windows on `output` until [`Layout::peek_release`] is called with the same `id`.
+    pub fn peek_hold(&mut self, output: &Output, id: u64) {
+        if let Some(mon) = self.monitor_for_output_mut(output) {
+            mon.peek_hold(id);
+        }
+    }
+
+    /// Releases hold `id`, wherever it was taken; a removed output has already dropped it.
+    pub fn peek_release(&mut self, id: u64) {
+        for mon in self.monitors_mut() {
+            mon.peek_release(id);
+        }
+    }
+
     pub fn monitor_for_output_mut(&mut self, output: &Output) -> Option<&mut Monitor<W>> {
         self.monitors_mut().find(|mon| &mon.output == output)
     }
@@ -3001,6 +3015,10 @@ impl<W: LayoutElement> Layout<W> {
         output: &Output,
         pos_within_output: Point<f64, Logical>,
     ) -> Option<(&W, HitType)> {
+        // Peeked windows are invisible, so they must not take focus or clicks.
+        if self.monitor_for_output(output)?.is_peeked() {
+            return None;
+        }
         if let Some(hit) = self
             .monitor_for_output(output)
             .and_then(|monitor| monitor.pinned_workspace.window_under(pos_within_output))
@@ -3025,6 +3043,9 @@ impl<W: LayoutElement> Layout<W> {
         pos_within_output: Point<f64, Logical>,
     ) -> Option<ResizeEdge> {
         let mon = self.monitor_for_output(output)?;
+        if mon.is_peeked() {
+            return None;
+        }
         mon.resize_edges_under(pos_within_output)
     }
 
@@ -3385,6 +3406,8 @@ impl<W: LayoutElement> Layout<W> {
         }
 
         if let Some(InteractiveMoveState::Moving(move_)) = &mut self.interactive_move {
+            // A tile picked up during a peek must not stay hidden.
+            move_.tile.sync_peek(false);
             move_.tile.advance_animations();
 
             if dnd_scroll.is_none() {

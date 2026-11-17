@@ -136,6 +136,18 @@ pub enum Request {
     /// pre-dwell cue and trigger events are delivered only to clients using this request,
     /// preserving compatibility with older event clients.
     NacreEdgeTriggerStream,
+    /// Hide every window on an output for as long as this connection stays open.
+    ///
+    /// The compositor fades the windows out and replies with `Reply::Ok(Response::Handled)`; layer
+    /// surfaces and the wallpaper stay visible. The client must keep the socket open: closing it
+    /// (or crashing) fades the windows back in. An unknown output gets an error reply and holds
+    /// nothing. Holds are counted per output. Send it as raw JSON; there is no `niri msg`
+    /// spelling, and compositors that do not know it reply with a parse error, so shells fall
+    /// back.
+    NacrePeekDesktop {
+        /// Output name; `None` means the focused output.
+        output: Option<String>,
+    },
     /// Start an event stream including Nacre-Niri workspace collection and keyboard lock events.
     ///
     /// Use this extension when communicating with a compositor that supports it. The standard
@@ -2499,6 +2511,17 @@ mod tests {
             serde_json::to_string(&Request::NacreEdgeTriggerStream).unwrap(),
             "\"NacreEdgeTriggerStream\""
         );
+        assert_eq!(
+            serde_json::to_string(&Request::NacrePeekDesktop {
+                output: Some(String::from("eDP-1"))
+            })
+            .unwrap(),
+            r#"{"NacrePeekDesktop":{"output":"eDP-1"}}"#
+        );
+        assert!(matches!(
+            serde_json::from_str(r#"{"NacrePeekDesktop":{"output":null}}"#),
+            Ok(Request::NacrePeekDesktop { output: None })
+        ));
         let event = Event::EdgeTriggered {
             output: String::from("DP-1"),
             edge: Edge::Left,

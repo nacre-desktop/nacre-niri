@@ -56,7 +56,11 @@ right/left with a 150 ms cooldown.
 meant for shells: `NacreOverviewHoverStream` and
 `NacreOverviewHoverStreamWithCollections` (`NacreOverviewHoverChanged` events),
 `NacreEdgeTriggerStream` (`EdgeApproach`, `EdgeHover`, `EdgeTriggered`,
-`EdgeLeft`), `EventStreamWithCollections`, and `NacrePrepareLaunch`, which
+`EdgeLeft`), `EventStreamWithCollections`, `NacrePeekDesktop { output }` (the open
+connection holds every window on that output faded out, so a shell can preview
+the wallpaper; layer surfaces stay, hits skip windows, focus is untouched, and
+closing or crashing the client fades them back; unknown output is an error
+reply), and `NacrePrepareLaunch`, which
 returns a `NacreLaunchToken` so the launched app lands on the launching
 workspace ([launch-workspace.md](launch-workspace.md)). New types: `Collection`,
 `Edge`, `NacreCapabilities`, `OutputNeighbour`.

@@ -827,6 +827,16 @@ enum Op {
     OverviewGestureEnd,
     OpenOverview,
     CloseOverview,
+    PeekHold {
+        #[proptest(strategy = "1..=5usize")]
+        output_id: usize,
+        #[proptest(strategy = "1..=3u64")]
+        id: u64,
+    },
+    PeekRelease {
+        #[proptest(strategy = "1..=3u64")]
+        id: u64,
+    },
     OverviewHitTest {
         #[proptest(strategy = "1..=5usize")]
         output_idx: usize,
@@ -1780,6 +1790,14 @@ impl Op {
             Op::OverviewGestureEnd => {
                 layout.overview_gesture_end();
             }
+            Op::PeekHold { output_id, id } => {
+                let name = format!("output{output_id}");
+                let Some(output) = layout.outputs().find(|o| o.name() == name).cloned() else {
+                    return;
+                };
+                layout.peek_hold(&output, id);
+            }
+            Op::PeekRelease { id } => layout.peek_release(id),
             Op::OpenOverview => {
                 layout.open_overview();
             }
@@ -4388,4 +4406,288 @@ fn overview_click_on_hover_selected_column_fits_view() {
         wrong.is_empty(),
         "(first, second, got, expected): {wrong:?}"
     );
+}
+
+fn peek_tile_alphas(layout: &Layout<TestWindow>) -> Vec<f64> {
+    let mut alphas: Vec<_> = layout
+        .monitors()
+        .flat_map(|mon| mon.workspaces.iter().flat_map(|ws| ws.tiles()))
+        .map(|tile| tile.total_alpha())
+        .collect();
+    if let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move {
+        alphas.push(move_.tile.total_alpha());
+    }
+    alphas
+}
+
+fn peek_any_hit(layout: &Layout<TestWindow>, output: usize) -> bool {
+    let name = format!("output{output}");
+    let output = layout.outputs().find(|o| o.name() == name).unwrap();
+    (0..1920).step_by(16).any(|x| {
+        (0..1080).step_by(16).any(|y| {
+            layout
+                .window_under(output, Point::from((x as f64, y as f64)))
+                .is_some()
+        })
+    })
+}
+
+fn peek_two_windows() -> Vec<Op> {
+    vec![
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+    ]
+}
+
+const PEEK_SETTLE: Op = Op::AdvanceAnimations { msec_delta: 1000 };
+
+#[test]
+fn peek_hides_windows_and_release_restores_them() {
+    let mut ops = peek_two_windows();
+    ops.push(PEEK_SETTLE);
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    assert!(peek_any_hit(&layout, 1));
+    let focus = layout.focus().map(|w| *w.id());
+    assert!(focus.is_some());
+
+    check_ops_on_layout(
+        &mut layout,
+        [Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        }],
+    );
+    // Fading out: not hidden yet, not opaque anymore after some time.
+    check_ops_on_layout(&mut layout, [Op::AdvanceAnimations { msec_delta: 100 }]);
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a < 1. && *a > 0.));
+    check_ops_on_layout(&mut layout, [PEEK_SETTLE]);
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 0.));
+    assert!(!peek_any_hit(&layout, 1), "hidden windows must not be hit");
+    assert_eq!(
+        layout.focus().map(|w| *w.id()),
+        focus,
+        "focus must not change"
+    );
+
+    check_ops_on_layout(
+        &mut layout,
+        [Op::PeekRelease { id: 1 }, PEEK_SETTLE, PEEK_SETTLE],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
+    assert!(layout
+        .monitors()
+        .flat_map(|m| m.workspaces.iter().flat_map(|w| w.tiles()))
+        .all(|t| !t.has_peek_state()));
+    assert!(peek_any_hit(&layout, 1));
+    assert_eq!(
+        layout.focus().map(|w| *w.id()),
+        focus,
+        "focus must not change"
+    );
+}
+
+#[test]
+fn peek_releases_only_when_count_reaches_zero() {
+    let mut ops = peek_two_windows();
+    ops.extend([
+        Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        },
+        Op::PeekHold {
+            output_id: 1,
+            id: 2,
+        },
+        PEEK_SETTLE,
+        Op::PeekRelease { id: 1 },
+        PEEK_SETTLE,
+    ]);
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 0.));
+    assert!(!peek_any_hit(&layout, 1));
+
+    // Releasing an id twice, or one that was never held, changes nothing.
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::PeekRelease { id: 1 },
+            Op::PeekRelease { id: 3 },
+            PEEK_SETTLE,
+        ],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 0.));
+
+    check_ops_on_layout(
+        &mut layout,
+        [Op::PeekRelease { id: 2 }, PEEK_SETTLE, PEEK_SETTLE],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
+}
+
+#[test]
+fn peek_new_windows_start_hidden_and_closing_windows_leave_no_state() {
+    let mut ops = peek_two_windows();
+    ops.extend([
+        Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        },
+        PEEK_SETTLE,
+        Op::AddWindow {
+            params: TestWindowParams::new(3),
+        },
+        Op::AdvanceAnimations { msec_delta: 0 },
+        Op::CloseWindow(1),
+        PEEK_SETTLE,
+    ]);
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    let alphas = peek_tile_alphas(&layout);
+    assert_eq!(alphas.len(), 2);
+    assert!(alphas.iter().all(|a| *a == 0.), "{alphas:?}");
+
+    check_ops_on_layout(
+        &mut layout,
+        [Op::PeekRelease { id: 1 }, PEEK_SETTLE, PEEK_SETTLE],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
+}
+
+#[test]
+fn peek_keeps_interactive_move_alpha() {
+    let mut ops = peek_two_windows();
+    ops.extend([
+        Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        },
+        PEEK_SETTLE,
+        Op::InteractiveMoveBegin {
+            window: 1,
+            output_idx: 1,
+            px: 0.,
+            py: 0.,
+        },
+        Op::InteractiveMoveUpdate {
+            window: 1,
+            dx: 1000.,
+            dy: 0.,
+            output_idx: 1,
+            px: 1000.,
+            py: 0.,
+        },
+        PEEK_SETTLE,
+        Op::PeekRelease { id: 1 },
+        PEEK_SETTLE,
+        PEEK_SETTLE,
+    ]);
+    let layout = check_ops_with_options(Options::default(), ops);
+    let Some(InteractiveMoveState::Moving(move_)) = &layout.interactive_move else {
+        panic!("expected a moving tile");
+    };
+    assert_eq!(move_.tile.total_alpha(), INTERACTIVE_MOVE_ALPHA);
+    let others: Vec<_> = peek_tile_alphas(&layout);
+    assert!(
+        others
+            .iter()
+            .all(|a| *a == 1. || *a == INTERACTIVE_MOVE_ALPHA),
+        "{others:?}"
+    );
+}
+
+#[test]
+fn peek_covers_workspace_switch_and_overview() {
+    let mut layout = check_ops_with_options(
+        Options::default(),
+        [
+            Op::AddOutput(1),
+            Op::AddWindow {
+                params: TestWindowParams::new(1),
+            },
+            Op::PeekHold {
+                output_id: 1,
+                id: 1,
+            },
+            PEEK_SETTLE,
+            Op::FocusWorkspaceDown,
+            Op::AddWindow {
+                params: TestWindowParams::new(2),
+            },
+            PEEK_SETTLE,
+            Op::FocusWorkspaceUp,
+            PEEK_SETTLE,
+            // Overview chosen behaviour: windows stay hidden there too.
+            Op::OpenOverview,
+            PEEK_SETTLE,
+        ],
+    );
+    let alphas = peek_tile_alphas(&layout);
+    assert_eq!(alphas.len(), 2);
+    assert!(alphas.iter().all(|a| *a == 0.), "{alphas:?}");
+    assert!(!peek_any_hit(&layout, 1));
+
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::PeekRelease { id: 1 },
+            PEEK_SETTLE,
+            PEEK_SETTLE,
+            Op::CloseOverview,
+            PEEK_SETTLE,
+        ],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
+}
+
+#[test]
+fn peek_survives_output_removal() {
+    let mut ops = peek_two_windows();
+    ops.extend([
+        Op::AddOutput(2),
+        Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        },
+        PEEK_SETTLE,
+        Op::RemoveOutput(1),
+        // The late release after the output is gone must not panic or touch other outputs.
+        Op::PeekRelease { id: 1 },
+        PEEK_SETTLE,
+    ]);
+    let mut layout = check_ops_with_options(Options::default(), ops);
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
+
+    // A re-added output starts unpeeked.
+    check_ops_on_layout(&mut layout, [Op::AddOutput(1), PEEK_SETTLE]);
+    assert!(layout.monitors().all(|m| !m.is_peeked()));
+    check_ops_on_layout(&mut layout, [Op::PeekRelease { id: 1 }]);
+}
+
+#[test]
+fn peek_is_instant_with_animations_off() {
+    let mut layout = check_ops_with_options(Options::default(), peek_two_windows());
+    // `animations { off }` makes the clock complete everything instantly.
+    layout.clock.set_complete_instantly(true);
+    check_ops_on_layout(
+        &mut layout,
+        [Op::PeekHold {
+            output_id: 1,
+            id: 1,
+        }],
+    );
+    // No time has passed since the hold.
+    let alphas = peek_tile_alphas(&layout);
+    assert!(alphas.iter().all(|a| *a == 0.), "{alphas:?}");
+    check_ops_on_layout(
+        &mut layout,
+        [
+            Op::PeekRelease { id: 1 },
+            Op::AdvanceAnimations { msec_delta: 0 },
+        ],
+    );
+    assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
 }

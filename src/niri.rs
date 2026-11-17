@@ -4081,6 +4081,27 @@ impl Niri {
             .or_else(|| self.global_space.outputs().next())
     }
 
+    /// The output a `NacrePeekDesktop` request targets; `None` name means the focused output.
+    pub fn peek_output(&self, name: Option<&str>) -> Option<Output> {
+        match name {
+            Some(name) => self.output_by_name_match(name),
+            None => self.layout.active_output(),
+        }
+        .cloned()
+    }
+
+    pub fn peek_desktop(&mut self, name: Option<&str>, id: u64) {
+        if let Some(output) = self.peek_output(name) {
+            self.layout.peek_hold(&output, id);
+            self.queue_redraw(&output);
+        }
+    }
+
+    pub fn peek_release(&mut self, id: u64) {
+        self.layout.peek_release(id);
+        self.queue_redraw_all();
+    }
+
     pub fn output_by_name_match(&self, target: &str) -> Option<&Output> {
         self.global_space
             .outputs()

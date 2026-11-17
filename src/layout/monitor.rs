@@ -83,6 +83,8 @@ pub struct Monitor<W: LayoutElement> {
     insert_hint_element: InsertHintElement,
     /// Location to render the insert hint element.
     insert_hint_render_loc: Option<InsertHintRenderLoc>,
+    /// Open `NacrePeekDesktop` holds; while any exist, windows on this output are hidden.
+    peek_holds: Vec<u64>,
     /// Whether the overview is open.
     pub(super) overview_open: bool,
     /// Progress of the overview zoom animation, 1 is fully in overview.
@@ -366,6 +368,7 @@ impl<W: LayoutElement> Monitor<W> {
             insert_hint: None,
             insert_hint_element: InsertHintElement::new(options.layout.insert_hint),
             insert_hint_render_loc: None,
+            peek_holds: Vec::new(),
             overview_open: false,
             overview_progress: None,
             collection_switch_offset_x: 0.,
@@ -1196,7 +1199,34 @@ impl<W: LayoutElement> Monitor<W> {
         }
     }
 
+    fn peek_tiles_mut(&mut self) -> impl Iterator<Item = &mut Tile<W>> + '_ {
+        let pinned = self.pinned_workspace.tiles_mut();
+        pinned.chain(self.workspaces.iter_mut().flat_map(|ws| ws.tiles_mut()))
+    }
+
+    pub fn is_peeked(&self) -> bool {
+        !self.peek_holds.is_empty()
+    }
+
+    /// Adds a peek hold; the first one fades every window out (see [`Tile::sync_peek`]).
+    pub(super) fn peek_hold(&mut self, id: u64) {
+        if self.peek_holds.is_empty() {
+            self.peek_tiles_mut().for_each(Tile::animate_peek_out);
+        }
+        self.peek_holds.push(id);
+    }
+
+    /// Returns whether this monitor held `id`. The next frame fades the windows back in.
+    pub(super) fn peek_release(&mut self, id: u64) -> bool {
+        let len = self.peek_holds.len();
+        self.peek_holds.retain(|h| *h != id);
+        len != self.peek_holds.len()
+    }
+
     pub fn advance_animations(&mut self) {
+        let held = self.is_peeked();
+        self.peek_tiles_mut().for_each(|tile| tile.sync_peek(held));
+
         self.pinned_workspace.advance_animations();
         match &mut self.workspace_switch {
             Some(WorkspaceSwitch::Animation(anim)) => {

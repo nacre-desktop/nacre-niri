@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{env, io, process};
 
@@ -621,6 +622,11 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
                 | Ok(Request::NacreOverviewHoverStreamWithCollections)
         );
 
+        let peek_output = match &request {
+            Ok(Request::NacrePeekDesktop { output }) => Some(output.clone()),
+            _ => None,
+        };
+
         let reply = match request {
             Ok(request) => process(&ctx, request).await,
             Err(err) => Err(err),
@@ -636,6 +642,21 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
         serde_json::to_writer(&mut buf, &reply).context("error formatting reply")?;
         buf.push(b'\n');
         write.write_all(&buf).await.context("error writing reply")?;
+
+        if let Some(output) = peek_output.filter(|_| reply.is_ok()) {
+            // The open connection is the hold: it ends at EOF or any read error, so a crashed
+            // client releases at once (no failed write needed).
+            static NEXT_PEEK_ID: AtomicU64 = AtomicU64::new(1);
+            let id = NEXT_PEEK_ID.fetch_add(1, Ordering::Relaxed);
+            ctx.event_loop.insert_idle(move |state| {
+                state.niri.peek_desktop(output.as_deref(), id);
+            });
+            let mut sink = [0u8; 64];
+            while matches!(read.read(&mut sink).await, Ok(n) if n > 0) {}
+            ctx.event_loop
+                .insert_idle(move |state| state.niri.peek_release(id));
+            return Ok(());
+        }
 
         if requested_event_stream && reply.is_ok() {
             let (events_tx, events_rx) = async_channel::bounded(EVENT_STREAM_BUFFER_SIZE);
@@ -985,6 +1006,16 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 return Err(String::from(
                     "Nacre overview hover or collection events are disabled",
                 ));
+            }
+            Response::Handled
+        }
+        Request::NacrePeekDesktop { output } => {
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let _ = tx.send_blocking(state.niri.peek_output(output.as_deref()).is_some());
+            });
+            if !rx.recv().await.unwrap_or(false) {
+                return Err(String::from("no such output"));
             }
             Response::Handled
         }

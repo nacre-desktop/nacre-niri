@@ -101,6 +101,10 @@ pub struct Tile<W: LayoutElement> {
     /// The animation of the tile's opacity.
     pub(super) alpha_animation: Option<AlphaAnimation>,
 
+    /// Fade driven by the monitor's peek hold, independent of `alpha_animation` so that tabbed
+    /// and interactive-move fades neither cancel nor inherit it.
+    peek_animation: Option<AlphaAnimation>,
+
     /// Offset during the initial interactive move rubberband.
     pub(super) interactive_move_offset: Point<f64, Logical>,
 
@@ -167,6 +171,16 @@ struct MoveAnimation {
     from: f64,
 }
 
+/// Fade used for peek holds (`NacrePeekDesktop`). A global `animations { off }` completes it
+/// instantly through the clock.
+const PEEK_ANIMATION: niri_config::Animation = niri_config::Animation {
+    off: false,
+    kind: niri_config::animations::Kind::Easing(niri_config::animations::EasingParams {
+        duration_ms: 250,
+        curve: niri_config::animations::Curve::EaseOutCubic,
+    }),
+};
+
 #[derive(Debug)]
 pub(super) struct AlphaAnimation {
     pub(super) anim: Animation,
@@ -212,6 +226,7 @@ impl<W: LayoutElement> Tile<W> {
             move_x_animation: None,
             move_y_animation: None,
             alpha_animation: None,
+            peek_animation: None,
             interactive_move_offset: Point::from((0., 0.)),
             unmap_snapshot: None,
             rounded_corner_damage: Default::default(),
@@ -446,6 +461,12 @@ impl<W: LayoutElement> Tile<W> {
                 self.alpha_animation = None;
             }
         }
+
+        if let Some(peek) = &self.peek_animation {
+            if !peek.hold_after_done && peek.anim.is_done() {
+                self.peek_animation = None;
+            }
+        }
     }
 
     pub fn are_animations_ongoing(&self) -> bool {
@@ -461,6 +482,10 @@ impl<W: LayoutElement> Tile<W> {
                 .alpha_animation
                 .as_ref()
                 .is_some_and(|alpha| !alpha.anim.is_done())
+            || self
+                .peek_animation
+                .as_ref()
+                .is_some_and(|peek| !peek.anim.is_done())
     }
 
     pub fn update_render_elements(&mut self, is_active: bool, view_rect: Rectangle<f64, Logical>) {
@@ -663,6 +688,56 @@ impl<W: LayoutElement> Tile<W> {
                 self.alpha_animation = None;
             }
         }
+    }
+
+    fn animate_peek(&mut self, from: f64, to: f64, hold: bool, config: niri_config::Animation) {
+        let (current, offscreen) = match self.peek_animation.take() {
+            Some(peek) => (peek.anim.clamped_value(), peek.offscreen),
+            None => (from, OffscreenBuffer::default()),
+        };
+        self.peek_animation = Some(AlphaAnimation {
+            anim: Animation::new(self.clock.clone(), current, to, 0., config),
+            hold_after_done: hold,
+            offscreen,
+        });
+    }
+
+    /// Fades the tile out for a peek hold; [`Tile::sync_peek`] releases it.
+    pub fn animate_peek_out(&mut self) {
+        self.animate_peek(1., 0., true, PEEK_ANIMATION);
+    }
+
+    /// Brings the tile in line with whether its monitor is peeked.
+    ///
+    /// Runs every frame, so tiles that appear while held (new windows, the other workspace of a
+    /// switch) start hidden, and tiles that were hidden but are no longer held fade back in.
+    pub fn sync_peek(&mut self, held: bool) {
+        match (&self.peek_animation, held) {
+            (None, true) => {
+                let instant = niri_config::Animation {
+                    off: true,
+                    ..PEEK_ANIMATION
+                };
+                self.animate_peek(0., 0., true, instant);
+            }
+            (Some(peek), false) if peek.hold_after_done => {
+                self.animate_peek(1., 1., false, PEEK_ANIMATION);
+            }
+            _ => (),
+        }
+    }
+
+    /// Combined opacity from the move/tab fade and the peek fade.
+    pub(super) fn total_alpha(&self) -> f64 {
+        [&self.alpha_animation, &self.peek_animation]
+            .into_iter()
+            .map(|a| a.as_ref().map_or(1., |a| a.anim.clamped_value()))
+            .product()
+    }
+
+    #[cfg(test)]
+    pub(super) fn has_peek_state(&self) -> bool {
+        self.peek_animation.is_some()
     }
 
     pub fn hold_alpha_animation_after_done(&mut self) {
@@ -1337,13 +1412,20 @@ impl<W: LayoutElement> Tile<W> {
 
         let scale = ctx.render_scale(Scale::from(self.scale));
 
-        let tile_alpha = self
-            .alpha_animation
-            .as_ref()
-            .map_or(1., |alpha| alpha.anim.clamped_value()) as f32;
+        let tile_alpha = self.total_alpha() as f32;
 
         let mut pushed = false;
         self.window().set_offscreen_data(None);
+
+        // Fully hidden by a peek hold: emit nothing, so the window is treated as not visible
+        // (no offscreen render, no primary scanout output, no frame callbacks until release).
+        let peek_done = self
+            .peek_animation
+            .as_ref()
+            .is_some_and(|peek| peek.hold_after_done && peek.anim.is_done());
+        if peek_done && tile_alpha == 0. {
+            return;
+        }
 
         if let Some(open) = &self.open_animation {
             let mut ctx = ctx.as_gles();
@@ -1372,7 +1454,11 @@ impl<W: LayoutElement> Tile<W> {
                     warn!("error rendering window opening animation: {err:?}");
                 }
             }
-        } else if let Some(alpha) = &self.alpha_animation {
+        } else if let Some(alpha) = self
+            .alpha_animation
+            .as_ref()
+            .or(self.peek_animation.as_ref())
+        {
             let mut ctx = ctx.as_gles();
             let mut elements = Vec::new();
             self.render_inner(
