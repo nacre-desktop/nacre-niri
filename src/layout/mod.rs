@@ -2087,7 +2087,7 @@ impl<W: LayoutElement> Layout<W> {
                 if (!overview || workspace_switching) && workspace_idx != active_workspace {
                     continue;
                 }
-                if ws.activate_window_without_scrolling(window) {
+                if ws.activate_window_without_scrolling(window, overview) {
                     *active_monitor_idx = monitor_idx;
                     if overview {
                         mon.activate_workspace_without_scrolling(workspace_idx);

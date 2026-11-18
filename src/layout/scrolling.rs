@@ -54,6 +54,8 @@ pub struct ScrollingSpace<W: LayoutElement> {
 
     /// Hover focus must not re-fit the viewport when the client acknowledges focus.
     hover_view_frozen: bool,
+    /// The freeze came from overview hover, so activating the column again must fit the view.
+    hover_fit_on_activate: bool,
 
     /// Whether to activate the previous, rather than the next, column upon column removal.
     ///
@@ -302,6 +304,7 @@ impl<W: LayoutElement> ScrollingSpace<W> {
             interactive_resize: None,
             view_offset: ViewOffset::Static(0.),
             hover_view_frozen: false,
+            hover_fit_on_activate: false,
             activate_prev_column_on_removal: None,
             view_offset_to_restore: None,
             closing_windows: Vec::new(),
@@ -782,11 +785,12 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     fn activate_column_with_anim_config(&mut self, idx: usize, config: niri_config::Animation) {
-        // Hover-selected without scrolling: the target may be off-screen, so fit it even if active.
+        // Overview hover selected it without scrolling: the target may be off-screen, so fit it
+        // even if active. Normal-view hover keeps the view, as stock niri does.
         let was_hover_frozen =
             std::mem::take(&mut self.hover_view_frozen) && !self.columns.is_empty();
         if self.active_column_idx == idx
-            && !was_hover_frozen
+            && !(was_hover_frozen && self.hover_fit_on_activate)
             // During a DnD scroll, animate even when activating the same window, for DnD hold.
             && (self.columns.is_empty() || !self.view_offset.is_dnd_scroll())
         {
@@ -1448,12 +1452,13 @@ impl<W: LayoutElement> ScrollingSpace<W> {
     }
 
     /// Select a tile while preserving the view, including any keyboard animation.
-    pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+    pub fn activate_window_without_scrolling(&mut self, window: &W::Id, in_overview: bool) -> bool {
         let Some(idx) = self.columns.iter().position(|col| col.contains(window)) else {
             return false;
         };
         self.columns[idx].activate_window(window);
         self.hover_view_frozen = true;
+        self.hover_fit_on_activate = in_overview;
         if self.active_column_idx != idx {
             let delta = self.column_x(self.active_column_idx) - self.column_x(idx);
             self.view_offset.offset(delta);

@@ -4691,3 +4691,29 @@ fn peek_is_instant_with_animations_off() {
     );
     assert!(peek_tile_alphas(&layout).iter().all(|a| *a == 1.));
 }
+
+/// NN0051: outside the overview, hover selects the big column without scrolling, and a later
+/// re-activation of it (xdg-activation, foreign-toplevel, click) must not move the view.
+#[test]
+fn normal_view_hover_then_reactivate_keeps_view() {
+    let mut layout = check_ops([
+        Op::AddOutput(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(1),
+        },
+        Op::SetColumnWidth(SizeChange::SetProportion(100.)),
+        Op::Communicate(1),
+        Op::AddWindow {
+            params: TestWindowParams::new(2),
+        },
+        Op::SetColumnWidth(SizeChange::SetProportion(50.)),
+        Op::Communicate(2),
+        Op::CompleteAnimations,
+    ]);
+    layout.activate_window_without_scrolling(&1);
+    let hovered = view_pos(&layout);
+    layout.activate_window(&1);
+    check_ops_on_layout(&mut layout, [Op::CompleteAnimations]);
+    assert_eq!(*layout.focus().unwrap().id(), 1);
+    assert_eq!(view_pos(&layout), hovered);
+}

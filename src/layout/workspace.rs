@@ -1988,12 +1988,15 @@ impl<W: LayoutElement> Workspace<W> {
         }
     }
 
-    pub fn activate_window_without_scrolling(&mut self, window: &W::Id) -> bool {
+    pub fn activate_window_without_scrolling(&mut self, window: &W::Id, in_overview: bool) -> bool {
         self.overview_revision = self.overview_revision.wrapping_add(1);
         if self.floating.activate_window_without_raising(window) {
             self.floating_is_active = FloatingActive::Yes;
             true
-        } else if self.scrolling.activate_window_without_scrolling(window) {
+        } else if self
+            .scrolling
+            .activate_window_without_scrolling(window, in_overview)
+        {
             self.floating_is_active = match self.floating_is_active {
                 FloatingActive::Yes => FloatingActive::NoButRaised,
                 other => other,
